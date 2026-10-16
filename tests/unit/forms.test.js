@@ -237,3 +237,16 @@ test('변경 차수 기본값: 금액 바뀜 → 설계변경, 금액 그대로�
   assert.equal(L.ordSnap({ key: 'r25ta00935659', ord: 1, amount: 1 }).no, 'R25TA00935659-01');
   assert.equal(L.ordSnap({ untyNo: 'R25TA00935659', ord: 0, amount: 1 }).no, 'R25TA00935659-00');
 });
+
+test('차수 계약이 -01·-02처럼 01부터 시작해도 맨 앞이 원계약, 차수 순서대로 비교, 빠진 차수 표시', () => {
+  const N = 'R25TA00935659';
+  const snap = (o, amount, end, date) => L.ordSnap({ no: `${N}-${String(o).padStart(2, '0')}`, ord: o, amount, endDate: end, contractDate: date, chgDt: date });
+  const c = { key: 'k', name: '시민체육센터 청소용역', amount: 60000000, g2b: { st: { chg: 'none' } }, ords: { 1: snap(1, 50000000, '2025-12-31', '2025-01-02'), 2: snap(2, 55000000, '2025-12-31', '2025-06-01'), 3: snap(3, 55000000, '2026-03-31', '2025-11-01') } };
+  const ch = L.changesOf(c);
+  assert.deepEqual(ch.rows.map((r) => [r.ord, r.first, r.auto]), [[1, true, 'orig'], [2, false, 'design'], [3, false, 'ext']]);
+  assert.equal(ch.origAmount, 50000000);
+  const r = F.rowOf(c);
+  assert.equal(r.award, 50000000); assert.deepEqual(r.chg.map((x) => x.diff), [5000000]); assert.equal(r.extDate, '20251101'); assert.equal(r.extOrig, '20251231');
+  const gap = L.changesOf({ ords: { 0: snap(0, 1, '2025-12-31', '2025-01-01'), 2: snap(2, 2, '2025-12-31', '2025-05-01') } });
+  assert.equal(gap.rows[1].gap, 1);
+});

@@ -289,7 +289,7 @@
   const num = (v) => { const n = Number(String(v == null ? '' : v).replace(/[^\d.-]/g, '')); return isFinite(n) && String(v || '').trim() !== '' ? n : 0; };
   const ymd8 = (s) => { const m = String(s || '').match(/(\d{4})[-.\/]?(\d{2})[-.\/]?(\d{2})/); return m ? m[1] + m[2] + m[3] : ''; };
   // 변경이력 → 당초 금액·준공일, 금액 바뀐 차수(설계변경), 준공일 바뀐 차수(기간연장)
-  function summarizeChanges(items) {
+  function summarizeChanges(items, opt = {}) {
     const rows = (items || []).map((x) => ({
       at: String(x.chgDt || x.rgstDt || ''), date: ymd8(x.cntrctDate || x.cntrctCnclsDate || x.chgDt),
       amount: num(x.totCntrctAmt || x.thtmCntrctAmt), end: ymd8(x.ttalCcmpltDate || x.thtmCcmpltDate || x.ttalScmpltDate || x.thtmScmpltDate || x.dlvrTmlmtDate || periodEnd(x.cntrctPrd)),
@@ -307,19 +307,21 @@
       const a = i ? rows[i - 1] : null, ord = ordOf(b.no);
       const r = { no: b.no || String(i), ord: ord == null ? i : ord, date: b.date || ymd8(b.at), amount: b.amount, end: b.end };
       if (a) { r.prevAmount = a.amount; r.prevEnd = a.end; r.diff = b.amount && a.amount ? b.amount - a.amount : 0; }
-      r.first = !a && r.ord === 0; // 원계약(0차)
+      r.first = !a && (r.ord === 0 || !!opt.firstIsOrig); // 원계약(0차, 또는 차수 계약 중 맨 앞 — 01부터 시작해도)
+      if (a) { const pa = ordOf(a.no), pb = ordOf(b.no); if (pa != null && pb != null && pb - pa > 1) r.gap = pb - pa - 1; } // 사이에 빠진 차수
       r.auto = a ? autoKind(r) : (r.first ? 'orig' : '');
       return r;
     });
     // 원계약(0차) 없이 변경 차수만 왔으면 당초 금액·준공일은 모름
-    if (!out.chgRows[0].first && out.chgRows[0].ord > 0) { out.origAmount = 0; out.origEnd = ''; }
+    if (!out.chgRows[0].first) { out.origAmount = 0; out.origEnd = ''; }
     return out;
   }
   // 차수별 계약(같은 계약번호의 -00, -01 …)에서 본 값 → 변경이력과 같은 모양. 변경이력 응답이 비어도 차수 표를 만듦
   const ordSnap = (n) => ({ no: n.no || `${String(n.untyNo || n.key || '').toUpperCase()}-${String(n.ord == null ? 0 : n.ord).padStart(2, '0')}`, amount: n.amount || 0, end: n.endDate || '', date: (n.ord > 0 ? n.chgDt || n.contractDate : n.contractDate) || '' });
   function changesOf(c) {
     const g = (c && c.g2b) || {}, ords = Object.values((c && c.ords) || {});
-    const fromOrds = ords.length > 1 ? summarizeChanges(ords.map((o) => ({ dcsnCntrctNo: o.no, totCntrctAmt: o.amount, ttalCcmpltDate: o.end, cntrctDate: o.date }))) : null;
+    // 차수 계약(-00·-01·-02 또는 -01·-02)은 실제 계약 기록이므로 맨 앞 차수를 원계약으로 보고, 차수 순서대로 앞 차수와 비교
+    const fromOrds = ords.length > 1 ? summarizeChanges(ords.map((o) => ({ dcsnCntrctNo: o.no, totCntrctAmt: o.amount, ttalCcmpltDate: o.end, cntrctDate: o.date })), { firstIsOrig: true }) : null;
     if (g.chgRows && g.chgRows.length && (!fromOrds || g.chgRows.length >= fromOrds.chgRows.length)) return { rows: g.chgRows, origAmount: g.origAmount, origEnd: g.origEnd, src: '나라장터 변경이력' };
     if (fromOrds) return { rows: fromOrds.chgRows, origAmount: fromOrds.origAmount, origEnd: fromOrds.origEnd, src: '나라장터 계약 차수' };
     return null;
@@ -487,7 +489,7 @@
     const nums = [x.dcsnCntrctNo, x.untyCntrctNo, x.cntrctRefNo].filter(Boolean);
     return {
       key: baseNo(x.untyCntrctNo || x.dcsnCntrctNo) || contractKey({ nums, name: x.cnstwkNm || x.cntrctNm }),
-      ord: ordOf(x.dcsnCntrctNo),
+      ord: ordOf(x.dcsnCntrctNo) != null ? ordOf(x.dcsnCntrctNo) : (() => { const m = String(x.dcsnCntrctNo || '').replace(/\s+/g, '').match(/^.{9,}?-(\d{2,3})$/) || String(x.dcsnCntrctNo || '').replace(/\s+/g, '').match(/^\d{11}(\d{2})$/); return m ? +m[1] : null; })(),
       source: 'api', type,
       name: x.cnstwkNm || x.cntrctNm || '',
       vendor: vendors[0] || x.crdtrNm || '',

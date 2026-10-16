@@ -149,7 +149,9 @@
   // 같은 계약이 차수(-00, -01)마다 따로 생긴 것을 하나로 합침: 서류·메모·원본/받음 표시를 옮기고 최신 차수 값을 남김
   // 한 계약이 번호 때문에 묶이는 열쇠들: 통합계약번호·계약번호들·차수별 번호·나라장터 변경이력에 나온 차수 번호
   const mergeKeys = (c) => [...new Set([c.untyNo, c.no, ...(c.nums || []), ...Object.values(c.ords || {}).map((o) => o.no), ...(((c.g2b || {}).chgRows) || []).map((r) => r.no)]
-    .map(L.baseNo).filter((x) => x && x.length >= 10))];
+    .map(L.baseNo).filter((x) => x && x.length >= 10)),
+    // 번호 모양이 달라도(예: 2025012345600, 20250123456-01) 끝 두 자리만 다르고 계약명이 같으면 같은 계약
+    ...[c.no, ...(c.nums || [])].map((x) => String(x || '').replace(/\s+/g, '')).filter((x) => !/^[A-Za-z]\d{2}[A-Za-z]{2}\d{8}$/.test(x)).map((x) => x.match(/^(.{9,})-?\d{2}$/)).filter(Boolean).map((m) => `n:${L.norm(m[1])}|${L.norm(c.name || '')}`)];
   // 여러 계약을 하나로: 서류·메모·원본/받음/경유 표시·차수별 값을 옮기고, 금액·준공일은 최신 차수 기준. prefer가 있으면 그 계약을 남김
   function mergeContracts(cs, prefer) {
     const ordC = (c) => Math.max(c.ord == null ? -1 : c.ord, ...(c.nums || []).map((x) => L.ordOf(x) == null ? -1 : L.ordOf(x)), ...Object.keys(c.ords || {}).map(Number));
@@ -161,7 +163,11 @@
     const dateOf = (c) => String(c.chgDt || c.contractDate || c.startDate || '').replace(/\D/g, '').slice(0, 12);
     const known = cs.filter((c) => ordMap.get(c) >= 0), unknown = cs.filter((c) => ordMap.get(c) < 0).sort((a, b) => dateOf(a).localeCompare(dateOf(b)) || (a.updatedAt || 0) - (b.updatedAt || 0));
     let nextOrd = known.length ? Math.max(...known.map((c) => ordMap.get(c)), ...known.flatMap((c) => Object.keys(c.ords || {}).map(Number))) + 1 : 0;
-    for (const c of unknown) ordMap.set(c, nextOrd++);
+    // 번호 끝 두 자리가 차수인 모양(2025012345601)이면 그 숫자로, 아니면 날짜 순서로 다음 차수
+    const tail = (c) => { const m = String(c.no || (c.nums || [])[0] || '').replace(/\s+/g, '').match(/^.{9,}?-?(\d{2})$/); return m ? +m[1] : null; };
+    const tails = unknown.map(tail);
+    const tailOk = !known.length && tails.every((t) => t != null) && new Set(tails).size === tails.length;
+    for (const c of unknown) ordMap.set(c, tailOk ? tail(c) : nextOrd++);
     const newest = [...cs].sort((a, b) => ordMap.get(b) - ordMap.get(a))[0];
     const ords = {};
     for (const c of cs) {
@@ -445,7 +451,7 @@
   // ---------- 나라장터 계약 목록 ----------
   // full이 아니면 지난번에 불러온 달부터만(여럿이 인증키 하나를 같이 쓰므로 조회 횟수를 아낌)
   // 나라장터에서 받아 두는 항목이 늘면 올림 → 한 번은 기간 전체를 다시 받아 예전에 불러온 계약도 새 항목(계약방법·대표자·사업자번호·통합계약번호 등)을 채움
-  const FETCH_VER = 4; // 3: 업체목록을 화면 순서로도 읽음(업체명·대표자) · 4: 차수(-00, -01)별 금액·준공일 기억
+  const FETCH_VER = 5; // 3: 업체목록을 화면 순서로도 읽음(업체명·대표자) · 4: 차수(-00, -01)별 금액·준공일 기억 · 5: 다른 모양 계약번호의 차수도
   async function fetchContracts(full) {
     if (!cfg.apiKey || !cfg.insttNm) { toast('설정에서 인증키와 기관명을 먼저 넣어 주세요.', 'err'); JH.settings.open('nara'); return; }
     const stale = contracts().some((c) => c.source === 'api' && !c.untyNo && !c.method && !c.corpRaw);
@@ -471,6 +477,7 @@
           }
         }
       }
+      mergeSameContracts(); // 새로 받은 차수(-01 …)가 따로 생겼으면 바로 합침
       cfg.lastFetch = new Date().toISOString(); await saveCfg();
       // 나라장터가 준 그대로를 남겨 둠(어떤 항목이 오는지 확인할 때: 데이터 폴더 \진단\나라장터_계약응답.json)
       if (raw.length) S.writeJson('진단/나라장터_계약응답.json', { at: cfg.lastFetch, count: raw.length, items: raw }).catch(() => {});
@@ -981,7 +988,8 @@
     const ch = L.changesOf(c), rows = ch ? ch.rows : [];
     if (!rows.length) return '';
     const picked = m.chgKind || {}, K = L.CHG_KINDS;
-    const ordLabel = (r) => (r.first ? '원계약' : `${r.ord}차 변경`);
+    const first = rows[0] ? rows[0].ord : 0;
+    const ordLabel = (r) => (r.first ? `원계약${r.ord ? ` (-${String(r.ord).padStart(2, '0')})` : ''}` : `${r.ord - first}차 변경${r.gap ? ` <small class="as warn">앞에 빠진 차수 ${r.gap}개 — 바로 앞 차수와 비교</small>` : ''}`);
     const body = rows.map((r) => {
       const amt = wonText(r.amount) + (r.diff ? ` <small class="${r.diff > 0 ? 'up' : 'down'}">(${r.diff > 0 ? '+' : '−'}${esc(wonText(Math.abs(r.diff)))})</small>` : '');
       const end = r.prevEnd && r.end && r.prevEnd !== r.end ? `${esc(L.fmtDate(r.prevEnd))} → <b>${esc(L.fmtDate(r.end))}</b>` : esc(L.fmtDate(r.end));
@@ -992,7 +1000,7 @@
         const tag = picked[r.no] ? '<small class="as">직접</small>' : r.auto ? '<small class="as">자동</small>' : '<small class="as warn">앞 차수가 없어 직접 골라 주세요</small>';
         sel = `<select data-chgkind="${esc(r.no)}">${opts}</select> ${tag}`;
       }
-      return `<tr${picked[r.no] === 'none' || (!picked[r.no] && r.auto === 'none') ? ' class="off"' : ''}><td>${esc(ordLabel(r))}<br><small class="muted">${esc(r.no)}</small></td><td>${esc(L.fmtDate(r.date))}</td><td class="num">${amt}</td><td>${end}</td><td>${sel}</td></tr>`;
+      return `<tr${picked[r.no] === 'none' || (!picked[r.no] && r.auto === 'none') ? ' class="off"' : ''}><td>${ordLabel(r)}<br><small class="muted">${esc(r.no)}</small></td><td>${esc(L.fmtDate(r.date))}</td><td class="num">${amt}</td><td>${end}</td><td>${sel}</td></tr>`;
     }).join('');
     return `<div class="chgtbl"><div class="agroup">${ch.src === '나라장터 계약 차수' ? '나라장터 계약 차수(-00, -01 …)' : '나라장터 변경이력'}${c.url ? ` <a class="link sm" href="${esc(c.url)}" target="_blank" rel="noopener">나라장터에서 보기</a>` : ''} <small class="muted">차수마다 구분을 고르면 서식의 설계변경·공사기간 연장 칸에 들어갑니다. 해당 없음은 빠집니다</small></div>
       <div class="tblwrap"><table><thead><tr><th>차수</th><th>변경일</th><th>계약금액(증감)</th><th>준공일</th><th>구분</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
