@@ -15,7 +15,7 @@ const CFB = require('cfb');
 const zlib = require('node:zlib');
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
-const PROG = join(ROOT, 'dist/계약업무도우미/program');
+const PROG = join(ROOT, 'program');
 const PWSH = process.env.PWSH || '/opt/pwsh/pwsh';
 const CHROME = process.env.CHROME || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 const SHOTS = join(ROOT, 'tests/e2e/screens'); mkdirSync(SHOTS, { recursive: true });
@@ -88,7 +88,8 @@ page.on('response', (r) => { if (r.status() >= 500 && !/\/api\/(hwp2pdf|hwpfill)
 await page.route('**/api/nara**', (r) => {
   const u = decodeURIComponent(new URL(r.request().url()).searchParams.get('u'));
   let body;
-  if (u.includes('PrtcptPsblRgn')) { const no = u.match(/bidNtceNo=([^&]+)/)[1]; body = api((REGIONS[no] || []).map((n) => ({ prtcptPsblRgnNm: n }))); }
+  if (/getBidPblancListInfoCnstwk\?.*bidNtceNo=/.test(u)) body = api(u.includes('R26BK09999999') ? [bid('R26BK09999999', '신갈오거리 보안등 정비 전기공사', 32000000, '87.745', { opengDt: '2026-10-28 11:00:00' })] : []);
+  else if (u.includes('PrtcptPsblRgn')) { const no = u.match(/bidNtceNo=([^&]+)/)[1]; body = api((REGIONS[no] || []).map((n) => ({ prtcptPsblRgnNm: n }))); }
   else if (u.includes('LicenseLimit')) body = api([{ lcnsLmtNm: '전기공사업' }]);
   else if (u.includes('BidPublicInfoService')) body = api(u.includes('bidNtceNm=') ? BIDS.filter((b) => b.bidNtceNm.includes(decodeURIComponent(u.match(/bidNtceNm=([^&]+)/)[1]).replace(/\+/g, ' '))) : BIDS);
   else body = api(u.includes('Cnstwk') ? 공사 : 용역);
@@ -118,6 +119,8 @@ try {
   assert.equal(await page.$eval('#fOfficer', (s) => s.value), '박주호');
   assert.equal(await page.$$eval('.citem', (e) => e.length), 2);
   // 다시 불러오기는 지난번 이후 달만(조회 횟수 절약)
+  await page.waitForSelector('#btnFetch:not([disabled])', { timeout: 120000 }); // 첫 불러오기가 끝나야 새로고침 가능(중복 실행 막음)
+  assert.match(await page.textContent('#listCount'), /나라장터 \d\d\.\d\d \d\d:\d\d 기준/);
   let calls = 0; page.on('request', (r) => { if (r.url().includes('/api/nara')) calls++; });
   await page.click('#btnFetch');
   await waitFor(() => page.$('.toast:has-text("나라장터 계약")'), 20000, '다시 불러오기');
@@ -164,6 +167,19 @@ try {
   assert.ok(st.extra && st.extra.itemId === 'c-ltax', '직접 넣은 지방세 서류 분류');
   assert.equal(JSON.parse(readFileSync(join(PROG, 'local.json'), 'utf8')).dataDir, moved);
   step('데이터 폴더를 통째로 옮겨도 표식으로 찾음 + 계약 폴더 이름 변경 추적 + 직접 넣은 파일 분류');
+
+  // ===== 계약 화면: 맨 위 [업로드], 서류 줄마다 [+ 추가]로 직접 넣기 =====
+  await page.click('.views [data-view="contracts"]');
+  await page.click('.citem:has-text("시청사 옥상 방수공사")');
+  const order = await page.evaluate(() => { const d = document.querySelector('#detail'); const kids = [...d.children]; return [kids.indexOf(d.querySelector('#dropin')), kids.indexOf(d.querySelector('.stages')), d.querySelector('#dropin [data-act="addhere"]').textContent.trim()]; });
+  assert.ok(order[0] >= 0 && order[0] < order[1] && order[2] === '업로드', '업로드 칸이 서류 목록 위에: ' + JSON.stringify(order));
+  const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('.row[data-drop-item="c-defect"] [data-act="additem"]')]);
+  await fc.setFiles({ name: 'scan_0012.pdf', mimeType: 'application/pdf', buffer: readFileSync(join(DOCS, 'noname(1).pdf')) });
+  await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => d.name === 'scan_0012.pdf')), 60000, '직접 추가');
+  const added = await page.evaluate(() => { const d = JH.app.db.docs.find((x) => x.name === 'scan_0012.pdf'); return { item: d.itemId, c: JH.app.db.contracts[d.key].name, manual: d.manual }; });
+  assert.deepEqual(added, { item: 'c-defect', c: '시청사 옥상 방수공사', manual: true }, '내용은 견적서여도 고른 줄(하자보증서)로 들어감');
+  await waitFor(() => page.$('.row[data-drop-item="c-defect"] .file:has-text("scan_0012.pdf")'), 10000, '줄에 표시');
+  step('계약 화면 맨 위 [업로드], 서류 줄 [+ 추가]로 그 서류에 직접 넣기');
 
   // ===== 공고문 =====
   await page.click('.brand');
@@ -213,6 +229,23 @@ try {
   const xml = execFileSync('python3', ['-c', 'import zipfile,sys;z=zipfile.ZipFile(sys.argv[1]);assert z.infolist()[0].filename=="mimetype";print(z.read("Contents/section0.xml").decode())', outF]).toString();
   assert.match(xml, /용인도시공사 공고/); assert.match(xml, /「신갈오거리 보안등 정비 전기공사」/); assert.match(xml, /추정가격 32,000,000원, 지역 용인시, 하한율 87\.745%/);
   step('한글 양식(HWPX)의 {{항목}} 채워 새 파일 생성(쪼개진 표시 포함)');
+
+  // 진행 상태: 한글 양식을 만들면 작성 완료 → 나라장터 입찰공고번호를 넣으면 등록(잠금) → 복사해서 새로 쓰기는 작성 중
+  assert.match(await page.textContent('.lgroup'), /작성 완료/);
+  assert.match(await page.textContent('.nstep.on'), /작성 완료/);
+  await page.fill('#g2bNo', 'r26bk09999999-000');
+  await page.click('[data-nact="g2b"]');
+  await waitFor(() => page.$('.toast:has-text("나라장터에서 확인했습니다")'), 20000, '나라장터 공고 확인');
+  assert.match(await page.textContent('.g2b.posted'), /R26BK09999999-000[\s\S]*개찰 2026-10-28 11:00/);
+  assert.ok(await page.$eval('.nsec', (f) => f.disabled), '등록된 공고문 잠금');
+  assert.ok(await page.$eval('#nTitle', (t) => t.readOnly));
+  assert.match(await page.textContent('.lgroup'), /나라장터 등록/);
+  await page.screenshot({ path: join(SHOTS, '8-공고문-등록.png') });
+  await page.click('[data-nact="dup"]');
+  assert.match(await page.textContent('.nstep.on'), /작성 중/);
+  assert.equal(await page.$eval('#nTitle', (t) => t.readOnly), false);
+  assert.deepEqual(await page.$$eval('.lgroup span', (s) => s.map((x) => x.textContent)), ['작성 중', '나라장터 등록']);
+  step('진행 상태: 한글 양식 → 작성 완료, 나라장터 공고번호 → 등록(확인·잠금), 복사해서 새로 쓰기 → 작성 중');
 
   await page.click('.brand');
   await page.waitForSelector('#homeNotice li');

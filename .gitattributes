@@ -1,0 +1,5 @@
+# Windows 실행 파일은 받은 그대로(줄바꿈 CRLF·BOM 유지) — 바꾸면 bat·PowerShell이 깨질 수 있음
+*.bat -text
+*.ps1 -text
+*.txt -text
+program/** -text

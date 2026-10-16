@@ -42,6 +42,14 @@
     const u = decodeURIComponent(url);
     if (u.includes('PrtcptPsblRgn')) { const no = (u.match(/bidNtceNo=([^&]+)/) || [])[1]; return api((REGIONS[no] || []).map((n) => ({ prtcptPsblRgnNm: n }))); }
     if (u.includes('LicenseLimit')) return api([{ lcnsLmtNm: '전기공사업' }]);
+    // 입찰공고번호로 찾기(공고문 → 나라장터 등록 확인)
+    const byNo = u.match(/getBidPblancListInfo(?:Cnstwk|Servc)\?.*bidNtceNo=([^&]+)/);
+    if (byNo) {
+      const no = byNo[1].toUpperCase(); const known = BIDS.find((b) => b.bidNtceNo === no); if (known) return api([known]);
+      const n = root.JH.notice && root.JH.notice.current && root.JH.notice.current();
+      const d = (k, h) => { const x = new Date(); x.setDate(x.getDate() + k); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')} ${h}:00:00`; };
+      return api([bid(no, (n && n.v.공고명) || '시연 공고', '용인도시공사', 32000000, '87.745', { bidNtceDt: d(0, '10'), bidBeginDt: d(1, '10'), bidClseDt: d(8, '10'), opengDt: d(8, '11'), ntceSpecDocUrl1: '' })]);
+    }
     if (u.includes('BidPublicInfoService')) {
       const kw = (u.match(/bidNtceNm=([^&]+)/) || [])[1];
       return api(kw ? BIDS.filter((b) => b.bidNtceNm.includes(kw.replace(/\+/g, ' '))) : BIDS);
@@ -143,11 +151,19 @@
     const tpl = new Uint8Array(await (await fetch('samples/공고문양식.hwpx')).arrayBuffer());
     files.set('공고문/양식/공고문양식.hwpx', tpl);
     const now = Date.now();
-    await server.writeJson('공고문대장.json', { version: 1, notices: [{ id: 'demo1', createdAt: now, updatedAt: now, manual: {}, learned: null,
+    const done = { id: 'demo3', status: 'done', createdAt: now - 864e5, updatedAt: now - 864e5, manual: {}, learned: null, lastFile: '',
+      v: { 구분: '공사', 공종: '전기공사', 공고명: '수지 주차장 수변전 설비 전기공사', 공고번호: '2026-091', 현장: '용인시 수지구 풍덕천동 일원', 기간: '착공일로부터 60일',
+        추정가격: '60,000,000', 부가세: '6,000,000', 추정금액: '66,000,000', 기초금액: '', 계약방법: '제한경쟁', 낙찰자결정방법: '적격심사', 낙찰하한율: '86.745%',
+        업종제한: '「전기공사업법」에 따른 전기공사업 등록업체', 지역제한: '경기도', 공동도급: '불허', 입찰보증금: '입찰금액의 100분의 5 이상', 상생결제: '적용',
+        공고일: '', 입찰시작: '', 입찰마감: '', 개찰일시: '', 현장설명: '없음', 하자담보책임기간: '준공일로부터 2년', 담당부서: '계약팀', 담당자: ME, 연락처: '031-000-0000', 기관명: '용인도시공사' } };
+    const posted = JSON.parse(JSON.stringify(done)); Object.assign(posted, { id: 'demo2', status: 'posted', createdAt: now - 20 * 864e5, updatedAt: now - 15 * 864e5,
+      g2b: { no: 'R26BK00000002', ord: '000', name: '동백 체육공원 조명 교체 전기공사', org: '용인도시공사', close: '2026-09-09T10:00', open: '2026-09-09T11:00', checked: true } });
+    Object.assign(posted.v, { 공고명: '동백 체육공원 조명 교체 전기공사', 공고번호: '2026-074', 현장: '용인시 기흥구 동백동 일원', 추정가격: '45,000,000', 부가세: '4,500,000', 추정금액: '49,500,000', 낙찰하한율: '87.745%', 지역제한: '용인시', 상생결제: '미적용' });
+    await server.writeJson('공고문대장.json', { version: 1, notices: [{ id: 'demo1', status: 'draft', createdAt: now, updatedAt: now, manual: {}, learned: null,
       v: { 구분: '공사', 공종: '전기공사', 공고명: '신갈오거리 보안등 정비 전기공사', 공고번호: '', 현장: '용인시 기흥구 신갈동 일원', 기간: '착공일로부터 45일',
         추정가격: '32,000,000', 부가세: '3,200,000', 추정금액: '35,200,000', 기초금액: '', 계약방법: '제한경쟁', 낙찰자결정방법: '적격심사', 낙찰하한율: '',
         업종제한: '「전기공사업법」에 따른 전기공사업 등록업체', 지역제한: '용인시', 공동도급: '불허', 입찰보증금: '입찰금액의 100분의 5 이상', 상생결제: '미적용',
-        공고일: '', 입찰시작: '', 입찰마감: '', 개찰일시: '', 현장설명: '없음', 하자담보책임기간: '준공일로부터 2년', 담당부서: '계약팀', 담당자: ME, 연락처: '031-000-0000', 기관명: '용인도시공사' } }] });
+        공고일: '', 입찰시작: '', 입찰마감: '', 개찰일시: '', 현장설명: '없음', 하자담보책임기간: '준공일로부터 2년', 담당부서: '계약팀', 담당자: ME, 연락처: '031-000-0000', 기관명: '용인도시공사' } }, done, posted] });
   }
   async function runDemo() {
     const app = JH.app;

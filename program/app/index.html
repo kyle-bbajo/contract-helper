@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="jh-token" content="__JH_TOKEN__">
+<title>계약업무 도우미</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app">
+  <header class="bar">
+    <button type="button" class="brand" data-view="home" title="처음 화면">
+      <svg class="brand-seal" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="17" fill="none" stroke="currentColor" stroke-width="2.4"/><circle cx="20" cy="20" r="12.5" fill="none" stroke="currentColor" stroke-width="1"/><text x="20" y="25" text-anchor="middle" font-size="13" font-weight="800" fill="currentColor">계약</text></svg>
+      <span>계약업무 도우미</span>
+    </button>
+    <nav class="views" aria-label="화면">
+      <span class="vgroup" data-mod="jichul">
+        <span class="vlabel">지출서류</span>
+        <button type="button" data-view="contracts">계약별</button>
+        <button type="button" data-view="board">현황판</button>
+        <button type="button" data-view="inbox">미분류<span class="count" id="inboxCount" hidden></span></button>
+      </span>
+      <span class="vgroup" data-mod="notice">
+        <button type="button" data-view="notice">공고문 작성</button>
+      </span>
+    </nav>
+    <div class="bar-actions">
+      <button type="button" class="btn ghost refresh" id="btnFetch" data-for="jichul" title="나라장터 계약목록 새로고침"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>새로고침</span></button>
+      <button type="button" class="btn primary" id="btnAdd" data-for="jichul">업로드</button>
+      <button type="button" class="btn primary" id="btnNewNotice" data-for="notice">새 공고문</button>
+      <button type="button" class="btn icon" id="btnSettings" aria-label="설정" title="설정">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 13.5a7.7 7.7 0 0 0 0-3l2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A7.6 7.6 0 0 0 7 6.5l-2.4-1-2 3.4 2 1.6a7.7 7.7 0 0 0 0 3l-2 1.6 2 3.4 2.4-1a7.6 7.6 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a7.6 7.6 0 0 0 2.6-1.5l2.4 1 2-3.4-2-1.6Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <main>
+    <section class="view on" id="view-home" aria-label="처음 화면">
+      <div class="home">
+        <h1 class="home-title" id="homeTitle">어떤 일을 하시겠어요?</h1>
+        <div class="doors">
+          <button type="button" class="door" data-view="contracts">
+            <svg class="door-seal" viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="54" fill="none" stroke="currentColor" stroke-width="5"/><circle cx="60" cy="60" r="45" fill="none" stroke="currentColor" stroke-width="1.6"/><text x="60" y="71" text-anchor="middle" font-size="32" font-weight="800" fill="currentColor">지출</text></svg>
+            <h2>지출서류 정리</h2>
+            <p>받은 서류를 넣으면 계약 건별로 나누고, 빠진 서류를 확인해 한 번에 인쇄합니다.</p>
+            <ul class="door-stats" id="homeJichul"></ul>
+          </button>
+          <button type="button" class="door notice" data-view="notice">
+            <svg class="door-seal" viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="54" fill="none" stroke="currentColor" stroke-width="5"/><circle cx="60" cy="60" r="45" fill="none" stroke="currentColor" stroke-width="1.6"/><text x="60" y="71" text-anchor="middle" font-size="32" font-weight="800" fill="currentColor">공고</text></svg>
+            <h2>공고문 작성</h2>
+            <p>공종과 금액을 넣으면 비슷한 나라장터 공고에서 조건을 배워 채우고, 문장 초안이나 한글 양식으로 만들어 줍니다.</p>
+            <ul class="door-stats" id="homeNotice"></ul>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="view-contracts" aria-label="계약별">
+      <aside class="list">
+        <div class="filters">
+          <input type="search" id="q" placeholder="계약명, 업체, 계약번호로 찾기" aria-label="계약 찾기">
+          <div class="frow">
+            <select id="fOfficer" aria-label="담당자"></select>
+            <select id="fType" aria-label="공사·용역"><option value="">공사·용역 전체</option><option>공사</option><option>용역</option></select>
+          </div>
+          <div class="seg" id="fState" role="group" aria-label="상태">
+            <button type="button" data-state="" class="on">전체</button>
+            <button type="button" data-state="missing">미비</button>
+            <button type="button" data-state="ready">지출 대기</button>
+            <button type="button" data-state="paid">지출 완료</button>
+          </div>
+        </div>
+        <div class="items" id="contractList" role="list"></div>
+        <div class="list-foot">
+          <span id="listCount"></span>
+          <button type="button" class="link" id="btnNewContract">계약 직접 추가</button>
+        </div>
+      </aside>
+      <article class="detail" id="detail" aria-live="polite"></article>
+    </section>
+
+    <section class="view" id="view-board" aria-label="현황판"></section>
+    <section class="view" id="view-inbox" aria-label="미분류"></section>
+    <section class="view" id="view-notice" aria-label="공고문 작성">
+      <aside class="list">
+        <div class="filters"><strong>작성한 공고문</strong></div>
+        <div class="items" id="noticeList" role="list"></div>
+        <div class="list-foot"><span></span><button type="button" class="link" data-nact="new">새 공고문</button></div>
+      </aside>
+      <article class="detail" id="noticeMain"></article>
+    </section>
+  </main>
+
+  <div class="drop-overlay" id="dropOverlay" hidden>
+    <div class="drop-card">
+      <strong id="dropTitle">놓으면 자동으로 정리합니다</strong>
+      <span id="dropSub">내용을 읽어 계약 건과 서류 종류를 찾습니다</span>
+    </div>
+  </div>
+  <div class="progress" id="progress" hidden><div class="progress-bar"><i id="progressFill"></i></div><span id="progressText"></span></div>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <input type="file" id="fileIn" multiple hidden>
+</div>
+
+<dialog id="dlgSettings" class="dlg wide" aria-labelledby="setTitle">
+  <form method="dialog" class="dlg-head">
+    <h2 id="setTitle">설정</h2>
+    <button class="btn icon" value="close" aria-label="닫기">✕</button>
+  </form>
+  <div class="dlg-tabs" role="tablist">
+    <button type="button" data-tab="nara" class="on">나라장터 연결</button>
+    <button type="button" data-tab="folder">데이터 폴더</button>
+    <button type="button" data-tab="lists">서류 목록</button>
+    <button type="button" data-tab="notice">공고문</button>
+    <button type="button" data-tab="about">정보</button>
+  </div>
+  <div class="dlg-body">
+    <div class="tab on" data-pane="nara">
+      <p class="help">공공데이터포털에서 받은 인증키와 기관명을 넣으면 계약 목록을 불러옵니다. 담당자 이름을 넣으면 목록이 처음부터 내 담당 계약으로 걸러집니다.</p>
+      <div class="form">
+        <label>인증키 <span class="hint">공공데이터포털 → 마이페이지 → 일반 인증키(Encoding)</span>
+          <input type="password" id="cfgKey" autocomplete="off" spellcheck="false"></label>
+        <div class="form-row">
+          <label>기관명<input type="text" id="cfgInstt" placeholder="용인도시공사"></label>
+          <label>기관 기준<select id="cfgInsttDiv"><option value="1">계약기관</option><option value="2">수요기관</option></select></label>
+        </div>
+        <div class="form-row">
+          <label>내 이름 <span class="hint">나라장터의 계약 담당자명과 같게</span><input type="text" id="cfgOfficer" placeholder="예: 용도공"></label>
+          <label>불러올 기간<select id="cfgMonths"><option value="3">최근 3개월</option><option value="6">최근 6개월</option><option value="12">최근 1년</option><option value="24">최근 2년</option></select></label>
+        </div>
+      </div>
+      <div class="dlg-actions">
+        <span class="note" id="naraNote"></span>
+        <button type="button" class="btn" id="btnTestNara">연결 확인</button>
+        <button type="button" class="btn primary" id="btnSaveNara">저장하고 불러오기</button>
+      </div>
+    </div>
+    <div class="tab" data-pane="folder">
+      <p class="help">넣은 서류는 이 폴더 안에 <b>계약</b> 폴더별로 저장됩니다. 탐색기에서 직접 열어봐도 됩니다. 여러 사람이 함께 쓰려면 공유 폴더를 고르세요.</p>
+      <div class="path-box"><code id="dataDir">-</code></div>
+      <div class="dlg-actions">
+        <button type="button" class="btn" id="btnOpenData">탐색기로 열기</button>
+        <button type="button" class="btn" id="btnPickData">폴더 바꾸기</button>
+      </div>
+    </div>
+    <div class="tab" data-pane="lists">
+      <div class="lists-head">
+        <div class="seg" id="listType"><button type="button" data-type="공사" class="on">공사</button><button type="button" data-type="용역">용역</button></div>
+        <p class="help">위에서부터 인쇄 순서입니다. 파일명이나 문서 제목에 ‘찾을 단어’가 있으면 그 서류로 분류합니다. 쉼표로 구분하고 띄어쓰기는 무시합니다.</p>
+      </div>
+      <div class="ed-head"><span>단계</span><span>서류</span><span>찾을 단어</span><span>받는 곳</span><span>필수</span><span></span></div>
+      <div id="edRows" class="ed-rows"></div>
+      <div class="dlg-actions">
+        <button type="button" class="btn ghost" id="btnResetLists">구비서류 안내 기준으로 되돌리기</button>
+        <button type="button" class="btn" id="btnAddRow">서류 추가</button>
+        <button type="button" class="btn primary" id="btnSaveLists">서류 목록 저장</button>
+      </div>
+    </div>
+    <div class="tab" data-pane="notice">
+      <p class="help">공고문에 자동으로 들어갈 값입니다. 상생결제 기준 금액을 넣으면 추정가격이 그 이상일 때 ‘적용’, 미만이면 ‘미적용’으로 자동 선택합니다.</p>
+      <div class="form">
+        <div class="form-row">
+          <label>담당부서<input type="text" id="ntDept" placeholder="예: 계약팀"></label>
+          <label>연락처<input type="text" id="ntPhone" placeholder="예: 031-000-0000"></label>
+        </div>
+        <div class="form-row">
+          <label>기본 지역제한<select id="ntRegion"><option>경기도</option><option>용인시</option><option>제한 없음(전국)</option></select></label>
+          <label>상생결제 적용 기준(추정가격, 원) <span class="hint">비워 두면 직접 선택</span><input type="text" id="ntWinwin" inputmode="numeric" placeholder="예: 50,000,000"></label>
+        </div>
+      </div>
+      <div class="dlg-actions"><button type="button" class="btn primary" id="btnSaveNotice">저장</button></div>
+      <h3 class="sub-h">한글 양식</h3>
+      <p class="help">회사 공고문 한글 파일에서 바뀌는 자리에 <b>{{공고명}}</b>처럼 적어 저장한 뒤 올리세요. [한글 양식으로 만들기]를 누르면 그 자리에 값이 들어간 새 파일을 만듭니다. 아래 이름을 누르면 복사됩니다.</p>
+      <div class="ph-keys" id="phKeys"></div>
+      <div class="tpl-list" id="tplFiles"></div>
+      <div class="dlg-actions">
+        <input type="file" id="tplIn" accept=".hwp,.hwpx" hidden>
+        <button type="button" class="btn" id="btnAddTpl">양식 올리기</button>
+      </div>
+    </div>
+    <div class="tab" data-pane="about">
+      <dl class="about">
+        <dt>버전</dt><dd id="aboutVer">-</dd>
+        <dt>저장 위치</dt><dd id="aboutDir">-</dd>
+        <dt>동작 방식</dt><dd>이 PC 안에서만 동작합니다. 서류 내용은 외부로 전송되지 않으며, 나라장터 조회 때만 공공데이터포털에 접속합니다.</dd>
+        <dt>끝내기</dt><dd><button type="button" class="btn" id="btnQuit">프로그램 종료</button></dd>
+      </dl>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="dlgContract" class="dlg" aria-labelledby="ctTitle">
+  <form method="dialog" class="dlg-head">
+    <h2 id="ctTitle">계약 직접 추가</h2>
+    <button class="btn icon" value="close" aria-label="닫기">✕</button>
+  </form>
+  <div class="dlg-body">
+    <div class="form">
+      <div class="form-row">
+        <label>구분<select id="ctType"><option>공사</option><option>용역</option></select></label>
+        <label>계약번호<input type="text" id="ctNo" placeholder="없으면 비워 두세요"></label>
+      </div>
+      <label>계약명<input type="text" id="ctName" required></label>
+      <div class="form-row">
+        <label>업체명<input type="text" id="ctVendor"></label>
+        <label>계약금액(원)<input type="text" id="ctAmount" inputmode="numeric"></label>
+      </div>
+      <div class="form-row">
+        <label>착공(착수)일<input type="date" id="ctStart"></label>
+        <label>준공일<input type="date" id="ctEnd"></label>
+      </div>
+    </div>
+    <div class="dlg-actions">
+      <button type="button" class="btn ghost danger" id="ctArchive" hidden>목록에서 숨기기</button>
+      <button type="button" class="btn primary" id="ctSave">저장</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="dlgWelcome" class="dlg" aria-labelledby="wTitle">
+  <div class="dlg-head"><h2 id="wTitle">계약업무 도우미를 시작합니다</h2></div>
+  <div class="dlg-body">
+    <p class="help"><b id="wOrg"></b> 계약 담당자용입니다. 이름은 나라장터의 계약 담당자명과 같게 넣어 주세요. 이 이름으로 내 담당 계약만 걸러 보여줍니다. 부서와 연락처는 비워 둬도 되고, 넣으면 공고문 문의처에 들어갑니다.</p>
+    <div class="form">
+      <label>이름<input type="text" id="wName" placeholder="예: 용도공" autocomplete="name"></label>
+      <div class="form-row">
+        <label>부서 <span class="hint">선택</span><input type="text" id="wDept" placeholder="예: 계약팀"></label>
+        <label>연락처 <span class="hint">선택 · 공고문 문의처에만 씀</span><input type="text" id="wPhone" placeholder="예: 031-000-0000"></label>
+      </div>
+    </div>
+    <p class="help small" id="wKeyNote" style="margin-top:12px">나라장터 연결은 기관 공용 설정으로 되어 있어 따로 할 일이 없습니다. 시작하면 내 담당 계약을 불러옵니다.</p>
+    <div class="dlg-actions"><button type="button" class="btn primary" id="wSave">시작하기</button></div>
+  </div>
+</dialog>
+
+<dialog id="dlgTpl" class="dlg narrow" aria-labelledby="tplTitle">
+  <form method="dialog" class="dlg-head"><h2 id="tplTitle">양식 고르기</h2><button class="btn icon" value="close" aria-label="닫기">✕</button></form>
+  <div class="dlg-body"><div id="tplList" class="form"></div><div class="dlg-actions"><button type="button" class="btn primary" id="tplGo">이 양식으로 만들기</button></div></div>
+</dialog>
+
+<dialog id="dlgPay" class="dlg narrow" aria-labelledby="payTitle">
+  <form method="dialog" class="dlg-head">
+    <h2 id="payTitle">지출 처리</h2>
+    <button class="btn icon" value="close" aria-label="닫기">✕</button>
+  </form>
+  <div class="dlg-body">
+    <div class="form"><label>지출일<input type="date" id="payDate"></label><label>메모<input type="text" id="payMemo" placeholder="지출결의 번호 등"></label></div>
+    <div class="dlg-actions">
+      <button type="button" class="btn ghost danger" id="payUndo">지출 처리 취소</button>
+      <button type="button" class="btn primary" id="paySave">지출 완료로 표시</button>
+    </div>
+  </div>
+</dialog>
+
+<script src="vendor/pdf-lib.min.js"></script>
+<script src="vendor/pdfjs/pdf.min.js"></script>
+<script src="vendor/cfb.min.js"></script>
+<script src="vendor/tesseract/tesseract.min.js"></script>
+<script src="js/logic.js"></script>
+<script src="js/hwp.js"></script>
+<script src="js/server.js"></script>
+<script src="js/readers.js"></script>
+<script src="js/pdfbuild.js"></script>
+<script src="js/notice-logic.js"></script>
+<script src="js/app.js"></script>
+<script src="js/notice.js"></script>
+<script src="js/settings.js"></script>
+</body>
+</html>

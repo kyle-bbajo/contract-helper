@@ -99,3 +99,15 @@ print(json.dumps({'first':n[0].filename,'stored':n[0].compress_type==0,'names':[
   assert.match(info.x, /공고명: X<\/hp:t>/); assert.match(info.x, /지역: 경기도/);
   assert.equal(info.first, 'mimetype'); assert.ok(info.stored); assert.ok(info.names.includes('Contents/section0.xml'));
 });
+
+test('공고문 진행 상태와 나라장터 입찰공고번호 읽기', () => {
+  assert.equal(N.statusOf({}), 'draft');
+  assert.equal(N.statusOf({ lastFile: '공고문/작성/a.hwpx' }), 'done'); // 상태가 없던 예전 공고문
+  assert.equal(N.statusOf({ status: 'posted' }), 'posted');
+  assert.deepEqual(N.parseBidNo(' r26bk01234567-000 '), { no: 'R26BK01234567', ord: '000' });
+  assert.deepEqual(N.parseBidNo('R26BK01234567 1'), null);
+  assert.deepEqual(N.parseBidNo('R26BK01234567 01'), { no: 'R26BK01234567', ord: '001' });
+  assert.deepEqual(N.parseBidNo('R26BK01234567'), { no: 'R26BK01234567', ord: '' });
+  assert.equal(N.parseBidNo('공고번호'), null);
+  assert.match(N.bidByNoUrl('용역', 'R26BK01234567', 'k'), /getBidPblancListInfoServc\?serviceKey=k&inqryDiv=2&bidNtceNo=R26BK01234567/);
+});

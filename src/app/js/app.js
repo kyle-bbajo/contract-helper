@@ -104,8 +104,8 @@
     return { c, created: true };
   }
 
-  // ---------- 서류 넣기 ----------
-  async function ingest(fileList, forceKey) {
+  // ---------- 업로드 ----------
+  async function ingest(fileList, forceKey, forceItem) {
     const files = [...fileList].filter((f) => f && f.name && !f.name.startsWith('.') && !/^(thumbs\.db|desktop\.ini)$/i.test(f.name));
     if (!files.length) return;
     if (!S.online) { toast('바탕화면의 "지출서류 도우미" 바로가기로 실행해야 서류를 저장할 수 있습니다.', 'err'); return; }
@@ -145,7 +145,7 @@
         const r = recs[i];
         progress(`정리하는 중 ${i + 1}/${recs.length}`, i / recs.length);
         let c = forced || (r.key && db.contracts[r.key]) || L.matchContract(contracts(), L.norm(L.stem(r.name)) + '|' + r.text);
-        const itemId = c ? L.classifyItem(lists(c.type), r.name, r.title) : null;
+        const itemId = c ? (forced && forceItem ? forceItem : L.classifyItem(lists(c.type), r.name, r.title)) : null;
         const item = c && itemId ? lists(c.type).find((x) => x.id === itemId) : null;
         const dir = c ? folderOf(c) : INBOX;
         const fname = item ? `${L.safeName(item.name, 30)}_${r.name}` : r.name;
@@ -170,6 +170,13 @@
     } catch (e) {
       console.error(e); toast('서류를 정리하지 못했습니다: ' + e.message, 'err');
     } finally { progress(null); render(); }
+  }
+  // 마지막으로 불러온 때(새로고침 버튼 풍선말·목록 아래)
+  function fetchStamp() {
+    const d = cfg.lastFetch ? new Date(cfg.lastFetch) : null;
+    if (!d || isNaN(d)) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return `${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
   }
 
   // 서류를 다른 계약·종류로 옮김(파일도 해당 폴더로 이동)
@@ -270,6 +277,7 @@
       months = Math.max(1, Math.min(months, since));
     }
     const ranges = L.monthRanges(months);
+    const btn = $('#btnFetch'); if (btn.classList.contains('busy')) return; btn.classList.add('busy'); btn.disabled = true;
     const steps = ranges.length * 2; let step = 0, created = 0; const seen = new Set();
     try {
       for (const type of ['공사', '용역']) {
@@ -288,7 +296,7 @@
       toast(`나라장터 계약 ${seen.size}건을 확인했습니다. 새 계약 ${created}건` + (moved ? `, 미분류 서류 ${moved}개를 계약으로 옮겼습니다.` : '.'), 'ok');
     } catch (e) {
       console.error(e); toast(e.message, 'err');
-    } finally { progress(null); render(); }
+    } finally { btn.classList.remove('busy'); btn.disabled = false; progress(null); render(); }
   }
 
   // ---------- 인쇄·저장 ----------
@@ -380,7 +388,9 @@
         <div class="meta"><span>${esc(c.vendor || '업체 미상')}</span><span>${esc(c.type)}</span>${c.endDate ? `<span class="date"${st.late ? ' style="color:var(--seal)"' : ''}>준공 ${esc(L.fmtDate(c.endDate))}</span>` : ''}</div>
         <div class="bar-mini"><i style="width:${pct}%"></i></div></div>`;
     }).join('') || `<div class="empty-state" style="margin:40px 16px"><p>${contracts().length ? '조건에 맞는 계약이 없습니다.' : '아직 계약이 없습니다. 나라장터에서 불러오거나 계약서를 넣으면 생깁니다.'}</p></div>`;
-    $('#listCount').textContent = `${list.length}건`;
+    const stamp = fetchStamp();
+    $('#listCount').textContent = `${list.length}건` + (stamp ? ` · 나라장터 ${stamp} 기준` : '');
+    $('#btnFetch').title = '나라장터 계약목록 새로고침' + (stamp ? ` (마지막 ${stamp})` : '');
   }
 
   // ---------- 화면: 계약 상세 ----------
@@ -416,7 +426,7 @@
     if (!c) {
       el.innerHTML = `<div class="empty-state"><h2>계약을 고르거나 서류를 넣어 시작하세요</h2>
         <p>받은 서류를 이 창에 끌어다 놓으면 내용을 읽어 계약 건과 서류 종류를 찾아 정리합니다. 계약서가 들어오면 계약 건도 자동으로 만들어집니다.</p>
-        <button class="btn primary" data-act="add">서류 넣기</button></div>`;
+        <button class="btn primary" data-act="add">업로드</button></div>`;
       return;
     }
     const list = lists(c.type), docs = docsOf(c.key), st = statusOf(c);
@@ -449,6 +459,8 @@
         </div>
         ${sealSvg(st, c)}
       </div>
+      <div class="dropin" id="dropin"><button class="btn primary" data-act="addhere">업로드</button>
+        <span>이 계약 서류로 올립니다. 서류 종류는 자동으로 찾고, 파일을 여기에 끌어다 놓아도 됩니다.</span></div>
       <div class="stages">
         ${untyped.length ? `<section class="stage"><div class="stage-head"><span class="stage-no" style="background:var(--amber)">?</span><h3>서류 종류를 정해 주세요</h3><span class="where">이 계약 서류인데 어떤 서류인지 찾지 못했습니다</span></div>
           <div class="row"><span class="mark warn">!</span><div class="rname">종류 미정 ${untyped.length}개</div><div class="rside"></div><div class="files">${untyped.map((d) => fileRow(d, list)).join('')}</div></div></section>` : ''}
@@ -468,13 +480,13 @@
               else if (x.required) { mark = '<span class="mark miss">✕</span>'; side = '<span class="missing">누락</span>'; }
               else { mark = '<span class="mark opt">–</span>'; side = '<span class="optional">해당 시</span>'; }
               const tog = canOrig ? `<label class="orig-toggle" title="종이 원본으로 받았으면 체크하세요. 인쇄본의 이 자리에 원본을 끼울 안내 페이지가 들어갑니다."><input type="checkbox" data-act="orig" data-item="${esc(x.id)}"${orig ? ' checked' : ''}> 원본</label>` : '';
-              return `<div class="row">${mark}<div class="rname">${esc(x.name)}${x.note ? `<span class="note">${esc(x.note)}</span>` : ''}</div>
-                <div class="rside">${tog}${side}</div>${ds.length ? `<div class="files">${ds.map((d) => fileRow(d, list)).join('')}</div>` : ''}</div>`;
+              const add = `<button class="add-item" data-act="additem" data-item="${esc(x.id)}" title="${esc(x.name)}(으)로 바로 넣기">+ 추가</button>`;
+              return `<div class="row" data-drop-item="${esc(x.id)}">${mark}<div class="rname">${esc(x.name)}${x.note ? `<span class="note">${esc(x.note)}</span>` : ''}</div>
+                <div class="rside">${tog}${side}${add}</div>${ds.length ? `<div class="files">${ds.map((d) => fileRow(d, list)).join('')}</div>` : ''}</div>`;
             }).join('')}
           </section>`;
         }).join('')}
-      </div>
-      <div class="dropin" id="dropin">이 계약의 서류를 여기에 놓으면 이 계약으로 정리합니다 <button class="btn sm" data-act="addhere">파일 고르기</button></div>`;
+      </div>`;
   }
 
   // ---------- 화면: 현황판 ----------
@@ -532,7 +544,7 @@
       : '<li class="muted">아직 계약이 없습니다. 서류를 넣거나 나라장터에서 불러오세요.</li>';
     const ns = JH.notice && JH.notice.stats ? JH.notice.stats() : { count: 0 };
     $('#homeNotice').innerHTML = ns.count
-      ? `<li><b class="num">${ns.count}</b>작성한 공고문</li>${ns.recent ? `<li class="recent">최근: ${esc(ns.recent)}</li>` : ''}`
+      ? `<li><b class="num">${ns.draft}</b>작성 중</li><li><b class="num">${ns.done}</b>작성 완료</li><li><b class="num">${ns.posted}</b>나라장터 등록</li>${ns.recent ? `<li class="recent">최근: ${esc(ns.recent)}</li>` : ''}`
       : '<li class="muted">아직 작성한 공고문이 없습니다.</li>';
   }
 
@@ -565,7 +577,8 @@
     const act = t.dataset.act, c = ui.sel && db.contracts[ui.sel];
     try {
       if (act === 'add') $('#fileIn').click();
-      else if (act === 'addhere') { pickTarget = ui.sel; $('#fileIn').click(); }
+      else if (act === 'addhere') { pickTarget = { key: ui.sel }; $('#fileIn').click(); }
+      else if (act === 'additem') { pickTarget = { key: ui.sel, item: t.dataset.item }; $('#fileIn').click(); }
       else if (act === 'print') await printContract(c, 'print');
       else if (act === 'save') await printContract(c, 'save');
       else if (act === 'folder') await S.open(folderOf(c));
@@ -676,24 +689,30 @@
   $('#btnFetch').onclick = () => fetchContracts();
   $('#btnNewContract').onclick = () => openContract(null);
   let pickTarget = null;
-  $('#fileIn').onchange = (e) => { const fs = [...e.target.files]; e.target.value = ''; ingest(fs, pickTarget); pickTarget = null; };
+  $('#fileIn').onchange = (e) => { const fs = [...e.target.files]; e.target.value = ''; const p = pickTarget || {}; pickTarget = null; ingest(fs, p.key || null, p.item || null); };
 
-  // 끌어다 놓기: 계약 상세의 놓는 칸이면 그 계약으로, 아니면 자동 분류
+  // 끌어다 놓기: 서류 줄이면 그 계약·그 서류로, 업로드 칸이면 그 계약으로, 아니면 자동 분류
+  const dropTarget = (e) => {
+    if (ui.view !== 'contracts' || !ui.sel || !e.target.closest) return null;
+    const row = e.target.closest('#detail [data-drop-item]'); if (row) return { el: row, key: ui.sel, item: row.dataset.dropItem };
+    const di = e.target.closest('#dropin'); if (di) return { el: di, key: ui.sel };
+    return null;
+  };
+  const clearOver = () => $$('#detail .over').forEach((x) => x.classList.remove('over'));
   let dragDepth = 0;
   const hasFiles = (e) => e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
   window.addEventListener('dragenter', (e) => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth++; $('#dropOverlay').hidden = false; });
-  window.addEventListener('dragleave', (e) => { if (!hasFiles(e)) return; if (--dragDepth <= 0) { dragDepth = 0; $('#dropOverlay').hidden = true; const di = $('#dropin'); if (di) di.classList.remove('over'); } });
+  window.addEventListener('dragleave', (e) => { if (!hasFiles(e)) return; if (--dragDepth <= 0) { dragDepth = 0; $('#dropOverlay').hidden = true; clearOver(); } });
   window.addEventListener('dragover', (e) => {
     if (!hasFiles(e)) return; e.preventDefault();
-    const di = $('#dropin'); const over = di && di.contains(e.target);
-    if (di) di.classList.toggle('over', !!over);
-    $('#dropOverlay').hidden = !!over;
+    const tg = dropTarget(e); clearOver(); if (tg) tg.el.classList.add('over');
+    $('#dropOverlay').hidden = !!tg;
   });
   window.addEventListener('drop', async (e) => {
     if (!hasFiles(e)) return; e.preventDefault(); dragDepth = 0; $('#dropOverlay').hidden = true;
-    const di = $('#dropin'); const toHere = di && di.contains(e.target); if (di) di.classList.remove('over');
+    const tg = dropTarget(e); clearOver();
     const files = await collectDropped(e.dataTransfer);
-    ingest(files, toHere ? ui.sel : null);
+    ingest(files, tg ? tg.key : null, tg ? tg.item || null : null);
   });
   async function collectDropped(dt) {
     const entries = dt.items ? [...dt.items].map((i) => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean) : [];

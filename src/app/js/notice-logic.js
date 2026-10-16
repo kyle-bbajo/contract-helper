@@ -44,7 +44,7 @@
     { key: '구분', sec: '기본', type: 'select', opts: ['공사', '용역'] },
     { key: '공종', sec: '기본', type: 'select', optsFrom: 'work' },
     { key: '공고명', sec: '기본', type: 'text', wide: true, ph: '예: 시청사 옥상 방수공사' },
-    { key: '공고번호', sec: '기본', type: 'text', ph: '나라장터 등록 후 번호' },
+    { key: '공고번호', sec: '기본', type: 'text', label: '기관 공고번호', hint: '공고 제○○호', ph: '예: 2026-087' },
     { key: '현장', sec: '기본', type: 'text', wide: true, ph: '예: 용인시 처인구 중부대로 1199', label: '공사(용역) 장소' },
     { key: '기간', sec: '기본', type: 'text', ph: '예: 착공일로부터 60일', label: '공사(용역) 기간' },
     { key: '추정가격', sec: '금액', type: 'money', hint: '부가세 별도' },
@@ -118,6 +118,23 @@
     if (q.priceMax) p.set('presmptPrceEnd', String(Math.round(q.priceMax)));
     return `${BID_BASE}/${BID_OPS[kind] || BID_OPS.공사}?serviceKey=${encodeURIComponent(String(apiKey || '').trim())}&${p.toString()}`;
   }
+  // 공고문 진행 상태: 작성 중 → 작성 완료(한글 양식 만듦·직접 표시) → 나라장터 등록(사람이 나라장터에서 등록한 뒤 받은 입찰공고번호를 넣어 연결 — 등록 API는 없음)
+  const STATUS = {
+    draft: { label: '작성 중', cls: 'late' },
+    done: { label: '작성 완료', cls: 'ready' },
+    posted: { label: '나라장터 등록', cls: 'paid' },
+  };
+  const STATUS_ORDER = ['draft', 'done', 'posted'];
+  const statusOf = (n) => (n && STATUS[n.status] ? n.status : n && n.lastFile ? 'done' : 'draft');
+  // 나라장터 입찰공고번호: "R26BK01234567-000", "R26BK01234567 000", "20261012345-00" 등
+  function parseBidNo(s) {
+    const m = String(s || '').toUpperCase().replace(/\s+/g, ' ').trim().match(/^([A-Z0-9]{8,15})(?:[- ]?(\d{2,3}))?$/);
+    if (!m) return null;
+    return { no: m[1], ord: m[2] ? m[2].padStart(3, '0') : '' };
+  }
+  const BID_BY_NO = { 공사: 'getBidPblancListInfoCnstwk', 용역: 'getBidPblancListInfoServc' };
+  const bidByNoUrl = (kind, no, apiKey) =>
+    `${BID_BASE}/${BID_BY_NO[kind] || BID_BY_NO.공사}?serviceKey=${encodeURIComponent(String(apiKey || '').trim())}&inqryDiv=2&bidNtceNo=${encodeURIComponent(no)}&pageNo=1&numOfRows=10&type=json`;
   const bidDetailUrl = (op, no, ord, apiKey) =>
     `${BID_BASE}/${op}?serviceKey=${encodeURIComponent(String(apiKey || '').trim())}&inqryDiv=2&bidNtceNo=${encodeURIComponent(no)}&bidNtceOrd=${encodeURIComponent(ord || '000')}&pageNo=1&numOfRows=20&type=json`;
 
@@ -345,7 +362,7 @@
   }
 
   const api = { WORK_TYPES, workType, FIELDS, SECTIONS, labelOf, money, won, blank, applyRules,
-    BID_OPS, bidSearchUrl, bidDetailUrl, normalizeBid, attachmentsOf, extractClauses, regionLabel, learn, mapMethod, mapContract,
+    BID_OPS, bidSearchUrl, bidDetailUrl, STATUS, STATUS_ORDER, statusOf, parseBidNo, bidByNoUrl, normalizeBid, attachmentsOf, extractClauses, regionLabel, learn, mapMethod, mapContract,
     draft, regionSentence, templateValues, fillHwpxXml, fillHwpx, zipStore, crc32, placeholdersIn, fmtDT };
   root.JH = root.JH || {};
   root.JH.notice = Object.assign(root.JH.notice || {}, { logic: api });

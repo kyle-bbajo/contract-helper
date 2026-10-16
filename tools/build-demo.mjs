@@ -2,13 +2,9 @@
 import { cpSync, mkdirSync, rmSync, readFileSync, writeFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
-import zlib from 'node:zlib';
-const require = createRequire(import.meta.url);
-const CFB = require('cfb');
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const SRC = join(ROOT, 'dist/계약업무도우미/program/app');
+const SRC = join(ROOT, 'program/app');
 if (!existsSync(SRC)) throw new Error('먼저 npm run build');
 const OUT = join(ROOT, 'dist/demo');
 rmSync(OUT, { recursive: true, force: true });
@@ -54,30 +50,46 @@ writeFileSync(join(OUT, 'css/demo.css'), `
 .demo-text { white-space: pre-wrap; background: var(--sheet); padding: 20px; border-radius: 8px; width: 100%; max-width: 760px; font: 14px/1.8 "Pretendard", "Malgun Gothic", sans-serif; margin: 0; }
 `);
 
-// 예시 서류(시험용과 같은 noname 서류) + 첨부 공고문(한글) + 공고문 한글 양식(HWPX)
+// 예시 서류: 시험용 noname 서류 중 PDF·스캔·사진만(한글 예시는 이번 시연판에서 뺌)
 const SAMP = join(OUT, 'samples'); mkdirSync(SAMP, { recursive: true });
-for (const f of readdirSync(join(ROOT, 'tests/fixtures/docs'))) cpSync(join(ROOT, 'tests/fixtures/docs', f), join(SAMP, f));
-const rec = (t) => { const b = Buffer.concat([Buffer.from(t, 'utf16le'), Buffer.from([13, 0])]); const h = Buffer.alloc(4); h.writeUInt32LE(67 | (b.length << 20), 0); return Buffer.concat([h, b]); };
+for (const f of readdirSync(join(ROOT, 'tests/fixtures/docs'))) if (!/\.hwpx?$/i.test(f)) cpSync(join(ROOT, 'tests/fixtures/docs', f), join(SAMP, f));
 {
-  const z = CFB.utils.cfb_new(); const fh = Buffer.alloc(256); fh.write('HWP Document File'); fh[36] = 1;
-  CFB.utils.cfb_add(z, '/FileHeader', fh);
-  CFB.utils.cfb_add(z, '/BodyText/Section0', zlib.deflateRawSync(Buffer.concat([
-    '용인도시공사 공고 제2026-087호', '「신갈오거리 보안등 정비 전기공사」 입찰 공고', '1. 입찰에 부치는 사항', '가. 공사명: 신갈오거리 보안등 정비 전기공사',
-    '2. 입찰참가자격', '가. 「전기공사업법」에 따른 전기공사업 등록업체', '나. 입찰공고일 전일부터 입찰일(낙찰자는 계약체결일)까지 법인등기부상 본점 소재지가 경기도 용인시에 있는 자',
-    '다. 공동도급은 허용하지 않습니다', '3. 낙찰자 결정방법', '예정가격 이하 낙찰하한율 87.745% 이상 입찰자 중 최저가 순으로 적격심사', '4. 입찰보증금: 입찰금액의 100분의 5 이상',
-  ].map(rec))));
-  writeFileSync(join(SAMP, 'attach-notice.hwp'), CFB.write(z, { type: 'buffer' }));
+  const p = join(OUT, 'js/demo-server.js'); let d = readFileSync(p, 'utf8');
+  const rep = (a, b) => { if (!d.includes(a)) throw new Error('demo-server 바꿀 곳 없음: ' + a.slice(0, 50)); d = d.replace(a, b); };
+  rep(", 'noname(9).hwp', 'noname(10).hwpx']", ']');
+  rep("    const tpl = new Uint8Array(await (await fetch('samples/공고문양식.hwpx')).arrayBuffer());\n    files.set('공고문/양식/공고문양식.hwpx', tpl);\n", '');
+  rep("async fetchFile() { return new Uint8Array(await (await fetch('samples/attach-notice.hwp')).arrayBuffer()); }", "async fetchFile() { throw new Error('이 시연판에는 한글 첨부 예시를 넣지 않았습니다.'); }");
+  rep('샘플 서류 11개', '샘플 서류 9개(PDF·스캔·사진)');
+  rep("cMapUrl: 'vendor/pdfjs/cmaps/', cMapPacked: true,", 'CMapReaderFactory: root.JH_DemoCMapFactory, cMapPacked: true,');
+  writeFileSync(p, d);
 }
+
+// 게시 페이지는 바이너리 파일(.bcmap·.gz)을 못 올림 → base64 글자로 바꾸고 읽는 쪽을 맞춤
 {
-  const sec = '<?xml version="1.0" encoding="UTF-8"?><hs:sec xmlns:hs="s" xmlns:hp="p">' + [
-    '{{기관명}} 공고 제{{공고번호}}호', '「{{공고명}}」 입찰 공고', '1. 입찰에 부치는 사항', '가. 공사명: {{공고명}}', '나. 공사장소: {{현장}}', '다. 공사기간: {{기간}}',
-    '라. 추정가격: 금 {{추정가격}}원(부가가치세 별도)', '2. 입찰참가자격', '가. {{업종제한}}', '나. {{지역제한문장}}', '다. 공동도급: {{공동도급}}',
-    '3. 낙찰자 결정방법: {{낙찰자결정방법}} (낙찰하한율 {{낙찰하한율}})', '4. 입찰보증금: {{입찰보증금}}', '5. 상생결제: {{상생결제}}', '문의: {{담당부서}} {{담당자}} ({{연락처}})',
-  ].map((t) => `<hp:p><hp:run><hp:t>${t}</hp:t></hp:run></hp:p>`).join('') + '</hs:sec>';
-  const z = CFB.utils.cfb_new();
-  CFB.utils.cfb_add(z, '/mimetype', Buffer.from('application/hwp+zip'));
-  CFB.utils.cfb_add(z, '/Contents/section0.xml', Buffer.from(sec));
-  writeFileSync(join(SAMP, '공고문양식.hwpx'), CFB.write(z, { type: 'buffer', fileType: 'zip' }));
+  const cmd = join(OUT, 'vendor/pdfjs/cmaps'); const m = {};
+  for (const f of readdirSync(cmd)) m[f.replace(/\.bcmap$/, '')] = readFileSync(join(cmd, f)).toString('base64');
+  writeFileSync(join(OUT, 'vendor/pdfjs/cmaps.json'), JSON.stringify(m)); rmSync(cmd, { recursive: true });
+  const lang = join(OUT, 'vendor/tesseract/lang/kor.traineddata.gz');
+  writeFileSync(join(OUT, 'vendor/tesseract/lang/kor.b64.txt'), readFileSync(lang).toString('base64')); rmSync(lang);
+  const p = join(OUT, 'js/readers.js'); let r = readFileSync(p, 'utf8');
+  const rep = (a, b) => { if (!r.includes(a)) throw new Error('readers 바꿀 곳 없음: ' + a.slice(0, 50)); r = r.replace(a, b); };
+  rep("  const PDFJS_OPTS = { cMapUrl: 'vendor/pdfjs/cmaps/', cMapPacked: true,", `  const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+  let cmapsP = null;
+  class DemoCMapFactory { async fetch({ name }) {
+    cmapsP = cmapsP || fetch('vendor/pdfjs/cmaps.json').then((x) => x.json());
+    const m = await cmapsP; if (!m[name]) throw new Error('문자표 없음: ' + name);
+    return { cMapData: b64(m[name]), compressionType: 1 }; } }
+  root.JH_DemoCMapFactory = DemoCMapFactory;
+  const PDFJS_OPTS = { CMapReaderFactory: DemoCMapFactory, cMapPacked: true,`);
+  // 글자 인식 엔진은 브라우저 저장소(keyval-store)를 먼저 보므로 한국어 데이터를 거기에 넣어 둠
+  rep("    ocrWorker = await withTimeout(root.Tesseract.createWorker('kor', 1, {", `    const kor = b64(await (await fetch('vendor/tesseract/lang/kor.b64.txt')).text());
+    await new Promise((ok, no) => { const rq = indexedDB.open('keyval-store'); rq.onupgradeneeded = () => rq.result.createObjectStore('keyval');
+      rq.onerror = () => no(rq.error); rq.onsuccess = () => { const tx = rq.result.transaction('keyval', 'readwrite'); tx.objectStore('keyval').put(kor, './kor.traineddata');
+        tx.oncomplete = () => { rq.result.close(); ok(); }; tx.onerror = () => no(tx.error); }; });
+    ocrWorker = await withTimeout(root.Tesseract.createWorker('kor', 1, {`);
+  writeFileSync(p, r);
+  // 게시 규칙: 글자 파일에 U+FFFD 문자를 그대로 두지 않음
+  for (const f of ['vendor/pdf-lib.min.js']) { const q = join(OUT, f); writeFileSync(q, readFileSync(q, 'utf8').replaceAll('\uFFFD', '\\uFFFD')); }
 }
 
 // 게시할 파일 목록(쪽 자체 제외)

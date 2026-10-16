@@ -1,4 +1,6 @@
-// 배포 묶음 만들기: dist/계약업무도우미/ (설치.bat, 제거.bat, 사용안내.txt, program/) + zip
+// 바로 쓰는 묶음 만들기 — 저장소 맨 위에 설치.bat·실행.bat·제거.bat·사용안내.txt, program/(실행 파일 전부)
+// GitHub에서 Code → Download ZIP으로 받아 압축만 풀면 설치.bat이 바로 동작하도록, 이 결과물도 저장소에 함께 올림
+// 덤으로 dist/계약업무도우미_v버전.zip(같은 내용)도 만듦
 import { cpSync, mkdirSync, rmSync, readFileSync, writeFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,8 +9,8 @@ import { execFileSync } from 'node:child_process';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const NM = join(ROOT, 'node_modules');
 const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
-const OUT = join(ROOT, 'dist', '계약업무도우미');
-const PROG = join(OUT, 'program');
+const OUT = ROOT;
+const PROG = join(ROOT, 'program');
 const APP = join(PROG, 'app');
 const V = join(APP, 'vendor');
 
@@ -21,6 +23,10 @@ const writeText = (p, s, { bom = false, eol = 'crlf' } = {}) => {
 const cp = (from, to) => { mkdirSync(dirname(to), { recursive: true }); cpSync(from, to, { recursive: true }); };
 
 rmSync(join(ROOT, 'dist'), { recursive: true, force: true });
+// program/은 매번 새로 만듦(이 PC에서 실행할 때 생기는 local.json·running.json은 남김)
+const keep = {};
+for (const f of ['local.json', 'running.json']) if (existsSync(join(PROG, f))) keep[f] = readFileSync(join(PROG, f));
+rmSync(PROG, { recursive: true, force: true });
 
 // 1) 페이지
 cp(join(ROOT, 'src/app'), APP);
@@ -89,17 +95,23 @@ pause
 `);
 writeText(join(OUT, '사용안내.txt'), readFileSync(join(ROOT, 'docs/사용안내.txt'), 'utf8'), { bom: true });
 
-// 5) zip
+for (const [f, b] of Object.entries(keep)) writeFileSync(join(PROG, f), b);
+
+// 5) zip(같은 내용을 한 파일로 — 메일·USB로 줄 때)
 const zipName = `계약업무도우미_v${pkg.version}.zip`;
+mkdirSync(join(ROOT, 'dist'), { recursive: true });
 execFileSync('python3', ['-c', `
 import os, zipfile, sys
-src, out = sys.argv[1], sys.argv[2]
-base = os.path.dirname(src)
+root, out = sys.argv[1], sys.argv[2]
+top = ['설치.bat', '실행.bat', '제거.bat', '사용안내.txt']
+skip = {'local.json', 'running.json'}
 with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:
-    for d, _, fs in os.walk(src):
+    for f in top: z.write(os.path.join(root, f), '계약업무도우미/' + f)
+    for d, _, fs in os.walk(os.path.join(root, 'program')):
         for f in sorted(fs):
-            p = os.path.join(d, f); z.write(p, os.path.relpath(p, base))
-`, OUT, join(ROOT, 'dist', zipName)]);
+            if f in skip and os.path.basename(d) == 'program': continue
+            p = os.path.join(d, f); z.write(p, '계약업무도우미/' + os.path.relpath(p, root))
+`, ROOT, join(ROOT, 'dist', zipName)]);
 
 const size = (p) => { let n = 0; const walk = (q) => { for (const e of readdirSync(q)) { const f = join(q, e); const s = statSync(f); s.isDirectory() ? walk(f) : (n += s.size); } }; walk(p); return n; };
-console.log(`만듦: dist/계약업무도우미 (${(size(OUT) / 1048576).toFixed(1)}MB), dist/${zipName} (${(statSync(join(ROOT, 'dist', zipName)).size / 1048576).toFixed(1)}MB)`);
+console.log(`만듦: 설치.bat·실행.bat·제거.bat·사용안내.txt, program/ (${(size(PROG) / 1048576).toFixed(1)}MB), dist/${zipName} (${(statSync(join(ROOT, 'dist', zipName)).size / 1048576).toFixed(1)}MB)`);

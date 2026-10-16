@@ -22,7 +22,7 @@
   }
   function create() {
     const cfg = app().cfg;
-    const n = { id: L.uid(), v: N.applyRules(N.blank(cfg), {}, cfg), manual: {}, learned: null, createdAt: Date.now(), updatedAt: Date.now() };
+    const n = { id: L.uid(), status: 'draft', v: N.applyRules(N.blank(cfg), {}, cfg), manual: {}, learned: null, createdAt: Date.now(), updatedAt: Date.now() };
     store.notices.unshift(n); sel = n.id; save(true); render();
     setTimeout(() => { const t = $('#nTitle'); if (t) t.focus(); }, 0);
   }
@@ -120,6 +120,35 @@
     render();
   }
 
+  // ---------- 진행 상태 ----------
+  function setStatus(n, st) { n.status = st; n.updatedAt = Date.now(); save(true); render(); }
+  // 나라장터 입찰공고번호를 넣으면 '나라장터 등록'으로 넘기고, 나라장터에서 실제 공고를 찾아 공고명·개찰일시를 받아 둠
+  async function registerBid(n, text) {
+    const p = N.parseBidNo(text);
+    if (!p) { app().toast('나라장터 입찰공고번호를 확인해 주세요. 예: R26BK01234567-000', 'err'); const i = $('#g2bNo'); if (i) i.focus(); return; }
+    n.g2b = { no: p.no, ord: p.ord, at: new Date().toISOString(), checked: false };
+    n.status = 'posted'; n.updatedAt = Date.now(); save(true); render();
+    await checkBid(n);
+  }
+  async function checkBid(n) {
+    const cfg = app().cfg, g = n.g2b; if (!g) return;
+    if (!cfg.apiKey) { app().toast('나라장터 등록으로 옮겼습니다. 인증키가 없어 나라장터 확인은 건너뛰었습니다.'); return; }
+    app().progress('나라장터에서 공고 확인 중', .5);
+    try {
+      const kind = n.v.구분 === '용역' ? '용역' : '공사';
+      const found = L.parseApiBody(await S.nara(N.bidByNoUrl(kind, g.no, cfg.apiKey))).items.map(N.normalizeBid).filter((b) => b.no === g.no);
+      const b = found.find((x) => x.ord === g.ord) || found.sort((a, c) => (a.ord < c.ord ? 1 : -1))[0];
+      if (b) {
+        Object.assign(g, { ord: b.ord, name: b.name, org: b.org, date: b.date, close: b.close, open: b.open, url: b.url, checked: true, checkedAt: new Date().toISOString() });
+        app().toast(`나라장터에서 확인했습니다: ${b.name}` + (b.open ? ` · 개찰 ${b.open.replace('T', ' ')}` : ''), 'ok');
+      } else {
+        g.checked = false; g.checkedAt = new Date().toISOString();
+        app().toast('나라장터 등록으로 옮겼습니다. 다만 나라장터에서 이 번호를 아직 찾지 못했습니다(등록 직후엔 조회에 늦게 나올 수 있음). 번호를 확인하거나 나중에 [다시 확인]을 누르세요.');
+      }
+    } catch (e) { console.error(e); app().toast('나라장터 확인 실패: ' + e.message, 'err'); }
+    finally { n.updatedAt = Date.now(); save(true); app().progress(null); render(); }
+  }
+
   // ---------- 한글 양식 ----------
   async function templates() {
     try { const r = await S.list(TPL_DIR, false); return r.files.filter((f) => /\.(hwp|hwpx)$/i.test(f.path)); } catch (_) { return []; }
@@ -144,8 +173,9 @@
         if (!out.count) throw new Error('양식에서 {{항목}} 표시를 찾지 못했습니다.');
         r = await S.save(OUT_DIR, name, out.bytes); r.replaced = out.count;
       }
-      n.lastFile = r.path; n.updatedAt = Date.now(); save(true);
-      app().toast(`한글 공고문을 만들었습니다 (${r.replaced}개 항목).`, 'ok', { label: '한글로 열기', run: () => S.openFile(r.path) });
+      const moved = N.statusOf(n) === 'draft' || !n.status;
+      n.lastFile = r.path; if (moved) n.status = 'done'; n.updatedAt = Date.now(); save(true);
+      app().toast(`한글 공고문을 만들었습니다 (${r.replaced}개 항목).` + (moved ? ' 작성 완료로 옮겼습니다.' : ''), 'ok', { label: '한글로 열기', run: () => S.openFile(r.path) });
     } catch (e) { app().toast(e.message, 'err'); }
     finally { app().progress(null); render(); }
   }
@@ -177,11 +207,32 @@
     }
     return `<label class="nf${f.wide ? ' wide' : ''}">${label}${input}${hint}</label>`;
   }
+  function listItem(n) {
+    const st = N.statusOf(n);
+    return `<div class="citem${n.id === sel ? ' on' : ''}" role="listitem" tabindex="0" data-nid="${n.id}">
+      <div class="nm">${esc(n.v.공고명 || '제목 없는 공고문')}</div><div class="st"><span class="pill ${N.STATUS[st].cls}">${esc(N.STATUS[st].label)}</span></div>
+      <div class="meta"><span>${esc(n.v.공종 || n.v.구분)}</span>${st === 'posted' && n.g2b ? `<span class="num">${esc(n.g2b.no)}</span>` : `${n.v.추정가격 ? `<span class="num">${esc(n.v.추정가격)}원</span>` : ''}<span>${esc(L.fmtDate(new Date(n.updatedAt).toISOString()))}</span>`}</div></div>`;
+  }
   function renderList() {
-    $('#noticeList').innerHTML = store.notices.map((n) => `<div class="citem${n.id === sel ? ' on' : ''}" role="listitem" tabindex="0" data-nid="${n.id}">
-      <div class="nm">${esc(n.v.공고명 || '제목 없는 공고문')}</div><div class="st"><span class="pill none">${esc(n.v.구분)}</span></div>
-      <div class="meta"><span>${esc(n.v.공종 || '')}</span>${n.v.추정가격 ? `<span class="num">${esc(n.v.추정가격)}원</span>` : ''}<span>${esc(L.fmtDate(new Date(n.updatedAt).toISOString()))}</span></div></div>`).join('')
+    const groups = N.STATUS_ORDER.map((k) => ({ k, items: store.notices.filter((n) => N.statusOf(n) === k) })).filter((g) => g.items.length);
+    $('#noticeList').innerHTML = groups.map((g) => `<div class="lgroup"><span>${esc(N.STATUS[g.k].label)}</span><b class="num">${g.items.length}</b></div>${g.items.map(listItem).join('')}`).join('')
       || '<div class="empty-state" style="margin:40px 16px"><p>작성한 공고문이 없습니다.</p></div>';
+  }
+  function statusPanel(n, st) {
+    const steps = N.STATUS_ORDER.map((k, i) => `<span class="nstep${k === st ? ' on' : ''}${N.STATUS_ORDER.indexOf(st) > i ? ' past' : ''}"><i>${N.STATUS_ORDER.indexOf(st) > i ? '✓' : i + 1}</i>${esc(N.STATUS[k].label)}</span>`).join('<span class="nstep-line" aria-hidden="true"></span>');
+    let body;
+    if (st === 'posted') {
+      const g = n.g2b || {};
+      body = `<div class="g2b posted"><div class="g2b-main"><span class="muted">나라장터 입찰공고번호</span> <b class="num">${esc(g.no || '')}${g.ord ? '-' + esc(g.ord) : ''}</b>
+          ${g.checked ? `<span class="ok">✓ 나라장터에서 확인</span>${g.name ? `<div class="g2b-sub">${esc(g.name)}${g.close ? ` · 마감 ${esc(g.close.replace('T', ' '))}` : ''}${g.open ? ` · 개찰 ${esc(g.open.replace('T', ' '))}` : ''}</div>` : ''}`
+            : `<span class="warn-t">나라장터에서 아직 확인 안 됨</span> <button type="button" class="link sm" data-nact="g2bcheck">다시 확인</button>`}</div>
+        <div class="g2b-side">${g.url ? `<a class="btn sm" href="${esc(g.url)}" target="_blank" rel="noopener">나라장터에서 보기</a>` : ''}<button type="button" class="link sm" data-nact="unpost">연결 풀기</button></div>
+        <p class="g2b-note">등록된 공고문은 고칠 수 없게 잠겨 있습니다. 바꿔야 하면 [복사해서 새로 쓰기]를 누르세요.</p></div>`;
+    } else {
+      body = `<div class="g2b"><label for="g2bNo">나라장터에서 직접 등록한 뒤, 받은 입찰공고번호를 넣으면 이 공고문과 연결됩니다 <small class="muted">(이 프로그램이 나라장터에 등록하지는 않습니다)</small></label>
+        <div class="g2b-in"><input id="g2bNo" placeholder="예: R26BK01234567-000" autocomplete="off" spellcheck="false"><button type="button" class="btn${st === 'done' ? ' primary' : ''}" data-nact="g2b">번호 연결</button></div></div>`;
+    }
+    return `<div class="nstatus"><div class="nsteps">${steps}</div>${body}</div>`;
   }
   function render() {
     if (!$('#view-notice').classList.contains('on')) return;
@@ -193,22 +244,26 @@
       return;
     }
     const s = n.learned;
-    const secs = N.SECTIONS.map((sec) => `<fieldset class="nsec"><legend>${esc(sec)}</legend><div class="ngrid">${N.FIELDS.filter((f) => f.sec === sec && f.key !== '공고명').map((f) => field(f, n)).join('')}</div>
+    const st = N.statusOf(n), locked = st === 'posted';
+    const secs = N.SECTIONS.map((sec) => `<fieldset class="nsec"${locked ? ' disabled' : ''}><legend>${esc(sec)}</legend><div class="ngrid">${N.FIELDS.filter((f) => f.sec === sec && f.key !== '공고명').map((f) => field(f, n)).join('')}</div>
       ${sec === '일정' && s && s.summary.입찰기간일수 ? `<div class="learn-hint">비슷한 공고는 입찰서 제출 기간이 보통 <b>${s.summary.입찰기간일수}일</b>입니다. <button type="button" class="link sm" data-nact="schedule">공고일 기준으로 일정 채우기</button> <span class="muted">법정 공고기간을 꼭 확인하세요.</span></div>` : ''}</fieldset>`).join('');
     const draft = N.draft(n.v);
     el.innerHTML = `
       <div class="nhead">
-        <input id="nTitle" class="ntitle" data-key="공고명" value="${esc(n.v.공고명)}" placeholder="공고명을 입력하세요" aria-label="공고명">
+        <input id="nTitle" class="ntitle" data-key="공고명" value="${esc(n.v.공고명)}" placeholder="공고명을 입력하세요" aria-label="공고명"${locked ? ' readonly' : ''}>
         <div class="actions">
-          <button class="btn primary" data-nact="hwp">한글 양식으로 만들기</button>
+          <button class="btn${locked ? '' : ' primary'}" data-nact="hwp">${n.lastFile ? '한글 양식으로 다시 만들기' : '한글 양식으로 만들기'}</button>
           <button class="btn" data-nact="copyall">문장 초안 전체 복사</button>
           ${n.lastFile ? `<button class="btn ghost" data-nact="openlast">최근 만든 파일 열기</button>` : ''}
           <span class="spacer"></span>
-          <button class="btn ghost" data-nact="dup">복제</button>
+          ${st === 'draft' ? '<button class="btn ghost" data-nact="markdone" title="한글 양식 없이 문장 초안만 쓸 때">작성 완료로 표시</button>' : ''}
+          ${st === 'done' ? '<button class="btn ghost" data-nact="markdraft">작성 중으로 되돌리기</button>' : ''}
+          <button class="btn ghost" data-nact="dup">복사해서 새로 쓰기</button>
           <button class="btn ghost danger" data-nact="del">삭제</button>
         </div>
+        ${statusPanel(n, st)}
       </div>
-      <section class="learn">
+      <section class="learn"${locked ? ' hidden' : ''}>
         <div class="learn-head"><h3>비슷한 공고에서 배우기</h3>
           <span class="muted">${s ? `${esc(s.scope === 'mine' ? app().cfg.insttNm : '전국')} · 최근 ${s.months}개월 · ${s.total}건 · ${esc(L.fmtDate(s.at.slice(0, 10)))}` : '같은 업종·비슷한 금액의 나라장터 공고를 모아 조건별로 가장 많이 쓴 값을 추천합니다.'}</span>
           <div class="learn-ctl">
@@ -263,7 +318,12 @@
     else if (act === 'copyall') await copy(N.draft(n.v).map((d) => (d.title === '제목' ? '' : d.title + '\n') + d.body).join('\n\n'));
     else if (act === 'openlast') S.openFile(n.lastFile).catch((err) => app().toast(err.message, 'err'));
     else if (act === 'openref') S.openFile(a.dataset.path).catch((err) => app().toast(err.message, 'err'));
-    else if (act === 'dup') { const c = JSON.parse(JSON.stringify(n)); c.id = L.uid(); c.v.공고명 = (c.v.공고명 || '') + ' (복사)'; c.v.공고번호 = ''; c.lastFile = ''; c.createdAt = c.updatedAt = Date.now(); store.notices.unshift(c); sel = c.id; save(true); render(); }
+    else if (act === 'dup') { const c = JSON.parse(JSON.stringify(n)); c.id = L.uid(); c.v.공고명 = (c.v.공고명 || '') + ' (복사)'; c.v.공고번호 = ''; c.lastFile = ''; c.status = 'draft'; delete c.g2b; c.createdAt = c.updatedAt = Date.now(); store.notices.unshift(c); sel = c.id; save(true); render(); }
+    else if (act === 'markdone') setStatus(n, 'done');
+    else if (act === 'markdraft') setStatus(n, 'draft');
+    else if (act === 'g2b') await registerBid(n, $('#g2bNo').value);
+    else if (act === 'g2bcheck') await checkBid(n);
+    else if (act === 'unpost') { if (confirm('입찰공고번호 연결을 풀고 작성 완료로 되돌릴까요? (나라장터의 실제 공고는 그대로입니다)')) { delete n.g2b; setStatus(n, 'done'); } }
     else if (act === 'del') { if (confirm('이 공고문을 삭제할까요? 만든 한글 파일은 남습니다.')) { store.notices = store.notices.filter((x) => x !== n); sel = null; save(true); render(); } }
     else if (act === 'hwp') {
       const ts = await templates();
@@ -287,7 +347,7 @@
   }
   function onInput(e) {
     const t = e.target.closest('[data-key]'); if (!t || !t.closest('#noticeMain')) return;
-    const n = cur(); if (!n) return;
+    const n = cur(); if (!n || N.statusOf(n) === 'posted') return;
     const f = N.FIELDS.find((x) => x.key === t.dataset.key);
     setVal(t.dataset.key, t.value, true);
     if (f && (f.type === 'select' || f.key === '구분' || f.key === '공종')) render(); else refreshLive();
@@ -301,12 +361,17 @@
   view().addEventListener('click', onClick);
   view().addEventListener('input', onInput);
   view().addEventListener('focusout', onBlur);
+  view().addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.id === 'g2bNo') { e.preventDefault(); const n = cur(); if (n) registerBid(n, e.target.value); } });
   $('#noticeList').addEventListener('keydown', (e) => { const it = e.target.closest('[data-nid]'); if (it && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); sel = it.dataset.nid; render(); } });
 
   root.JH.notice = Object.assign(root.JH.notice, {
     async show() { await load(); render(); },
     create, templates, TPL_DIR,
-    stats() { return { count: store.notices.length, recent: store.notices[0] ? store.notices[0].v.공고명 : '' }; },
+    stats() {
+      const by = { draft: 0, done: 0, posted: 0 }; store.notices.forEach((n) => by[N.statusOf(n)]++);
+      return { count: store.notices.length, recent: store.notices[0] ? store.notices[0].v.공고명 : '', ...by };
+    },
+    current: () => cur(),
     load, fillHwpxBytes,
   });
 })(window);

@@ -1,5 +1,15 @@
 # 계약업무 도우미
 
+## 설치 (동료용)
+
+1. 이 페이지 위의 초록색 **Code → Download ZIP** 으로 받습니다.
+2. 압축을 풀고 **`설치.bat`** 을 더블클릭합니다. (관리자 권한 필요 없음)
+3. 끝. 프로그램이 바로 열리고, 다음부터는 바탕화면의 **계약업무 도우미** 아이콘으로 엽니다.
+
+> "Windows의 PC 보호" 창이 뜨면 **추가 정보 → 실행**. 새 버전도 같은 방법으로 받아 `설치.bat` 을 누르면 되고, 서류와 설정은 그대로 남습니다.
+
+---
+
 공기업 계약 담당자용 사내 도구입니다. 처음 화면에서 두 기능 중 하나를 고릅니다.
 
 1. **지출서류 정리** — 계약 건별 지출 증빙서류를 자동으로 분류·점검하고 한 번에 인쇄
@@ -17,6 +27,7 @@ exe 없이 Windows 기본 프로그램(PowerShell 5.1, Edge)만으로 동작합�
 - 자동 규칙: 공종 → 업종제한(2022 전문건설 대업종 기준), 추정가격 → 부가세·추정금액, 설정한 기준 금액 → 상생결제 적용 여부
 - 배우기: 입찰공고정보서비스(`getBidPblancList…PPSSrch`)를 업종명·금액 범위·기관·공고명으로 검색 → 지역제한(`PrtcptPsblRgn`)·면허(`LicenseLimit`)·낙찰하한율·낙찰방법·계약방법·공동도급·입찰기간의 빈도
 - 첨부 공고문: `ntceSpecDocUrl1~10` 내려받아(g2b.go.kr만 허용) HWP 본문/HWPX/PDF 글자 → 입찰참가자격 등 문장 추출, 원문은 `공고문/참고/`
+- 진행 상태: 작성 중 → 작성 완료(한글 양식을 만들면 자동) → 나라장터 등록. 등록은 담당자가 나라장터에서 직접 하고(공개된 등록 API 없음), 받은 입찰공고번호를 넣으면 `getBidPblancListInfoCnstwk/Servc`(inqryDiv=2)로 찾아 확인·잠금
 - 한글 양식: `{{항목}}` 표시를 설치된 한글(COM, AllReplace)로 바꿔 저장, 실패 시 HWPX는 브라우저에서 직접 치환(서식 경계로 쪼개진 표시도 처리, mimetype 무압축 첫 항목)
 
 ## 구조
@@ -43,15 +54,16 @@ src/app/            화면(HTML·CSS·JS)
   js/logic.js       순수 로직(분류·계약 배정·API 응답 정리) — 브라우저·Node 공용
   js/readers.js     PDF·HWP 글자, 스캔본 OCR
   js/pdfbuild.js    표지·안내 페이지·합치기
-  js/app.js         상태·화면·서류 넣기·인쇄
+  js/app.js         상태·화면·업로드·인쇄
   js/settings.js    설정(나라장터·데이터 폴더·서류 목록·공고문)
   js/notice-logic.js 공고문 항목·자동 규칙·배우기·초안·HWPX 치환(순수 로직)
   js/notice.js      공고문 화면
   js/hwp.js         한글 본문 읽기(HWP 레코드·HWPX)
 src/server/         server.ps1(연결 창구), install.ps1, uninstall.ps1
 assets/             아이콘
-docs/사용안내.txt    사용자용 안내(배포 묶음에 포함)
-tools/build.mjs     배포 묶음 만들기
+docs/사용안내.txt    사용자용 안내(빌드 때 맨 위 사용안내.txt로 복사)
+tools/build.mjs     맨 위 bat·program/ 만들기(받아서 바로 설치되는 모양)
+program/            빌드 결과물 — 동료가 받아 쓰는 실행 파일(직접 고치지 않음)
 tests/unit/         로직 단위 시험
 tests/e2e/          통합 시험(실제 server.ps1 + 브라우저)
 tests/fixtures/     시험 서류 생성기(noname PDF, 스캔, HWP, HWPX)
@@ -63,34 +75,36 @@ tests/fixtures/     시험 서류 생성기(noname PDF, 스캔, HWP, HWPX)
 npm install
 npm test              # 단위 시험
 npm run fixtures      # 시험 서류 만들기
-npm run test:e2e      # 묶음 만들고 통합 시험 (PowerShell 7 + Chromium 필요: PWSH, CHROME 환경변수)
-npm run build         # dist/계약업무도우미/ 와 dist/계약업무도우미_v버전.zip
+npm run build         # src/ → 맨 위 설치.bat·실행.bat·제거.bat·사용안내.txt, program/ 새로 만듦 (+ dist/계약업무도우미_v버전.zip)
+npm run test:e2e      # build 후 통합 시험 (PowerShell 7 + Chromium 필요: PWSH, CHROME 환경변수)
 npm run demo          # dist/demo/ 시연판(인증키 없음, 흉내 데이터)
 ```
 
-배포 묶음:
+**코드를 고쳤으면 `npm run build` 를 하고 `program/` 까지 같이 올립니다.** 동료는 빌드 없이 받은 그대로 설치하기 때문입니다.
+`program/` 은 빌드 결과물이라 직접 고치지 말고 `src/` 를 고치세요.
 
 ```
-계약업무도우미/
+(저장소 맨 위)
   설치.bat      → program/install.ps1 (사용자 폴더에 설치, 바탕화면·시작 메뉴 바로가기, 관리자 권한 불필요)
   실행.bat      → 설치본이 있으면 그것을, 없으면 이 폴더에서 바로 실행
   제거.bat
   사용안내.txt
-  program/      server.ps1, install.ps1, uninstall.ps1, icon.ico, app/
+  program/      server.ps1, install.ps1, uninstall.ps1, icon.ico, app/(화면 + 라이브러리 + org.json)
 ```
 
+`.gitattributes` 로 bat·ps1 파일은 줄바꿈(CRLF)·BOM을 그대로 둡니다(바뀌면 Windows에서 깨짐).
 설치 위치 `%LOCALAPPDATA%\JichulHelper`, 데이터 기본 위치 `문서\계약업무도우미`(이전 버전의 `문서\지출서류도우미`가 있으면 그대로 사용).
 
 ## 기관 공용 설정
 
-인증키는 **코드에 쓰지 않고 `config/org.json` 한 파일에만** 둡니다. 빌드할 때 이 파일이 `app/org.json`으로 묶입니다.
+인증키는 **코드에 쓰지 않고 `config/org.json` 한 파일에서만** 고칩니다. 빌드할 때 이 파일이 `program/app/org.json`으로 복사됩니다.
 
 ```json
 { "insttNm": "용인도시공사", "insttDivCd": "1", "apiKey": "공공데이터포털_일반_인증키", "months": 6,
   "notice": { "region": "용인시", "winwinMin": 0 } }
 ```
 
-- 키가 바뀌면 이 파일만 고치고 `npm run build` → 새 묶음 배포
+- 키가 바뀌면 이 파일만 고치고 `npm run build` → 올리기
 - 이 저장소는 **비공개(초대한 회사 동료만)** 라서 `config/org.json`을 함께 올립니다. 한 번 올린 키는 커밋 기록에 남으므로, 저장소를 공개로 바꾸거나 회사 밖 사람을 초대하게 되면 먼저 공공데이터포털에서 키를 재발급하세요.
 - 회사 밖 사람은 각자 활용신청한 키를 쓰게 하세요(`config/org.example.json` 참고).
 - 동료가 따로 넣지 않아도 되고, 각자 설정(`설정.json`)에는 공용 값과 다른 것만 저장됩니다(공용 키는 저장 안 함).
