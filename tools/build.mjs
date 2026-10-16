@@ -59,7 +59,7 @@ if (existsSync(ORG)) {
 } else console.log('config/org.json 없음 → 각자 설정에서 인증키를 넣어야 함');
 
 // 3) 연결 창구·설치 스크립트 (Windows PowerShell 5.1은 UTF-8 BOM이어야 한글이 깨지지 않음)
-for (const f of ['server.ps1', 'install.ps1', 'uninstall.ps1']) {
+for (const f of ['server.ps1', 'install.ps1', 'uninstall.ps1', 'ai-setup.ps1']) {
   writeText(join(PROG, f), readFileSync(join(ROOT, 'src/server', f), 'utf8'), { bom: true });
 }
 cp(join(ROOT, 'assets/icon.ico'), join(PROG, 'icon.ico'));

@@ -27,7 +27,7 @@ try {
   $appDest = Join-Path $Dest 'app'
   if (Test-Path -LiteralPath $appDest) { Remove-Item -LiteralPath $appDest -Recurse -Force }
   Copy-Item -LiteralPath (Join-Path $Src 'app') -Destination $appDest -Recurse -Force
-  foreach ($f in @('server.ps1', 'uninstall.ps1', 'icon.ico', 'version.txt')) {
+  foreach ($f in @('server.ps1', 'ai-setup.ps1', 'uninstall.ps1', 'icon.ico', 'version.txt')) {
     $p = Join-Path $Src $f
     if (Test-Path -LiteralPath $p) { Copy-Item -LiteralPath $p -Destination (Join-Path $Dest $f) -Force }
   }
@@ -68,10 +68,17 @@ try {
   Say '  · 바탕화면과 시작 메뉴에 바로가기 만듦'
 
   Say ''
-  Say '  설치가 끝났습니다. 지금 프로그램을 엽니다.' 'Green'
+  Say '  프로그램 설치가 끝났습니다. 지금 프로그램을 엽니다.' 'Green'
   Say '  다음부터는 바탕화면의 "계약업무 도우미"를 누르세요.' 'Green'
   Say ''
-  Start-Process -FilePath $ps -ArgumentList $launchArgs -WorkingDirectory $Dest -WindowStyle Hidden
+  Start-Process -FilePath $ps -ArgumentList ($launchArgs + ' -SkipAi') -WorkingDirectory $Dest -WindowStyle Hidden
+
+  # 5) PC 안 AI(공고문 문장·서류 빈칸 채우기) — 프로그램은 이미 쓸 수 있고, 이 창에서 이어서 설치
+  Say '  PC 안 AI를 이어서 설치합니다. 끝날 때까지 이 창을 닫지 마세요.' 'Cyan'
+  $aiSetup = Join-Path $Dest 'ai-setup.ps1'
+  if (Test-Path -LiteralPath $aiSetup) { & $aiSetup }
+  Say ''
+  Say '  모두 설치했습니다.' 'Green'
   exit 0
 } catch {
   Say ''

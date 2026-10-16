@@ -41,6 +41,9 @@
     hwp2pdf: (path) => call('POST', '/api/hwp2pdf', { path }),
     // AI(Claude) 중계 — 키는 이 PC 설정에만 있고, 연결 창구가 api.anthropic.com으로만 보냄
     ai: (body) => call('POST', '/api/ai', null, JSON.stringify(body)),
+    // PC 안 AI(Ollama) 설치 상태·다시 설치 — AI 호출은 화면이 127.0.0.1:11434로 바로 함(JH.ai)
+    aiStatus: () => call('GET', '/api/ai/status'),
+    aiSetup: (body) => call('POST', '/api/ai/setup', null, JSON.stringify(body || {})),
     async fetchFile(url) { const r = await call('GET', '/api/fetchfile', { u: url }); return new Uint8Array(await r.arrayBuffer()); },
     openFile: (path) => call('POST', '/api/open', { path, launch: '1' }),
     open: (path) => call('POST', '/api/open', { path }),

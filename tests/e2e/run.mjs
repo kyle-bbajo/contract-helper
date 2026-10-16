@@ -35,7 +35,7 @@ let srv, run, base;
 const waitFor = async (fn, ms = 20000, what = '') => { const t = Date.now(); for (;;) { try { const v = await fn(); if (v) return v; } catch (_) {} if (Date.now() - t > ms) throw new Error('시간 초과: ' + what); await new Promise((r) => setTimeout(r, 200)); } };
 async function startServer() {
   rmSync(join(PROG, 'running.json'), { force: true });
-  srv = spawn(PWSH, ['-NoProfile', '-File', join(PROG, 'server.ps1'), '-NoBrowser', '-Port', '18890'], { stdio: 'inherit', env: { ...process.env, HOME } });
+  srv = spawn(PWSH, ['-NoProfile', '-File', join(PROG, 'server.ps1'), '-NoBrowser', '-SkipAi', '-Port', '18890'], { stdio: 'inherit', env: { ...process.env, HOME } });
   run = await waitFor(() => existsSync(join(PROG, 'running.json')) && JSON.parse(readFileSync(join(PROG, 'running.json'), 'utf8')), 60000, '연결 창구 시작');
   base = `http://127.0.0.1:${run.port}/`;
 }
@@ -47,11 +47,11 @@ async function stopServer() {
 // 시험용 나라장터 응답
 const api = (items) => JSON.stringify({ response: { header: { resultCode: '00', resultMsg: '정상' }, body: { items, numOfRows: 100, pageNo: 1, totalCount: items.length } } });
 const 공사 = [
-  { untyCntrctNo: 'R26BK01234567', dcsnCntrctNo: 'R26BK01234567-00', cnstwkNm: '시청사 옥상 방수공사', corpList: '[1^주계약업체^단독^(주)다해토건^홍길동^대한민국^100^(주)다해토건^^1234567890]', totCntrctAmt: '48000000', cbgnDate: '2026-06-01', ttalCcmpltDate: '2026-10-10', cntrctInsttNm: '용인도시공사', cntrctInsttOfclNm: '박주호', cntrctInsttChrgDeptNm: '계약팀' },
+  { untyCntrctNo: 'R26BK01234567', dcsnCntrctNo: 'R26BK01234567-00', cnstwkNm: '시청사 옥상 방수공사', corpList: '[1^주계약업체^단독^(주)다해토건^홍길동^대한민국^100^(주)다해토건^^1234567890]', totCntrctAmt: '48000000', cntrctCnclsDate: '2026-05-28', cbgnDate: '2026-06-01', ttalCcmpltDate: '2026-10-10', cntrctCnclsMthdNm: '수의계약', baseLawNm: '지방계약법 (제25조제1항5호가목)', baseDtls: '추정가격 2억원 이하 종합공사', chgDt: '2026-10-08 10:00:00', cntrctInsttNm: '용인도시공사', cntrctInsttOfclNm: '박주호', cntrctInsttChrgDeptNm: '계약팀' },
   { untyCntrctNo: 'R26BK05555555', dcsnCntrctNo: 'R26BK05555555-00', cnstwkNm: '처인구 공영주차장 전기설비 교체', corpList: '[1^주계약업체^단독^대한전기(주)^이몽룡^대한민국^100^대한전기(주)^^2223334445]', totCntrctAmt: '73500000', ttalCcmpltDate: '2026-12-20', cntrctInsttNm: '용인도시공사', cntrctInsttOfclNm: '김철수' },
 ];
 const 용역 = [
-  { untyCntrctNo: 'R26BS07654321', dcsnCntrctNo: 'R26BS07654321-00', cntrctNm: '체육관 시설 청소 용역', corpList: '[1^주계약업체^단독^한빛환경 주식회사^김영희^대한민국^100^한빛환경 주식회사^^5556667778]', totCntrctAmt: '21500000', wbgnDate: '2026-07-01', ttalScmpltDate: '2026-12-31', cntrctInsttNm: '용인도시공사', cntrctInsttOfclNm: '박주호', baseDtls: '외부재정연계(e나라도움)' },
+  { untyCntrctNo: 'R26BS07654321', dcsnCntrctNo: 'R26BS07654321-00', cntrctNm: '체육관 시설 청소 용역', corpList: '[1^주계약업체^단독^한빛환경 주식회사^김영희^대한민국^100^한빛환경 주식회사^^5556667778]', totCntrctAmt: '21500000', cntrctCnclsDate: '2026-06-26', cntrctCnclsMthdNm: '수의계약', baseLawNm: '지방계약법 (제25조제1항5호나목)', wbgnDate: '2026-07-01', ttalScmpltDate: '2026-12-31', cntrctInsttNm: '용인도시공사', cntrctInsttOfclNm: '박주호', baseDtls: '외부재정연계(e나라도움)' },
 ];
 const bid = (no, name, price, rate, extra = {}) => ({ bidNtceNo: no, bidNtceOrd: '000', bidNtceNm: name, ntceInsttNm: '용인도시공사', bidNtceDt: '2026-09-01 10:00:00',
   bidBeginDt: '2026-09-02 10:00:00', bidClseDt: '2026-09-09 10:00:00', opengDt: '2026-09-09 11:00:00', presmptPrce: String(price), sucsfbidLwltRate: rate,
@@ -92,6 +92,12 @@ await page.route('**/api/nara**', (r) => {
   else if (u.includes('PrtcptPsblRgn')) { const no = u.match(/bidNtceNo=([^&]+)/)[1]; body = api((REGIONS[no] || []).map((n) => ({ prtcptPsblRgnNm: n }))); }
   else if (u.includes('LicenseLimit')) body = api([{ lcnsLmtNm: '전기공사업' }]);
   else if (u.includes('BidPublicInfoService')) body = api(u.includes('bidNtceNm=') ? BIDS.filter((b) => b.bidNtceNm.includes(decodeURIComponent(u.match(/bidNtceNm=([^&]+)/)[1]).replace(/\+/g, ' '))) : BIDS);
+  else if (u.includes('ChgHstry')) body = api(u.includes('R26BK01234567') ? [
+    { dcsnCntrctNo: 'R26BK01234567-00', totCntrctAmt: '48000000', cntrctCnclsDate: '2026-05-28', ttalCcmpltDate: '2026-09-30' },
+    { dcsnCntrctNo: 'R26BK01234567-01', totCntrctAmt: '48000000', cntrctDate: '2026-09-20', ttalCcmpltDate: '2026-10-10' },
+    { dcsnCntrctNo: 'R26BK01234567-02', totCntrctAmt: '47139000', cntrctDate: '2026-10-08', ttalCcmpltDate: '2026-10-10' }] : []);
+  else if (u.includes('UsrInfoService02')) body = api(u.includes('1234567890') ? [{ bizno: '1234567890', corpNm: '(주)다해토건', ceoNm: '홍길동', adrs: '경기도 용인시 처인구 중부대로', dtlAdrs: '1199' }] : []);
+  else if (/ScsbidInfoService|Thng/.test(u)) body = api([]);
   else body = api(u.includes('Cnstwk') ? 공사 : 용역);
   r.fulfill({ status: 200, contentType: 'text/plain; charset=utf-8', body });
 });
@@ -124,7 +130,7 @@ try {
   let calls = 0; page.on('request', (r) => { if (r.url().includes('/api/nara')) calls++; });
   await page.click('#btnFetch');
   await waitFor(() => page.$('.toast:has-text("나라장터 계약")'), 20000, '다시 불러오기');
-  assert.ok(calls <= 2, `다시 불러올 때 조회 ${calls}번`);
+  assert.ok(calls <= 3, `다시 불러올 때 조회 ${calls}번`); // 공사·용역·물품 한 번씩, 세부 정보는 바뀐 계약만
   step(`나라장터 계약 3건 → 내 담당 2건, 다시 불러오기는 조회 ${calls}번만`);
 
   await page.setInputFiles('#fileIn', readdirSync(DOCS).map((f) => join(DOCS, f)));
@@ -257,6 +263,52 @@ print(json.dumps({'names': wb.sheetnames, 'head': rows[0], 'rows': rows[1:], 'de
   await page.click('.views [data-view="contracts"]');
   step('현황판 → 엑셀로 받기: 계약 현황(금액·날짜 서식, 감독·예산·빠진 서류·특이사항) + 서류 상세 시트');
 
+  // 감사·검사 자료: 나라장터 세부 정보(변경이력·업체 주소) 자동 + 직접 넣은 예정가격 → 종합검사 엑셀·행정사무감사 한글
+  await page.click('.citem:has-text("시청사 옥상 방수공사")');
+  await page.click('details.audit summary');
+  assert.match(await page.getAttribute('[data-memo="aAward"]', 'placeholder'), /48,000,000원/, '당초 계약금액(변경이력)');
+  assert.match(await page.getAttribute('[data-memo="aAddr"]', 'placeholder'), /경기도 용인시 처인구 중부대로 1199/, '조달업체 주소');
+  assert.match(await page.getAttribute('[data-memo="aChgAmt"]', 'placeholder'), /47,139,000원/, '설계변경 금액');
+  await page.fill('[data-memo="aEst"]', '50120000'); await page.fill('[data-memo="aBudget"]', '52000000'); await page.fill('[data-memo="aChgWhy"]', '준공정산');
+  await page.screenshot({ path: join(SHOTS, '4c-감사자료.png') });
+  await page.click('.views [data-view="board"]');
+  await page.click('[data-act="forms"]');
+  await page.waitForSelector('#dlgForms[open]');
+  await page.fill('#fmFrom', '2026-01-01'); await page.dispatchEvent('#fmFrom', 'change');
+  assert.match(await page.textContent('#fmSummary'), /대상 2건 \(공사 1 · 용역 1 · 물품 0\)/);
+  await page.screenshot({ path: join(SHOTS, '4d-감사서식.png') });
+  await page.click('#fmMake');
+  const xdir = join(data, '감사자료');
+  await waitFor(() => existsSync(xdir) && readdirSync(xdir).some((f) => f.endsWith('.xlsx')), 10000, '종합검사 엑셀');
+  const ix = join(xdir, readdirSync(xdir).find((f) => f.endsWith('.xlsx')));
+  const io = JSON.parse(execFileSync('python3', ['-c', `
+import json, sys, openpyxl
+ws = openpyxl.load_workbook(sys.argv[1]).active
+rows = [[c.value for c in r] for r in ws.iter_rows(min_row=1, max_row=ws.max_row)]
+print(json.dumps({'a1': rows[0][0], 'd2': rows[1][3], 'r': [r for r in rows if r[0] == '시청사 옥상 방수공사'][0]}, ensure_ascii=False))`, ix]).toString());
+  assert.match(io.d2, /^확인자  :  직 .*성 명 .*\(인\)$/);
+  assert.deepEqual(io.r.slice(0, 6), ['시청사 옥상 방수공사', 52000, null, 50120, 48000, 95.77]);
+  assert.deepEqual(io.r.slice(9, 16), ['26.9.30', '26.9.20', null, '26.10.8', 47139, '감)861', '준공정산']);
+  assert.deepEqual(io.r.slice(16), ['수의계약', '(주)다해토건']);
+  await page.click('[data-act="forms"]');
+  await page.click('#fmKind [data-fk="audit"]');
+  assert.match(await page.textContent('#fmSummary'), /대상 2건/, '수의계약·1천만원 이상');
+  await page.click('#fmMake');
+  await waitFor(() => readdirSync(xdir).some((f) => f.endsWith('.hwpx')), 10000, '행정사무감사 한글');
+  const hx = join(xdir, readdirSync(xdir).find((f) => f.endsWith('.hwpx')));
+  assert.match(hx, /행정사무감사_수의계약현황\(1000만원이상\)_\d{8}\.hwpx$/);
+  const ho = JSON.parse(execFileSync('python3', ['-c', `
+import json, sys, zipfile, re
+z = zipfile.ZipFile(sys.argv[1]); s = z.read('Contents/section0.xml').decode('utf-8')
+print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscape="NARROWLY"' in s}, ensure_ascii=False))`, hx]).toString());
+  assert.ok(ho.land);
+  assert.ok(ho.t[0].startsWith('【공사】'), '받은 양식 그대로');
+  for (const t of ['시청사 옥상 방수공사', '(주)다해토건', '홍길동', '경기도 용인시 처인구 중부대로 1199', '95.77', '체육관 시설 청소 용역', '해당 없음'])
+    assert.ok(ho.t.includes(t), t);
+  assert.ok(ho.t.includes('지방계약법 시행령 제25조 제1항 제5호 가목 (추정가격 2억원 이하 종합공사)'));
+  await page.click('.views [data-view="contracts"]');
+  step('감사·검사 자료: 나라장터 변경이력·업체 주소 자동 + 직접 넣은 값 → 종합검사 엑셀(양식 그대로) · 행정사무감사 한글(받은 양식에 채움)');
+
   // 지난 계약처럼 파일 없이 이미 받은 서류: 줄마다 [받음], 빠진 서류 한 번에 [받음]
   await page.click('.citem:has-text("시청사 옥상 방수공사")');
   await page.check('.row[data-drop-item="c-contract"] ~ .row[data-drop-item="c-related"] input[data-act="recv"]');
@@ -281,7 +333,7 @@ print(json.dumps({'names': wb.sheetnames, 'head': rows[0], 'rows': rows[1:], 'de
   await page.fill('#cfgExtNames', '방수공사'); await page.dispatchEvent('#cfgExtNames', 'change');
   await page.keyboard.press('Escape');
   await page.waitForSelector('.memo .bsrc:has-text("사업 이름")', { timeout: 5000 });
-  assert.ok(await page.$('.citem.on .ext-dot'), '목록에 외부 표시');
+  await page.waitForSelector('.citem.on .ext-dot', { timeout: 5000 }); // 목록에 외부 표시
   step("예산 구분: 모름 → 서류 내용(e나라도움 등)·설정의 외부 예산 사업 이름으로 자동 '외부', 목록·제목에 표시");
 
   // ===== 공고문 =====
@@ -321,21 +373,31 @@ print(json.dumps({'names': wb.sheetnames, 'head': rows[0], 'rows': rows[1:], 'de
   // 배운 문장: 첨부 공고문에서 뽑은 참가자격 문장이 기본 초안 대신 들어감
   assert.ok(await page.$('.seg.dmode [data-dmode="learned"].on'), '배운 문장이 기본');
   assert.ok(await page.$('.draft .lbadge'), '배운 절 표시');
+  // 키 없이: 질문 복사 → 아무 AI 채팅(업무망 AI 포함)에 붙여 넣기 → 답 붙여넣기
+  await page.click('[data-nact="aiq"]');
+  assert.match(await page.evaluate(() => navigator.clipboard.readText()), /## 비슷한 실제 공고문에서 뽑은 문장[\s\S]*신갈오거리/);
+  await page.click('[data-nact="aip"]');
+  await page.fill('#aiPasteText', '네, 정리했습니다.\n```json\n{"sections":[{"title":"2. 입찰참가자격","body":"  가. 붙여 넣은 답 문장"}]}\n```');
+  await page.click('#aiPasteGo');
+  await page.waitForSelector('.seg.dmode [data-dmode="ai"].on', { timeout: 5000 });
+  assert.match(await page.textContent('.draft'), /붙여 넣은 답 문장/);
   // AI로 쓰기: 설정에 키를 넣고 → 연결 창구(/api/ai)로 비슷한 공고 문장과 항목 값을 보냄(시험에서는 응답을 흉내 냄)
   let aiReq = null;
-  await page.route('**/api/ai', async (r) => { aiReq = JSON.parse(r.request().postData()); await r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ model: 'claude-sonnet-5-5', content: [{ type: 'text', text: '{"sections":[{"title":"2. 입찰참가자격","body":"  가. AI가 정리한 참가자격 문장"}]}' }] }) }); });
+  await page.route('**/api/ai', async (r) => { aiReq = JSON.parse(r.request().postData()); await r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ modelVersion: 'gemini-2.5-flash', candidates: [{ content: { role: 'model', parts: [{ text: '{"sections":[{"title":"2. 입찰참가자격","body":"  가. AI가 정리한 참가자격 문장"}]}' }] } }] }) }); });
   await page.click('#btnSettings');
-  await page.click('#dlgSettings .dlg-tabs button[data-tab="notice"]');
-  await page.fill('#ntAiKey', 'sk-ant-test'); await page.click('#btnSaveNotice');
+  await page.click('#dlgSettings .dlg-tabs button[data-tab="ai"]');
+  assert.equal(await page.inputValue('#ntAiProvider'), 'auto', '기본은 자동(키가 있으면 Gemini, 없으면 PC AI)');
+  await page.waitForSelector('#aiState:has-text("PC AI")');
+  await page.fill('#ntAiKey', 'gemini-test-key'); await page.click('#btnSaveAi');
   await page.keyboard.press('Escape');
   await page.click('[data-nact="ai"]');
   await page.waitForSelector('.seg.dmode [data-dmode="ai"].on', { timeout: 10000 });
   assert.match(await page.textContent('.draft'), /AI가 정리한 참가자격 문장/);
-  assert.equal(aiReq.key, 'sk-ant-test'); assert.match(aiReq.prompt, /신갈오거리 보안등 정비 전기공사/); assert.match(aiReq.system, /지어내지 않습니다/);
+  assert.equal(aiReq.key, 'gemini-test-key'); assert.equal(aiReq.provider, 'gemini'); assert.equal(aiReq.model, 'gemini-2.5-flash'); assert.match(aiReq.prompt, /신갈오거리 보안등 정비 전기공사/); assert.match(aiReq.system, /지어내지 않습니다/);
   assert.ok(!('aiKey' in (JSON.parse(readFileSync(join(data, '설정.json'), 'utf8')).notice || {})) || true);
   await page.click('.seg.dmode [data-dmode="learned"]');
   await page.screenshot({ path: join(SHOTS, '6b-공고문-배운문장.png') });
-  step('배운 문장(비슷한 공고 공통 문장) 기본 + AI로 쓰기(연결 창구 경유, 항목 값·실제 문장 전달)');
+  step('배운 문장(비슷한 공고 공통 문장) 기본 + AI로 쓰기(키가 있으면 Gemini, 연결 창구 경유, 항목 값·실제 문장 전달)');
 
   // 한글 양식 올리고 채우기(시험 PC엔 한글이 없어 HWPX 직접 채우기로 처리)
   await page.click('#btnSettings');

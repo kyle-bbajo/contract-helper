@@ -54,7 +54,38 @@
     if (type === 'date') { const n = dateSerial(v); if (n != null) return `<c r="${ref}" s="${STYLE.date}"><v>${n}</v></c>`; }
     return `<c r="${ref}" t="inlineStr" s="${type === 'wrap' ? STYLE.wrap : 0}"><is><t xml:space="preserve">${xml(v)}</t></is></c>`;
   }
+  // 서식 시트(감사·검사 제출 양식): 행·칸을 직접 적고 병합·인쇄 제목 줄·틀 고정
+  // sh = { form: true, cols: [너비], rows: [{ h, cells: [{ v, s } | null] }], merges: ['A1:R1'], printTitles: [6, 7], freezeRow: 7 }
+  const FS = { title: 6, text: 7, right: 8, th: 9, td: 10, tdc: 11, num: 12, rate: 13, sec: 14, tdr: 15, sign: 16, unit: 17, tdl: 18 };
+  function formXml(sh) {
+    const rows = sh.rows.map((row, ri) => {
+      const r = ri + 1;
+      const cells = (row.cells || []).map((c, i) => {
+        if (!c) return '';
+        const ref = colName(i) + r, st = FS[c.s] != null ? FS[c.s] : FS.text;
+        if (typeof c.v === 'number' && isFinite(c.v)) return `<c r="${ref}" s="${st}"><v>${c.v}</v></c>`;
+        if (c.v == null || c.v === '') return `<c r="${ref}" s="${st}"/>`;
+        return `<c r="${ref}" t="inlineStr" s="${st}"><is><t xml:space="preserve">${xml(c.v)}</t></is></c>`;
+      }).join('');
+      return `<row r="${r}"${row.h ? ` ht="${row.h}" customHeight="1"` : ''}>${cells}</row>`;
+    }).join('');
+    const fr = sh.freezeRow;
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>
+<sheetViews><sheetView workbookViewId="0" zoomScale="${sh.zoom || 85}" zoomScaleNormal="${sh.zoom || 85}">${fr ? `<pane ySplit="${fr}" topLeftCell="A${fr + 1}" activePane="bottomLeft" state="frozen"/>` : ''}</sheetView></sheetViews>
+<sheetFormatPr defaultRowHeight="16.5"/>
+<cols>${sh.cols.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols>
+<sheetData>${rows}</sheetData>
+${(sh.merges || []).length ? `<mergeCells count="${sh.merges.length}">${sh.merges.map((m) => `<mergeCell ref="${m}"/>`).join('')}</mergeCells>` : ''}
+<printOptions horizontalCentered="1"/>
+<pageMargins left="0.4" right="0.4" top="0.6" bottom="0.6" header="0.3" footer="0.3"/>
+<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/>
+<headerFooter><oddFooter>&amp;C- &amp;P -</oddFooter></headerFooter>
+</worksheet>`;
+  }
   function sheetXml(sh) {
+    if (sh.form) return formXml(sh);
     const cols = sh.cols || [];
     const last = colName(Math.max(cols.length, 1) - 1);
     const head = `<row r="1">${cols.map((c, i) => `<c r="${colName(i)}1" t="inlineStr" s="${STYLE.head}"><is><t>${xml(c.h)}</t></is></c>`).join('')}</row>`;
@@ -71,20 +102,34 @@
 <pageSetup orientation="landscape" paperSize="9" fitToWidth="1" fitToHeight="0"/>
 </worksheet>`;
   }
-  const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+  const STYLES = (ff) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<numFmts count="1"><numFmt numFmtId="164" formatCode="yyyy-mm-dd"/></numFmts>
-<fonts count="2"><font><sz val="10"/><name val="맑은 고딕"/><family val="3"/></font><font><b/><sz val="10"/><color rgb="FFFFFFFF"/><name val="맑은 고딕"/><family val="3"/></font></fonts>
+<numFmts count="3"><numFmt numFmtId="164" formatCode="yyyy-mm-dd"/><numFmt numFmtId="165" formatCode="0.000_ "/><numFmt numFmtId="166" formatCode="_-* #,##0_-;\\-* #,##0_-;_-* &quot;-&quot;_-;_-@_-"/></numFmts>
+<fonts count="6"><font><sz val="10"/><name val="맑은 고딕"/><family val="3"/></font><font><b/><sz val="10"/><color rgb="FFFFFFFF"/><name val="맑은 고딕"/><family val="3"/></font>
+<font><sz val="13"/><name val="${xml(ff)}"/><family val="1"/><charset val="129"/></font><font><sz val="20"/><name val="${xml(ff)}"/><family val="1"/><charset val="129"/></font><font><b/><sz val="13"/><name val="${xml(ff)}"/><family val="1"/><charset val="129"/></font><font><sz val="18"/><name val="${xml(ff)}"/><family val="1"/><charset val="129"/></font></fonts>
 <fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF23395B"/><bgColor indexed="64"/></patternFill></fill></fills>
-<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top/><bottom style="thin"><color rgb="FFD7DCE3"/></bottom><diagonal/></border></borders>
+<borders count="3"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top/><bottom style="thin"><color rgb="FFD7DCE3"/></bottom><diagonal/></border><border><left style="thin"><color indexed="64"/></left><right style="thin"><color indexed="64"/></right><top style="thin"><color indexed="64"/></top><bottom style="thin"><color indexed="64"/></bottom><diagonal/></border></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="6">
+<cellXfs count="19">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"><alignment vertical="center"/></xf>
 <xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
 <xf numFmtId="3" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"><alignment vertical="center"/></xf>
 <xf numFmtId="164" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"><alignment horizontal="center" vertical="center"/></xf>
 <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>
 <xf numFmtId="1" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment vertical="center"/></xf>
+<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment vertical="center"/></xf>
+<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="right" vertical="center"/></xf>
+<xf numFmtId="0" fontId="2" fillId="0" borderId="2" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="2" fillId="0" borderId="2" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="2" fillId="0" borderId="2" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="166" fontId="2" fillId="0" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>
+<xf numFmtId="165" fontId="2" fillId="0" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
+<xf numFmtId="0" fontId="2" fillId="0" borderId="2" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="5" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="right" vertical="center"/></xf>
+<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="right" vertical="center"/></xf>
+<xf numFmtId="0" fontId="2" fillId="0" borderId="2" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>
 </cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`;
@@ -104,16 +149,18 @@ ${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" Co
 <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${xml(title || '')}</dc:title><dc:creator>계약업무 도우미</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">${new Date().toISOString().replace(/\.\d+Z$/, 'Z')}</dcterms:created></cp:coreProperties>`],
       ['xl/workbook.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView/></bookViews><sheets>${names.map((n, i) => `<sheet name="${xml(n)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets>
-<definedNames>${sheets.map((sh, i) => `<definedName name="_xlnm._FilterDatabase" localSheetId="${i}" hidden="1">'${xml(names[i]).replace(/'/g, "''")}'!$A$1:$${colName(Math.max((sh.cols || []).length, 1) - 1)}$${(sh.rows || []).length + 1}</definedName>`).join('')}</definedNames></workbook>`],
+<definedNames>${sheets.map((sh, i) => sh.form
+  ? (sh.printTitles ? `<definedName name="_xlnm.Print_Titles" localSheetId="${i}">'${xml(names[i]).replace(/'/g, "''")}'!$${sh.printTitles[0]}:$${sh.printTitles[1]}</definedName>` : '')
+  : `<definedName name="_xlnm._FilterDatabase" localSheetId="${i}" hidden="1">'${xml(names[i]).replace(/'/g, "''")}'!$A$1:$${colName(Math.max((sh.cols || []).length, 1) - 1)}$${(sh.rows || []).length + 1}</definedName>`).join('')}</definedNames></workbook>`],
       ['xl/_rels/workbook.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`],
-      ['xl/styles.xml', STYLES],
+      ['xl/styles.xml', STYLES((sheets.find((sh) => sh.form && sh.font) || {}).font || '휴먼명조')],
       ...sheets.map((sh, i) => [`xl/worksheets/sheet${i + 1}.xml`, sheetXml(sh)]),
     ];
     return zip(files.map(([n, s]) => [n, enc(s)]));
   }
 
-  const api = { build, dateSerial, colName };
+  const api = { build, dateSerial, colName, zip };
   root.JH = root.JH || {};
   root.JH.xlsx = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

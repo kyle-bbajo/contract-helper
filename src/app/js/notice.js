@@ -128,16 +128,25 @@
     if (m === 'ai') return n.ai.sections;
     return m === 'basic' ? N.draft(n.v) : N.draft(n.v, n.learned);
   }
-  const aiCfg = () => { const nt = app().cfg.notice || {}; return { key: (nt.aiKey || '').trim(), model: (nt.aiModel || '').trim() || 'claude-sonnet-5-5' }; };
+  // AI: PC 안 AI(설치 때 함께 깔림)가 기본, 설정에 키를 넣으면 Gemini·Claude (JH.ai)
+  let aiWho = null; // 지금 쓸 수 있는 AI('local'|'gemini'|'claude'|null) — 화면을 그릴 때 확인해 바뀌면 다시 그림
+  const checkAi = () => root.JH.ai.pick(false).then((p) => { if (p !== aiWho) { aiWho = p; render(); } }).catch(() => {});
+  const aiQuestion = (n) => `${N.AI_SYSTEM}\n\n${N.aiPrompt(n.v, n.learned, hasLearned(n) ? N.draft(n.v, n.learned) : N.draft(n.v))}`;
+  function pasteAiAnswer(n) {
+    const d = $('#dlgAiPaste'); $('#aiPasteText').value = ''; $('#aiPasteErr').textContent = ''; d.showModal(); $('#aiPasteText').focus();
+    $('#aiPasteGo').onclick = () => {
+      try { n.ai = { at: Date.now(), model: '붙여넣기', sections: N.parseAi($('#aiPasteText').value) }; n.dmode = 'ai'; n.updatedAt = Date.now(); save(true); d.close(); render(); app().toast('AI 답을 초안에 넣었습니다. 내용을 꼭 확인한 뒤 쓰세요.', 'ok'); }
+      catch (e) { $('#aiPasteErr').textContent = e.message + ' 답 전체(중괄호 { } 포함)를 붙여 넣어 주세요.'; }
+    };
+  }
   async function writeWithAi(n) {
-    const a = aiCfg();
-    if (!a.key) { app().toast('AI를 쓰려면 설정 → 공고문에서 Claude API 키를 넣어 주세요.', 'err', { label: '설정 열기', run: () => JH.settings.open('notice') }); return; }
-    app().progress('AI가 비슷한 공고 문장을 보고 다시 쓰는 중', .4);
+    const who = await root.JH.ai.pick(false);
+    if (!who) { app().toast('AI가 아직 준비되지 않았습니다. [AI 질문 복사]로 업무용 AI·Gemini 등 아무 AI 채팅에 붙여 넣고, 답을 [답 붙여넣기]로 넣으면 됩니다.', 'err', { label: '질문 복사', run: () => copy(aiQuestion(n)) }); return; }
+    app().progress(`${root.JH.ai.label(who)}가 비슷한 공고 문장을 보고 다시 쓰는 중${who === 'local' ? ' (PC AI는 1~2분 걸립니다)' : ''}`, .4);
     try {
       const base = hasLearned(n) ? N.draft(n.v, n.learned) : N.draft(n.v);
-      const r = await S.ai({ key: a.key, model: a.model, system: N.AI_SYSTEM, prompt: N.aiPrompt(n.v, n.learned, base) });
-      const text = (r.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('');
-      n.ai = { at: Date.now(), model: r.model || a.model, sections: N.parseAi(text) };
+      const r = await root.JH.ai.ask({ system: N.AI_SYSTEM, prompt: N.aiPrompt(n.v, n.learned, base), json: true });
+      n.ai = { at: Date.now(), model: r.model, by: r.by, sections: N.parseAi(r.text) };
       n.dmode = 'ai'; n.updatedAt = Date.now(); save(true);
       app().toast('AI 초안을 만들었습니다. 내용을 꼭 확인한 뒤 쓰세요.', 'ok');
     } catch (e) { console.error(e); app().toast('AI로 쓰지 못했습니다: ' + e.message, 'err'); }
@@ -260,6 +269,7 @@
   }
   function render() {
     if (!$('#view-notice').classList.contains('on')) return;
+    checkAi();
     if (!sel && store.notices.length) sel = store.notices[0].id;
     renderList();
     const el = $('#noticeMain'); const n = cur();
@@ -315,7 +325,8 @@
               <button type="button" data-dmode="basic" class="${dm === 'basic' ? 'on' : ''}" title="항목 값으로 만든 기본 문장">기본</button>
               ${n.ai ? `<button type="button" data-dmode="ai" class="${dm === 'ai' ? 'on' : ''}" title="AI가 다시 쓴 문장">AI</button>` : ''}
             </div>
-            <button type="button" class="btn sm${n.ai ? '' : ' primary'}" data-nact="ai" title="비슷한 공고의 실제 문장과 이번 항목 값을 AI(Claude)에 보내 공고문 문체로 다시 씁니다">${n.ai ? 'AI로 다시 쓰기' : 'AI로 쓰기'}</button></div>
+            ${aiWho ? `<button type="button" class="btn sm${n.ai ? '' : ' primary'}" data-nact="ai" title="비슷한 공고의 실제 문장과 이번 항목 값을 ${root.JH.ai.label(aiWho)}에 보내 공고문 문체로 다시 씁니다">${n.ai ? 'AI로 다시 쓰기' : 'AI로 쓰기'}</button>`
+              : `<button type="button" class="btn sm" data-nact="aiq" title="업무용 AI·Gemini·ChatGPT 등 쓰는 AI 채팅에 붙여 넣을 질문(비슷한 공고 문장 + 이번 값)을 복사합니다">AI 질문 복사</button><button type="button" class="btn sm" data-nact="aip" title="AI가 준 답을 붙여 넣으면 초안에 들어갑니다">답 붙여넣기</button>`}</div>
           <p class="muted small draft-note">${dm === 'ai' ? `AI 초안${stale ? ' · <b class="warn-t">항목을 바꿨습니다. 반영하려면 [AI로 다시 쓰기]</b>' : ''} — 지어낸 내용이 없는지 꼭 확인하세요.` : dm === 'learned' ? `비슷한 공고 ${n.learned.bids.filter((b) => b.clauses && b.clauses.length).length}건의 실제 문장에서 배웠습니다. 왼쪽 값을 바꾸면 바로 반영됩니다.` : '왼쪽 값을 바꾸면 바로 반영됩니다. 위에서 [비슷한 공고 찾기]를 하면 실제 공고 문장으로 배웁니다.'}</p>
           ${draft.map((d, i) => `<div class="dsec"><div class="dsec-head"><b>${esc(d.title)}</b>${d.learned ? `<span class="lbadge" title="비슷한 공고 ${d.learned}건 중 여러 건이 쓴 문장">배움</span>` : ''}<button type="button" class="link sm" data-copy="${i}">복사</button></div><pre>${esc(d.body)}</pre></div>`).join('')}
           <p class="muted small">초안입니다. 회사 표준 공고문과 관계 법령에 맞는지 확인한 뒤 사용하세요.</p>
@@ -352,6 +363,8 @@
     else if (act === 'schedule') applySchedule();
     else if (act === 'copyall') await copy(sectionsOf(n).map((d) => (d.title === '제목' ? '' : d.title + '\n') + d.body).join('\n\n'));
     else if (act === 'ai') await writeWithAi(n);
+    else if (act === 'aiq') { await copy(aiQuestion(n)); app().toast('질문을 복사했습니다. 쓰는 AI 채팅에 붙여 넣고, 받은 답을 [답 붙여넣기]로 넣으세요.', 'ok'); }
+    else if (act === 'aip') pasteAiAnswer(n);
     else if (act === 'openlast') S.openFile(n.lastFile).catch((err) => app().toast(err.message, 'err'));
     else if (act === 'openref') S.openFile(a.dataset.path).catch((err) => app().toast(err.message, 'err'));
     else if (act === 'dup') { const c = JSON.parse(JSON.stringify(n)); c.id = L.uid(); c.v.공고명 = (c.v.공고명 || '') + ' (복사)'; c.v.공고번호 = ''; c.lastFile = ''; c.status = 'draft'; delete c.g2b; delete c.ai; delete c.dmode; c.createdAt = c.updatedAt = Date.now(); store.notices.unshift(c); sel = c.id; save(true); render(); }
@@ -408,6 +421,7 @@
       return { count: store.notices.length, recent: store.notices[0] ? store.notices[0].v.공고명 : '', ...by };
     },
     current: () => cur(),
+    refresh: () => render(),
     load, fillHwpxBytes,
   });
 })(window);

@@ -88,9 +88,16 @@
       it('준공계', '용역근로자 노무비 지급 내역서', '노무비지급내역,지급내역서', { required: false, note: '단순노무용역', id: 's-laborlist' }),
       ...tail('s'),
     ];
-    return { 공사, 용역 };
+    const 물품 = [
+      ...head('g'),
+      it('납품', '납품계·납품서', '납품계,납품서,납품신고,납품확인', { id: 'g-finish' }),
+      it('납품', '거래명세서', '거래명세,명세표', { required: false, note: '해당 시', id: 'g-spec' }),
+      it('납품', '하자보수 이행보증금 지급각서', '하자보수,하자이행,지급각서', { required: false, note: '해당 시', id: 'g-defect' }),
+      ...tail('g'),
+    ];
+    return { 공사, 용역, 물품 };
   }
-  const STAGES = ['구매요구', '계약', '착공계', '착수계', '준공계', '준공조서', '대금청구', '지출결의'];
+  const STAGES = ['구매요구', '계약', '착공계', '착수계', '납품', '준공계', '준공조서', '대금청구', '지출결의'];
 
   // ---------- 서류 종류 분류 ----------
   // 파일명에서 먼저 찾고(가장 긴 단어), 없으면 문서 앞부분(제목)에서 가장 앞에 나오는 단어
@@ -114,6 +121,7 @@
     const t = title || '';
     const a = t.indexOf('용역'), b = t.indexOf('공사');
     if (a >= 0 && (b < 0 || a < b)) return '용역';
+    if (b < 0 && /물품|구매|구입|납품/.test(t)) return '물품';
     return '공사';
   }
 
@@ -181,7 +189,78 @@
 
   // ---------- 나라장터 계약정보 API ----------
   const API_BASE = 'https://apis.data.go.kr/1230000/ao/CntrctInfoService';
-  const API_OPS = { 공사: 'getCntrctInfoListCnstwkPPSSrch', 용역: 'getCntrctInfoListServcPPSSrch' };
+  const API_OPS = { 공사: 'getCntrctInfoListCnstwkPPSSrch', 용역: 'getCntrctInfoListServcPPSSrch', 물품: 'getCntrctInfoListThngPPSSrch' };
+  const TYPES = ['공사', '용역', '물품'];
+  // 계약 한 건을 더 자세히: 변경이력(설계변경·기간연장), 입찰공고(예산), 개찰 예비가격(예정가격·기초금액), 낙찰(낙찰률·업체 주소), 조달업체 기본정보(주소·대표자)
+  // 서비스마다 공공데이터포털 활용신청이 따로 필요함(같은 인증키로 신청만 하면 됨)
+  const KIND = { 공사: 'Cnstwk', 용역: 'Servc', 물품: 'Thng' };
+  const G2B = {
+    chg: { name: '계약정보서비스(변경이력)', base: API_BASE, op: (t) => `getCntrctInfoList${KIND[t] || 'Cnstwk'}ChgHstry` },
+    bid: { name: '입찰공고정보서비스', base: 'https://apis.data.go.kr/1230000/ad/BidPublicInfoService', op: (t) => `getBidPblancListInfo${KIND[t] || 'Cnstwk'}` },
+    prepar: { name: '낙찰정보서비스(예비가격)', base: 'https://apis.data.go.kr/1230000/as/ScsbidInfoService', op: (t) => `getOpengResultListInfo${KIND[t] || 'Cnstwk'}PreparPcDetail` },
+    scsbid: { name: '낙찰정보서비스', base: 'https://apis.data.go.kr/1230000/as/ScsbidInfoService', op: (t) => `getScsbidListSttus${KIND[t] || 'Cnstwk'}` },
+    corp: { name: '사용자정보서비스', base: 'https://apis.data.go.kr/1230000/ao/UsrInfoService02', op: () => 'getPrcrmntCorpBasicInfo02' },
+  };
+  const bareNtce = (s) => String(s || '').trim().toUpperCase().replace(/[-\s]\d{2,3}$/, '');
+  function g2bUrl(kind, type, arg, apiKey) {
+    const g = G2B[kind];
+    const q = new URLSearchParams({ pageNo: '1', numOfRows: kind === 'chg' ? '50' : '20', type: 'json' });
+    if (kind === 'chg') { q.set('inqryDiv', '2'); q.set('untyCntrctNo', arg); }
+    else if (kind === 'bid') { q.set('inqryDiv', '2'); q.set('bidNtceNo', bareNtce(arg)); }
+    else if (kind === 'prepar') { q.set('inqryDiv', '2'); q.set('bidNtceNo', bareNtce(arg)); }
+    else if (kind === 'scsbid') { q.set('inqryDiv', '4'); q.set('bidNtceNo', bareNtce(arg)); }
+    else if (kind === 'corp') { q.set('inqryDiv', '3'); q.set('bizno', String(arg).replace(/\D/g, '')); }
+    return `${g.base}/${g.op(type)}?serviceKey=${encodeURIComponent(String(apiKey || '').trim())}&${q.toString()}`;
+  }
+  const num = (v) => { const n = Number(String(v == null ? '' : v).replace(/[^\d.-]/g, '')); return isFinite(n) && String(v || '').trim() !== '' ? n : 0; };
+  const ymd8 = (s) => { const m = String(s || '').match(/(\d{4})[-.\/]?(\d{2})[-.\/]?(\d{2})/); return m ? m[1] + m[2] + m[3] : ''; };
+  // 변경이력 → 당초 금액·준공일, 금액 바뀐 차수(설계변경), 준공일 바뀐 차수(기간연장)
+  function summarizeChanges(items) {
+    const rows = (items || []).map((x) => ({
+      at: String(x.chgDt || x.rgstDt || ''), date: ymd8(x.cntrctDate || x.cntrctCnclsDate || x.chgDt),
+      amount: num(x.totCntrctAmt || x.thtmCntrctAmt), end: ymd8(x.ttalCcmpltDate || x.thtmCcmpltDate || x.ttalScmpltDate || x.thtmScmpltDate || x.dlvrTmlmtDate || periodEnd(x.cntrctPrd)),
+      no: x.dcsnCntrctNo || '',
+    })).sort((a, b) => (a.no < b.no ? -1 : a.no > b.no ? 1 : a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+    if (!rows.length) return null;
+    const out = { origAmount: rows[0].amount, origEnd: rows[0].end, amount: rows[rows.length - 1].amount, end: rows[rows.length - 1].end, amtChanges: [], endChanges: [] };
+    for (let i = 1; i < rows.length; i++) {
+      const a = rows[i - 1], b = rows[i];
+      if (b.amount && a.amount && b.amount !== a.amount) out.amtChanges.push({ date: b.date || ymd8(b.at), amount: b.amount, diff: b.amount - a.amount });
+      if (b.end && a.end && b.end !== a.end) out.endChanges.push({ date: b.date || ymd8(b.at), from: a.end, to: b.end });
+    }
+    return out;
+  }
+  function periodEnd(s) { const all = String(s || '').match(/\d{4}[-.\/]?\d{2}[-.\/]?\d{2}/g); return all && all.length ? all[all.length - 1] : ''; }
+  // 공고번호로 찾은 목록에서 같은 공고만(조회 조건이 무시돼 엉뚱한 목록이 와도 쓰지 않음)
+  const sameNtce = (items, no) => (items || []).filter((x) => bareNtce(x.bidNtceNo) === bareNtce(no));
+  function pickBid(items, no) {
+    const x = sameNtce(items, no).sort((a, b) => String(b.bidNtceOrd || '').localeCompare(String(a.bidNtceOrd || '')))[0];
+    return x ? { budget: num(x.bdgtAmt || x.asignBdgtAmt), presmpt: num(x.presmptPrce) } : null;
+  }
+  function pickPrepar(items, no) {
+    const x = sameNtce(items, no).find((y) => num(y.plnprc)) || sameNtce(items, no)[0];
+    return x ? { plnprc: num(x.plnprc), bssamt: num(x.bssamt) } : null;
+  }
+  function pickScsbid(items, no) {
+    const x = sameNtce(items, no).find((y) => y.bidwinnrNm) || null;
+    return x ? { amount: num(x.sucsfbidAmt), rate: num(x.sucsfbidRate), name: x.bidwinnrNm || '', rep: x.bidwinnrCeoNm || '', addr: x.bidwinnrAdrs || '', bizno: String(x.bidwinnrBizno || '').replace(/\D/g, '') } : null;
+  }
+  function pickCorp(items, bizno) {
+    const b = String(bizno || '').replace(/\D/g, '');
+    const x = (items || []).find((y) => String(y.bizno || '').replace(/\D/g, '') === b) || null;
+    return x ? { addr: [x.adrs, x.dtlAdrs].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim(), rep: x.ceoNm || '', name: x.corpNm || '' } : null;
+  }
+  // 수의계약 사유: 근거법률 "지방계약법 (제25조제1항5호나목)" + 근거내역 "추정가격 2천만원 이하 물품 또는 용역"
+  function contractReason(law, dtl) {
+    const s = String(law || '').trim(); if (!s && !dtl) return '';
+    let name = s.replace(/\(.*\)/, '').trim(), art = (s.match(/\(([^)]*)\)/) || [])[1] || '';
+    if (/^지방계약법$|지방자치단체를 당사자로 하는 계약에 관한 법률$/.test(name) && /제\s*25\s*조/.test(art)) name = '지방계약법 시행령';
+    if (/^국가계약법$|국가를 당사자로 하는 계약에 관한 법률$/.test(name) && /제\s*26\s*조/.test(art)) name = '국가계약법 시행령';
+    art = art.replace(/제?\s*(\d+)\s*조/, '제$1조 ').replace(/제?\s*(\d+)\s*항/, '제$1항 ').replace(/(?:제\s*)?(\d+)\s*호/, '제$1호 ').replace(/\s+/g, ' ').trim();
+    const head = [name, art].filter(Boolean).join(' ');
+    const d = String(dtl || '').trim();
+    return d ? `${head}${head ? ' ' : ''}(${d})` : head;
+  }
   function apiUrl(op, cfg, bgn, end, page, rows) {
     const q = new URLSearchParams({
       inqryDiv: '1', inqryBgnDate: bgn, inqryEndDate: end, insttDivCd: cfg.insttDivCd || '1',
@@ -243,6 +322,16 @@
     rows.sort((a, b) => (/주계약|대표/.test(b.role) ? 1 : 0) - (/주계약|대표/.test(a.role) ? 1 : 0));
     return rows.map((r) => r.name);
   }
+  // 업체 한 줄을 칸으로: [순번^구분^방식^업체명^대표자^국가^지분율^업체명^^사업자번호]
+  function parseCorpRows(s) {
+    if (!s) return [];
+    const rows = String(s).split(/\]\s*,?\s*\[/).map((e) => e.replace(/^\[|\]$/g, '').split('^').map((x) => x.trim())).map((f) => {
+      const bizno = (f.find((x) => /^\d{3}-?\d{2}-?\d{5}$/.test(x)) || '').replace(/\D/g, '');
+      return { role: f[1] || '', name: f[3] || '', rep: /^[가-힣A-Za-z ,·]{2,30}$/.test(f[4] || '') && !/대한민국|한국/.test(f[4]) ? f[4] : '', bizno };
+    }).filter((r) => r.name);
+    rows.sort((a, b) => (/주계약|대표/.test(b.role) ? 1 : 0) - (/주계약|대표/.test(a.role) ? 1 : 0));
+    return rows;
+  }
   // 외부재정연계(e나라도움 등 우리 예산이 아닌 사업) 알아내기
   // 공개 명세에는 정해진 항목 이름이 없어서, 응답의 모든 항목을 훑어 이름·값으로 판단함
   //  - 이름이 재정·연계·보조금 계열이고 값이 Y/예  - 값에 '외부재정', '재정연계', 'e나라도움', '보조금' 같은 말
@@ -262,6 +351,7 @@
   function normalizeApiItem(x, type) {
     const ext = detectExtFinance(x);
     const vendors = parseCorpList(x.corpList);
+    const corp = parseCorpRows(x.corpList)[0] || {};
     const nums = [x.dcsnCntrctNo, x.untyCntrctNo, x.cntrctRefNo].filter(Boolean);
     return {
       key: baseNo(x.untyCntrctNo || x.dcsnCntrctNo) || contractKey({ nums, name: x.cnstwkNm || x.cntrctNm }),
@@ -273,14 +363,38 @@
       amount: Number(String(x.totCntrctAmt || x.thtmCntrctAmt || '0').replace(/[^\d]/g, '')) || 0,
       contractDate: x.cntrctCnclsDate || x.cntrctDate || '',
       startDate: x.cbgnDate || x.wbgnDate || '',
-      endDate: x.ttalCcmpltDate || x.thtmCcmpltDate || x.ttalScmpltDate || x.thtmScmpltDate || '',
+      endDate: x.ttalCcmpltDate || x.thtmCcmpltDate || x.ttalScmpltDate || x.thtmScmpltDate || x.dlvrTmlmtDate || periodEnd(x.cntrctPrd) || '',
       period: x.cntrctPrd || '',
       officer: x.cntrctInsttOfclNm || '',
       dept: x.cntrctInsttChrgDeptNm || '',
       org: x.cntrctInsttNm || '',
       url: x.cntrctDtlInfoUrl || x.cntrctInfoUrl || '',
       budgetAuto: ext ? 'ext' : '', budgetWhy: ext ? ext.why : '',
+      method: x.cntrctCnclsMthdNm || '', law: x.baseLawNm || '', lawDtl: x.baseDtls || '',
+      rep: corp.rep || '', bizno: corp.bizno || '', ntceNo: x.ntceNo || '', untyNo: x.untyCntrctNo || '', chgDt: x.chgDt || '',
     };
+  }
+
+  // ---------- 서류 글자에서 감사 자료 칸 찾기(예정가격·설계금액·예산액·업체 주소·대표자) ----------
+  // 표 칸이 줄로 흩어진 문서도 있어 '이름 다음 가까운 숫자/글'을 찾음. 못 찾으면 비워 둠(AI가 이어서 봄)
+  function scanAuditFields(lines) {
+    const t = (lines || []).join('\n');
+    const out = {};
+    const money = (re) => {
+      const m = t.match(re); if (!m) return 0;
+      const n = Number(String(m[1]).replace(/[^\d]/g, ''));
+      return n >= 100000 ? n : 0;
+    };
+    const W = '[^\\d\\n]{0,24}?\\n?[^\\d\\n]{0,12}?';
+    out.est = money(new RegExp(`예\\s*정\\s*가\\s*격${W}([\\d,]{6,})`));
+    out.design = money(new RegExp(`(?:설\\s*계\\s*금\\s*액|설\\s*계\\s*가\\s*격|기\\s*초\\s*금\\s*액)${W}([\\d,]{6,})`));
+    out.budget = money(new RegExp(`(?:예\\s*산\\s*액|배\\s*정\\s*예\\s*산|예\\s*산\\s*금\\s*액|사\\s*업\\s*예\\s*산|소\\s*요\\s*예\\s*산)${W}([\\d,]{6,})`));
+    const addr = t.match(/(?:사업장\s*소재지|본\s*점\s*소재지|소\s*재\s*지|주\s*소)\s*[:：]?\s*((?:서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충청|충북|충남|전라|전북|전남|경상|경북|경남|제주)[^\n]{4,70})/);
+    if (addr) out.addr = addr[1].replace(/\s*(전화|TEL|tel|☎|대표자|성명|업태|종목|사업자).*$/, '').replace(/\s+/g, ' ').trim();
+    const rep = t.match(/대\s*표\s*자(?:\s*성\s*명)?\s*[:：]?\s*([가-힣]{2,4})(?![가-힣])/);
+    if (rep && !/성명|명의|이름|주소|직인/.test(rep[1])) out.rep = rep[1];
+    for (const k of Object.keys(out)) if (!out[k]) delete out[k];
+    return out;
   }
 
   // ---------- 상태 계산 ----------
@@ -361,7 +475,8 @@
   const api = {
     norm, uid, stem, extOf, kindOf, defaultChecklists, STAGES, ORIGINAL_SOURCES,
     classifyItem, guessType, findMeta, vendorCore, baseNo, contractScore, matchContract, contractKey,
-    API_BASE, API_OPS, apiUrl, monthRanges, parseApiText, parseApiBody, parseCorpList, normalizeApiItem, detectExtFinance,
+    API_BASE, API_OPS, TYPES, apiUrl, monthRanges, parseApiText, parseApiBody, parseCorpList, parseCorpRows, normalizeApiItem, detectExtFinance,
+    G2B, g2bUrl, scanAuditFields, summarizeChanges, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
     checklistStatus, fmtDate, toDate, won, safeName, datesIn, extractDates, addDays, isCertItem, vendorMail,
   };
   root.JH = root.JH || {};

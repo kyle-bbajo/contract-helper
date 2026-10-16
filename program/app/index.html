@@ -65,7 +65,7 @@
           <input type="search" id="q" placeholder="찾기: 계약명·업체·번호·감독·메모  ( / )" aria-label="계약 찾기 (계약명, 업체, 계약번호, 담당자, 감독부서, 감독관, 연락처, 특이사항)">
           <div class="frow">
             <select id="fOfficer" aria-label="담당자"></select>
-            <select id="fType" aria-label="공사·용역"><option value="">공사·용역 전체</option><option>공사</option><option>용역</option></select>
+            <select id="fType" aria-label="공사·용역·물품"><option value="">공사·용역·물품 전체</option><option>공사</option><option>용역</option><option>물품</option></select>
           </div>
           <div class="seg" id="fState" role="group" aria-label="상태">
             <button type="button" data-state="" class="on">전체</button>
@@ -116,6 +116,7 @@
     <button type="button" data-tab="folder">데이터 폴더</button>
     <button type="button" data-tab="lists">서류 목록</button>
     <button type="button" data-tab="notice">공고문</button>
+    <button type="button" data-tab="ai">AI</button>
     <button type="button" data-tab="about">정보</button>
   </div>
   <div class="dlg-body">
@@ -153,7 +154,7 @@
     </div>
     <div class="tab" data-pane="lists">
       <div class="lists-head">
-        <div class="seg" id="listType"><button type="button" data-type="공사" class="on">공사</button><button type="button" data-type="용역">용역</button></div>
+        <div class="seg" id="listType"><button type="button" data-type="공사" class="on">공사</button><button type="button" data-type="용역">용역</button><button type="button" data-type="물품">물품</button></div>
         <p class="help">위에서부터 인쇄 순서입니다. 파일명이나 문서 제목에 ‘찾을 단어’가 있으면 그 서류로 분류합니다. 쉼표로 구분하고 띄어쓰기는 무시합니다.</p>
       </div>
       <div class="ed-head"><span>단계</span><span>서류</span><span>찾을 단어</span><span>받는 곳</span><span>필수</span><span></span></div>
@@ -174,8 +175,6 @@
         <div class="form-row">
           <label>기본 지역제한<select id="ntRegion"><option>경기도</option><option>용인시</option><option>제한 없음(전국)</option></select></label>
           <label>상생결제 적용 기준(추정가격, 원) <span class="hint">비워 두면 직접 선택</span><input type="text" id="ntWinwin" inputmode="numeric" placeholder="예: 50,000,000"></label>
-          <label>AI(Claude) API 키 <span class="hint">선택 · 문장 초안 [AI로 쓰기]에 씀 · 이 PC에만 저장</span><input type="password" id="ntAiKey" autocomplete="off" placeholder="sk-ant-… (비워 두면 AI 없이 배운 문장만)"></label>
-          <label>AI 모델 <span class="hint">비워 두면 claude-sonnet-5-5</span><input type="text" id="ntAiModel" autocomplete="off" placeholder="claude-sonnet-5-5"></label>
         </div>
       </div>
       <div class="dlg-actions"><button type="button" class="btn primary" id="btnSaveNotice">저장</button></div>
@@ -188,11 +187,27 @@
         <button type="button" class="btn" id="btnAddTpl">양식 올리기</button>
       </div>
     </div>
+    <div class="tab" data-pane="ai">
+      <p class="help">PC 안 AI는 설치할 때 함께 깔리며 인터넷 없이 이 PC에서만 돕니다. 서류에서 빈칸(예정가격·주소 등)을 읽을 때는 PC 안 AI만 씁니다. 공고문 문장은 키를 넣으면 Gemini(무료)로 더 빨리 쓸 수 있습니다. Gemini 무료 키는 입력이 Google 개선에 쓰일 수 있으니 공개되는 공고문 문장에만 씁니다.</p>
+      <div class="ai-state" id="aiState" role="status">확인 중…</div>
+      <div class="dlg-actions left"><button type="button" class="btn" id="btnAiCheck">상태 새로고침</button><button type="button" class="btn" id="btnAiSetup" title="PC 안 AI 프로그램과 모델을 내려받아 설치합니다(뒤에서 진행)">PC AI 설치·다시 받기</button></div>
+      <div class="form">
+        <div class="form-row">
+          <label>공고문에 쓸 AI<select id="ntAiProvider"><option value="auto">자동 (키가 있으면 Gemini, 없으면 PC AI)</option><option value="local">PC 안 AI만</option><option value="gemini">Gemini (Google, 무료 키)</option><option value="claude">Claude (Anthropic, 유료)</option></select></label>
+          <label>PC AI 모델 <span class="hint">비워 두면 gemma3:4b</span><input type="text" id="ntAiLocalModel" autocomplete="off" placeholder="gemma3:4b"></label>
+        </div>
+        <div class="form-row">
+          <label>Gemini·Claude 키 <span class="hint">Gemini: aistudio.google.com 에서 무료 발급 · 이 PC에만 저장</span><input type="password" id="ntAiKey" autocomplete="off" placeholder="비워 두면 PC 안 AI만"></label>
+          <label>Gemini·Claude 모델 <span class="hint">비워 두면 gemini-2.5-flash</span><input type="text" id="ntAiModel" autocomplete="off" placeholder="gemini-2.5-flash"></label>
+        </div>
+      </div>
+      <div class="dlg-actions"><button type="button" class="btn primary" id="btnSaveAi">저장</button></div>
+    </div>
     <div class="tab" data-pane="about">
       <dl class="about">
         <dt>버전</dt><dd id="aboutVer">-</dd>
         <dt>저장 위치</dt><dd id="aboutDir">-</dd>
-        <dt>동작 방식</dt><dd>이 PC 안에서만 동작합니다. 서류 내용은 외부로 전송되지 않으며, 나라장터 조회 때만 공공데이터포털에 접속합니다.</dd>
+        <dt>동작 방식</dt><dd>이 PC 안에서만 동작합니다. 서류 내용은 외부로 전송되지 않으며(서류 읽기는 PC 안 AI만 씀), 나라장터 조회 때 공공데이터포털에 접속합니다.</dd>
         <dt>끝내기</dt><dd><button type="button" class="btn" id="btnQuit">프로그램 종료</button></dd>
       </dl>
     </div>
@@ -207,7 +222,7 @@
   <div class="dlg-body">
     <div class="form">
       <div class="form-row">
-        <label>구분<select id="ctType"><option>공사</option><option>용역</option></select></label>
+        <label>구분<select id="ctType"><option>공사</option><option>용역</option><option>물품</option></select></label>
         <label>계약번호<input type="text" id="ctNo" placeholder="없으면 비워 두세요"></label>
       </div>
       <label>계약명<input type="text" id="ctName" required></label>
@@ -248,6 +263,19 @@
   <div class="dlg-body"><div id="tplList" class="form"></div><div class="dlg-actions"><button type="button" class="btn primary" id="tplGo">이 양식으로 만들기</button></div></div>
 </dialog>
 
+<dialog id="dlgAiPaste" class="dlg" aria-labelledby="aiPasteTitle">
+  <form method="dialog" class="dlg-head">
+    <h2 id="aiPasteTitle">AI 답 붙여넣기</h2>
+    <button class="btn icon" value="close" aria-label="닫기">✕</button>
+  </form>
+  <div class="dlg-body">
+    <p class="help">[AI 질문 복사]로 복사한 질문을 업무용 AI·Gemini·ChatGPT 등 채팅에 붙여 넣고, 받은 답을 그대로 아래에 붙여 넣으세요.</p>
+    <div class="form mail-form"><label>AI 답<textarea id="aiPasteText" rows="12" placeholder='{"sections":[{"title":"2. 입찰참가자격","body":"..."}]}'></textarea></label></div>
+    <p class="muted small" id="aiPasteErr" style="color:var(--seal)"></p>
+    <div class="dlg-actions"><button type="button" class="btn primary" id="aiPasteGo">초안에 넣기</button></div>
+  </div>
+</dialog>
+
 <dialog id="dlgMail" class="dlg" aria-labelledby="mailTitle">
   <form method="dialog" class="dlg-head">
     <h2 id="mailTitle">업체 보완 요청 메일</h2>
@@ -263,6 +291,38 @@
     <div class="dlg-actions">
       <button type="button" class="btn" id="mailOpen" title="이 PC의 기본 메일 프로그램(아웃룩 등)으로 엽니다">메일 프로그램으로 열기</button>
       <button type="button" class="btn primary" id="mailCopy">제목·본문 복사</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="dlgForms" class="dlg wide" aria-labelledby="formsTitle">
+  <form method="dialog" class="dlg-head">
+    <h2 id="formsTitle">감사·검사 제출 서식</h2>
+    <button class="btn icon" value="close" aria-label="닫기">✕</button>
+  </form>
+  <div class="dlg-body">
+    <div class="seg fm-kind" id="fmKind" role="group" aria-label="서식 종류">
+      <button type="button" data-fk="inspect" class="on" aria-pressed="true"><b>종합검사</b> 계약집행 현황 · 엑셀</button>
+      <button type="button" data-fk="audit" aria-pressed="false"><b>행정사무감사</b> 수의계약 현황 · 한글</button>
+    </div>
+    <div class="form fm-form">
+      <div class="form-row">
+        <label>계약일 시작<input type="date" id="fmFrom"></label>
+        <label>계약일 끝<input type="date" id="fmTo"></label>
+        <fieldset class="fm-types" id="fmTypes"><legend>구분</legend><label><input type="checkbox" value="공사" checked>공사</label><label><input type="checkbox" value="용역" checked>용역</label><label><input type="checkbox" value="물품" checked>물품</label></fieldset>
+      </div>
+      <div class="form-row audit-only" hidden>
+        <label>계약금액 기준(원 이상)<input type="text" id="fmMin" inputmode="numeric"></label>
+      </div>
+    </div>
+    <p class="muted small fm-note">받은 양식 그대로 계약 줄만 채웁니다. 취합할 때 다른 부서 자료와 바로 합칠 수 있습니다.</p>
+    <p class="fm-summary" id="fmSummary" role="status"></p>
+    <div class="fm-list" id="fmList"></div>
+    <div class="dlg-actions">
+      <button type="button" class="btn" id="fmEnrich" title="변경이력·예정가격·낙찰·업체 주소를 나라장터에서 받습니다">나라장터에서 빈칸 받기</button>
+      <button type="button" class="btn" id="fmDocs" title="견적서·설계내역서·사업자등록증 등에서 읽습니다(PC 안 AI 사용, 외부로 보내지 않음)">서류에서 빈칸 채우기</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn primary" id="fmMake">만들기</button>
     </div>
   </div>
 </dialog>
@@ -287,8 +347,11 @@
 <script src="vendor/tesseract/tesseract.min.js"></script>
 <script src="js/logic.js"></script>
 <script src="js/xlsx.js"></script>
+<script src="js/forms-tpl.js"></script>
+<script src="js/forms.js"></script>
 <script src="js/hwp.js"></script>
 <script src="js/server.js"></script>
+<script src="js/ai.js"></script>
 <script src="js/readers.js"></script>
 <script src="js/pdfbuild.js"></script>
 <script src="js/notice-logic.js"></script>

@@ -5,11 +5,12 @@
 param(
   [int]$Port = 17890,
   [switch]$NoBrowser,
+  [switch]$SkipAi,
   [int]$IdleMinutes = 20
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '1.2.0'
+$Version = '1.3.0'
 $AppRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $WebRoot = Join-Path $AppRoot 'app'
 $LocalCfg = Join-Path $AppRoot 'local.json'
@@ -284,6 +285,33 @@ function Fill-HwpTemplate([string]$src, [string]$dst, $values) {
 }
 
 # ---------- 요청 처리 ----------
+# ---------- PC 안 AI(Ollama) ----------
+$script:OllamaStarted = $false
+$LocalApp = $env:LOCALAPPDATA; if (-not $LocalApp) { $LocalApp = $AppRoot }
+$AiStatusFile = Join-Path (Join-Path $LocalApp 'JichulHelper') 'ai-status.json'
+function Find-Ollama {
+  foreach ($p in @((Join-Path $LocalApp 'Programs\Ollama\ollama.exe'), ([string]$env:ProgramFiles + '\Ollama\ollama.exe'))) { if ($p -and (Test-Path -LiteralPath $p)) { return $p } }
+  $g = Get-Command ollama.exe -ErrorAction SilentlyContinue
+  if ($g) { return $g.Source }
+  return $null
+}
+function Start-AiSetup([string]$model) {
+  $script = Join-Path $AppRoot 'ai-setup.ps1'
+  if (-not (Test-Path -LiteralPath $script)) { return }
+  $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  Start-Process -FilePath $ps -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$script`" -Quiet -Model $model" -WindowStyle Hidden | Out-Null
+}
+# 설치 때 AI를 다 받지 못했으면(인터넷이 끊겼거나 창을 닫음) 켤 때마다 뒤에서 이어 받음
+function Resume-AiSetup {
+  try {
+    $sf = $AiStatusFile
+    $st = $null; if (Test-Path -LiteralPath $sf) { $st = Get-Content -LiteralPath $sf -Raw -Encoding UTF8 | ConvertFrom-Json }
+    if ($st -and $st.state -eq 'ready' -and (Find-Ollama)) { return }
+    $model = 'gemma3:4b'; if ($st -and $st.model) { $model = [string]$st.model }
+    Start-AiSetup $model
+  } catch {}
+}
+
 function Handle($stream, $req) {
   $hostHdr = [string]$req.Headers['host']
   if ($hostHdr -ne $BaseHost -and $hostHdr -ne "localhost:$Port") { Send-Error $stream 403 'host'; return }
@@ -413,18 +441,26 @@ function Handle($stream, $req) {
     }
 
     '/api/ai' {
-      # AI(Claude) 중계 — api.anthropic.com 만, 키는 요청마다 화면에서 받음(이 PC 설정 파일에만 저장)
+      # AI 중계 — Gemini(generativelanguage.googleapis.com) 또는 Claude(api.anthropic.com)만, 키는 요청마다 화면에서 받음(이 PC 설정에만 저장)
       if ($req.Method -ne 'POST') { Send-Error $stream 405 'method'; return }
       try {
         $j = $Utf8.GetString($req.Body) | ConvertFrom-Json
         if (-not [string]$j.key) { Send-Error $stream 400 'AI 키가 없습니다'; return }
-        $payload = @{ model = [string]$j.model; max_tokens = 4000; system = [string]$j.system; messages = @(@{ role = 'user'; content = [string]$j.prompt }) } | ConvertTo-Json -Depth 6 -Compress
         $wc = New-Object System.Net.WebClient
         $wc.Encoding = $Utf8
-        $wc.Headers.Add('x-api-key', [string]$j.key)
-        $wc.Headers.Add('anthropic-version', '2023-06-01')
         $wc.Headers.Add('content-type', 'application/json')
-        $resp = $wc.UploadData('https://api.anthropic.com/v1/messages', 'POST', $Utf8.GetBytes($payload))
+        if ([string]$j.provider -eq 'claude') {
+          $payload = @{ model = [string]$j.model; max_tokens = 4000; system = [string]$j.system; messages = @(@{ role = 'user'; content = [string]$j.prompt }) } | ConvertTo-Json -Depth 6 -Compress
+          $wc.Headers.Add('x-api-key', [string]$j.key)
+          $wc.Headers.Add('anthropic-version', '2023-06-01')
+          $url = 'https://api.anthropic.com/v1/messages'
+        } else {
+          $model = ([string]$j.model) -replace '[^A-Za-z0-9.\-]', ''
+          $payload = @{ systemInstruction = @{ parts = @(@{ text = [string]$j.system }) }; contents = @(@{ role = 'user'; parts = @(@{ text = [string]$j.prompt }) }); generationConfig = @{ responseMimeType = 'application/json'; temperature = 0.3 } } | ConvertTo-Json -Depth 8 -Compress
+          $wc.Headers.Add('x-goog-api-key', [string]$j.key)
+          $url = "https://generativelanguage.googleapis.com/v1beta/models/$($model):generateContent"
+        }
+        $resp = $wc.UploadData($url, 'POST', $Utf8.GetBytes($payload))
         Send-Bytes $stream 200 'application/json; charset=utf-8' $resp $null
       } catch [System.Net.WebException] {
         $msg = $_.Exception.Message
@@ -432,6 +468,28 @@ function Handle($stream, $req) {
         if ($r) { try { $sr = New-Object System.IO.StreamReader($r.GetResponseStream(), $Utf8); $t = $sr.ReadToEnd(); if ($t) { $msg = $t } } catch {} }
         Send-Error $stream 502 ('AI 연결 실패: ' + $msg)
       } catch { Send-Error $stream 502 ('AI 연결 실패: ' + $_.Exception.Message) }
+      return
+    }
+
+    '/api/ai/status' {
+      # PC 안 AI(Ollama) 설치 상태 — 설치돼 있는데 꺼져 있으면 켬. AI 호출 자체는 화면이 127.0.0.1:11434로 바로 함
+      $st = $null
+      $sf = $AiStatusFile
+      if (Test-Path -LiteralPath $sf) { try { $st = Get-Content -LiteralPath $sf -Raw -Encoding UTF8 | ConvertFrom-Json } catch {} }
+      $exe = Find-Ollama
+      if ($exe -and -not $script:OllamaStarted) {
+        $script:OllamaStarted = $true
+        try { $null = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:11434/api/version' -TimeoutSec 2 } catch { try { Start-Process -FilePath $exe -ArgumentList 'serve' -WindowStyle Hidden | Out-Null } catch {} }
+      }
+      Send-Json $stream 200 @{ installed = [bool]$exe; status = $st }
+      return
+    }
+
+    '/api/ai/setup' {
+      $model = 'gemma3:4b'
+      try { $b = $Utf8.GetString($req.Body) | ConvertFrom-Json; if ([string]$b.model -match '^[A-Za-z0-9._:\-/]{1,60}$') { $model = [string]$b.model } } catch {}
+      Start-AiSetup $model
+      Send-Json $stream 200 @{ ok = $true; model = $model }
       return
     }
 
@@ -480,6 +538,7 @@ function Handle($stream, $req) {
 # ---------- 실행 ----------
 $script:LastSeen = Get-Date
 $script:Quit = $false
+if (-not $SkipAi) { Resume-AiSetup }
 Open-Browser "http://$BaseHost/"
 try {
   while (-not $script:Quit) {

@@ -26,13 +26,14 @@
     $('#cfgMonths').value = String(cfg.months || 6);
     $('#cfgExtNames').value = (cfg.extNames || []).join('\n');
     note('');
-    draft = JSON.parse(JSON.stringify({ 공사: JH.app.lists('공사'), 용역: JH.app.lists('용역') }));
+    draft = JSON.parse(JSON.stringify({ 공사: JH.app.lists('공사'), 용역: JH.app.lists('용역'), 물품: JH.app.lists('물품') }));
     renderRows();
     $('#dataDir').textContent = info.dataDir || '-';
     const nt = cfg.notice || {};
     $('#ntDept').value = nt.dept || ''; $('#ntPhone').value = nt.phone || ''; $('#ntRegion').value = nt.region || '경기도';
     $('#ntWinwin').value = nt.winwinMin ? Number(nt.winwinMin).toLocaleString('ko-KR') : '';
-    $('#ntAiKey').value = nt.aiKey || ''; $('#ntAiModel').value = nt.aiModel || '';
+    $('#ntAiProvider').value = JH.ai.cfg().mode; $('#ntAiKey').value = nt.aiKey || ''; $('#ntAiModel').value = nt.aiModel || ''; $('#ntAiLocalModel').value = nt.aiLocalModel || '';
+    showAi(false);
     $('#phKeys').innerHTML = [...JH.notice.logic.FIELDS.map((f) => f.key), '지역제한문장', '입찰참가자격', '낙찰자결정문장'].map((k) => `<button type="button" class="phk" data-ph="${esc(k)}">{{${esc(k)}}}</button>`).join('');
     renderTpls();
     tab(name || 'nara');
@@ -123,8 +124,29 @@
   $('#btnSaveNotice').onclick = async () => {
     const c = JH.app.cfg;
     c.notice = { ...(c.notice || {}), dept: $('#ntDept').value.trim(), phone: $('#ntPhone').value.trim(), region: $('#ntRegion').value,
-      winwinMin: Number($('#ntWinwin').value.replace(/[^\d]/g, '')) || 0, aiKey: $('#ntAiKey').value.trim(), aiModel: $('#ntAiModel').value.trim() };
-    await JH.app.saveCfg(); JH.app.toast('공고문 설정을 저장했습니다. 새 공고문부터 적용됩니다.', 'ok');
+      winwinMin: Number($('#ntWinwin').value.replace(/[^\d]/g, '')) || 0 };
+    await JH.app.saveCfg(); JH.app.toast('공고문 설정을 저장했습니다. 담당 정보·기준 금액은 새 공고문부터 적용됩니다.', 'ok');
+    if (JH.notice && JH.notice.refresh) JH.notice.refresh();
+  };
+  // AI
+  async function showAi(force) {
+    const el = $('#aiState'); if (!el) return;
+    if (!S.online) { el.textContent = '바탕화면 아이콘으로 실행하면 PC AI 상태를 볼 수 있습니다.'; return; }
+    const st = await JH.ai.status(force);
+    el.className = 'ai-state' + (st.ready ? ' ok' : st.state === 'error' ? ' err' : '');
+    el.textContent = JH.ai.statusText(st) + (st.cloud ? ' · Gemini·Claude 키 있음' : '');
+    if (!st.ready && ['download', 'install', 'pull'].includes(st.state) && $('#dlgSettings').open) setTimeout(() => showAi(true), 3000);
+  }
+  $('#btnAiCheck').onclick = () => showAi(true);
+  $('#btnAiSetup').onclick = async () => {
+    try { await JH.ai.setup(); JH.app.toast('PC AI 설치를 시작했습니다. 뒤에서 내려받으며, 이 화면에 진행 상황이 보입니다.', 'ok'); setTimeout(() => showAi(true), 1500); }
+    catch (e) { JH.app.toast('PC AI 설치를 시작하지 못했습니다: ' + e.message, 'err'); }
+  };
+  $('#btnSaveAi').onclick = async () => {
+    const c = JH.app.cfg;
+    c.notice = { ...(c.notice || {}), aiProvider: $('#ntAiProvider').value, aiKey: $('#ntAiKey').value.trim(), aiModel: $('#ntAiModel').value.trim(), aiLocalModel: $('#ntAiLocalModel').value.trim() };
+    await JH.app.saveCfg(); JH.ai.reset(); JH.app.toast('AI 설정을 저장했습니다.', 'ok'); showAi(true);
+    if (JH.notice && JH.notice.refresh) JH.notice.refresh();
   };
   $('#phKeys').addEventListener('click', async (e) => { const b = e.target.closest('[data-ph]'); if (!b) return; try { await navigator.clipboard.writeText(`{{${b.dataset.ph}}}`); JH.app.toast(`{{${b.dataset.ph}}} 복사했습니다.`, 'ok'); } catch (_) {} });
   $('#btnAddTpl').onclick = () => $('#tplIn').click();
