@@ -215,7 +215,10 @@
     return { no, name, vendor };
   }
   const vendorCore = (v) => norm(String(v || '').replace(/주\s*식\s*회\s*사|\(\s*주\s*\)|㈜|（\s*주\s*）|유\s*한\s*회\s*사|\(\s*유\s*\)|합\s*자\s*회\s*사|\(\s*합\s*\)/g, ''));
-  const baseNo = (n) => norm(String(n || '').split('-')[0]);
+  // 계약번호 뒤의 차수(-00 최초, -01 변경…)를 뗀 번호. 나라장터 번호는 'R26TA01914348' + 차수 2자리(대시가 없어도)
+  const G2B_NO = /^([A-Za-z]\d{2}[A-Za-z]{2}\d{8})(?:-?(\d{2,3}))?$/;
+  const baseNo = (n) => { const t = String(n || '').trim().replace(/\s+/g, ''); const m = t.match(G2B_NO); return norm(m ? m[1] : t.split('-')[0]); };
+  const ordOf = (n) => { const m = String(n || '').trim().replace(/\s+/g, '').match(G2B_NO); return m && m[2] != null ? +m[2] : null; };
 
   // ---------- 계약 건 배정 ----------
   // 계약번호(10) > 계약명 전체(6) > 계약명 단어 2개 이상(4) > 업체명(3). 동점이면 배정하지 않음
@@ -298,6 +301,34 @@
       const a = rows[i - 1], b = rows[i];
       if (b.amount && a.amount && b.amount !== a.amount) out.amtChanges.push({ date: b.date || ymd8(b.at), amount: b.amount, diff: b.amount - a.amount });
       if (b.end && a.end && b.end !== a.end) out.endChanges.push({ date: b.date || ymd8(b.at), from: a.end, to: b.end });
+    }
+    // 차수별 원본 행: 화면에서 차수마다 설계변경·기간연장을 고르게 함
+    out.chgRows = rows.map((b, i) => {
+      const a = i ? rows[i - 1] : null, ord = ordOf(b.no);
+      const r = { no: b.no || String(i), ord: ord == null ? i : ord, date: b.date || ymd8(b.at), amount: b.amount, end: b.end };
+      if (a) { r.prevAmount = a.amount; r.prevEnd = a.end; r.diff = b.amount && a.amount ? b.amount - a.amount : 0; }
+      r.first = !a && r.ord === 0; // 원계약(0차)
+      r.auto = a ? autoKind(r) : (r.first ? 'orig' : '');
+      return r;
+    });
+    // 원계약(0차) 없이 변경 차수만 왔으면 당초 금액·준공일은 모름
+    if (!out.chgRows[0].first && out.chgRows[0].ord > 0) { out.origAmount = 0; out.origEnd = ''; }
+    return out;
+  }
+  // 앞 차수와 비교한 기본값: 금액 바뀜 → 설계변경, 준공일 바뀜 → 기간연장, 둘 다 → both, 그대로 → none
+  function autoKind(r) {
+    const amt = !!(r.amount && r.prevAmount && r.amount !== r.prevAmount), end = !!(r.end && r.prevEnd && r.end !== r.prevEnd);
+    return amt && end ? 'both' : amt ? 'design' : end ? 'ext' : 'none';
+  }
+  const CHG_KINDS = { design: '설계변경', ext: '기간연장', both: '둘 다', none: '해당 없음' };
+  // 차수마다 고른 값(chgKind[차수번호]) > 자동. 원계약은 빼고, 해당 없음·모름도 뺌
+  function chgPlan(rows, picked = {}) {
+    const out = { design: [], ext: [] };
+    for (const r of rows || []) {
+      if (r.first) continue;
+      const k = (picked && picked[r.no]) || r.auto;
+      if (k === 'design' || k === 'both') out.design.push(r);
+      if (k === 'ext' || k === 'both') out.ext.push(r);
     }
     return out;
   }
@@ -446,6 +477,7 @@
     const nums = [x.dcsnCntrctNo, x.untyCntrctNo, x.cntrctRefNo].filter(Boolean);
     return {
       key: baseNo(x.untyCntrctNo || x.dcsnCntrctNo) || contractKey({ nums, name: x.cnstwkNm || x.cntrctNm }),
+      ord: ordOf(x.dcsnCntrctNo),
       source: 'api', type,
       name: x.cnstwkNm || x.cntrctNm || '',
       vendor: vendors[0] || x.crdtrNm || '',
@@ -640,8 +672,8 @@
     norm, uid, stem, extOf, kindOf, defaultChecklists, STAGES, ORIGINAL_SOURCES,
     classifyItem, guessType, findMeta, vendorCore, baseNo, contractScore, matchContract, contractKey,
     API_BASE, API_OPS, TYPES, apiUrl, keyParam, monthRanges, parseApiText, parseApiBody, parseCorpList, parseCorpRows, normalizeApiItem, detectExtFinance,
-    G2B, g2bUrl, scanAuditFields, summarizeChanges, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
-    itemsInName, isRecentItem, issuedTooEarly, matchCandidates, checklistStatus, holds, hasItem, classifyPages, classifyTitleLines, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail,
+    G2B, g2bUrl, scanAuditFields, summarizeChanges, chgPlan, autoKind, CHG_KINDS, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
+    ordOf, itemsInName, isRecentItem, issuedTooEarly, matchCandidates, checklistStatus, holds, hasItem, classifyPages, classifyTitleLines, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail,
   };
   root.JH = root.JH || {};
   root.JH.logic = api;

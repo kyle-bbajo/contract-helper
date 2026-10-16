@@ -625,3 +625,16 @@ body.resizing { cursor: col-resize; user-select: none; }
 .g2braw summary { cursor: pointer; color: var(--muted); }
 .g2braw code { display: block; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--rule-soft); padding: 6px 8px; border-radius: 6px; margin-top: 4px; }
 .file.inner { opacity: .85; } .file.inner .ft { background: var(--ink-soft); color: var(--ink); }
+/* 나라장터 변경이력: 차수마다 구분 고르기 */
+.chgtbl { margin: 4px 0 10px; }
+.chgtbl .agroup small { font-weight: 400; margin-left: 6px; }
+.chgtbl .tblwrap { overflow-x: auto; }
+.chgtbl table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.chgtbl th, .chgtbl td { padding: 5px 8px; border-bottom: 1px solid var(--rule-soft); text-align: left; vertical-align: middle; white-space: nowrap; }
+.chgtbl th { color: var(--muted); font-weight: 600; }
+.chgtbl td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.chgtbl small.up { color: var(--ok); }
+.chgtbl small.down { color: var(--seal); }
+.chgtbl small.warn { color: var(--amber); }
+.chgtbl tr.off td { color: var(--muted); }
+.chgtbl select { font: inherit; padding: 2px 4px; }

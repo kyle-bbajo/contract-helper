@@ -51,12 +51,15 @@
     const method = pick('aMethod', c.method, '나라장터');
     const reason = pick('aReason', L.contractReason(c.law, c.lawDtl), '나라장터 근거법률');
     const team = pick('aTeam', m.dept, '감독부서');
-    // 기간 연장: 직접 넣은 값, 없으면 변경이력에서 준공일이 바뀐 차수
-    const ends = (g.endChanges || []);
-    const extOrig = pick('aExtOrig', ends.length ? g.origEnd : '', '나라장터 변경이력');
-    const extDate = pick('aExtDate', ends.map((e) => e.date).join('\n'), '나라장터 변경이력');
-    // 설계변경: 직접 넣은 값이 있으면 한 번, 없으면 변경이력에서 금액이 바뀐 차수마다
-    let chg = (g.amtChanges || []).map((a) => ({ date: a.date, amount: a.amount, diff: a.diff }));
+    // 차수마다 고른 구분(memo.chgKind[차수번호]) > 자동(금액 바뀜 설계변경, 준공일 바뀜 기간연장). 해당 없음은 뺌
+    const plan = g.chgRows ? L.chgPlan(g.chgRows, m.chgKind) : null;
+    const ends = plan ? plan.ext.map((r) => ({ date: r.date, from: r.prevEnd || '', to: r.end })) : (g.endChanges || []);
+    const SRC = '나라장터 변경이력';
+    // 기간 연장: 직접 넣은 값, 없으면 연장으로 고른 차수
+    const extOrig = pick('aExtOrig', ends.length ? (g.origEnd || ends[0].from) : '', SRC);
+    const extDate = pick('aExtDate', ends.map((e) => e.date).join('\n'), SRC);
+    // 설계변경: 직접 넣은 값이 있으면 한 번, 없으면 설계변경으로 고른 차수마다
+    let chg = plan ? plan.design.map((r) => ({ date: r.date, amount: r.amount, diff: r.diff || 0 })) : (g.amtChanges || []).map((a) => ({ date: a.date, amount: a.amount, diff: a.diff }));
     if (String(m.aChgDate || m.aChgAmt || '').trim()) {
       const amt = num(m.aChgAmt) || (chg.length ? chg[chg.length - 1].amount : 0);
       chg = [{ date: m.aChgDate || (chg.length ? chg[chg.length - 1].date : ''), amount: amt, diff: amt ? amt - num(award.v) : 0 }];

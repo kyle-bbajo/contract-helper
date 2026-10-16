@@ -153,3 +153,8 @@ test('계약 관련서류 세분화, 법인등기·인감증명서 계약일 기
   assert.equal(L.issuedTooEarly('20260301', '20260610'), true);
   assert.equal(L.issuedTooEarly('20260401', '20260610'), false);
 });
+
+test('계약번호 차수(-00/-01)는 같은 계약으로', () => {
+  for (const n of ['R26TA0191434800', 'R26TA01914348-01', 'R26TA01914348', ' R26TA01914348-001 ']) assert.equal(L.baseNo(n), 'r26ta01914348');
+  assert.equal(L.ordOf('R26TA0191434800'), 0); assert.equal(L.ordOf('R26TA01914348-01'), 1); assert.equal(L.ordOf('R26TA01914348'), null);
+});

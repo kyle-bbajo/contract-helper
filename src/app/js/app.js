@@ -120,6 +120,35 @@
     if (!c.folder) c.folder = `계약/${L.safeName(c.name || '계약', 40)}${c.no ? '_' + L.safeName(c.no, 24) : ''}`;
     return c.folder;
   }
+  // 같은 계약이 차수(-00, -01)마다 따로 생긴 것을 하나로 합침: 서류·메모·원본/받음 표시를 옮기고 최신 차수 값을 남김
+  function mergeSameContracts() {
+    const groups = new Map();
+    for (const c of Object.values(db.contracts)) {
+      const b = [c.untyNo, ...(c.nums || []), c.no].map(L.baseNo).find((x) => x && x.length >= 10);
+      if (!b) continue;
+      (groups.get(b) || groups.set(b, []).get(b)).push(c);
+    }
+    let merged = 0;
+    for (const cs of groups.values()) {
+      if (cs.length < 2) continue;
+      const ordC = (c) => Math.max(c.ord == null ? -1 : c.ord, ...(c.nums || []).map((x) => L.ordOf(x) == null ? -1 : L.ordOf(x)));
+      cs.sort((a, b) => docsOf(b.key).length - docsOf(a.key).length || ordC(b) - ordC(a));
+      const keepC = cs[0], newest = [...cs].sort((a, b) => ordC(b) - ordC(a))[0];
+      for (const o of cs.slice(1)) {
+        db.docs.forEach((d) => { if (d.key === o.key) d.key = keepC.key; });
+        keepC.nums = [...new Set([...(keepC.nums || []), ...(o.nums || [])])];
+        for (const f of ['originals', 'received', 'edited']) keepC[f] = { ...(o[f] || {}), ...(keepC[f] || {}) };
+        const ck = { ...((o.memo || {}).chgKind || {}), ...((keepC.memo || {}).chgKind || {}) };
+        keepC.memo = { ...(o.memo || {}), ...(keepC.memo || {}) }; if (Object.keys(ck).length) keepC.memo.chgKind = ck;
+        for (const f of ['paidDate', 'payMemo', 'payPlan', 'folder', 'g2b', 'docVals']) if (!keepC[f] && o[f]) keepC[f] = o[f];
+        delete db.contracts[o.key]; merged++;
+      }
+      if (newest !== keepC) for (const k of ['no', 'amount', 'endDate', 'period', 'chgDt']) if (newest[k] && !(keepC.edited || {})[k]) keepC[k] = newest[k];
+      keepC.ord = ordC(newest) >= 0 ? ordC(newest) : keepC.ord;
+    }
+    if (merged) { saveDb(true); setTimeout(() => toast(`차수(-00, -01)만 다른 같은 계약 ${merged}건을 하나로 합쳤습니다.`, 'ok'), 500); }
+    return merged;
+  }
   function upsertContract(n) {
     // 계약번호가 하나라도 같으면 같은 계약
     const nb = (n.nums || []).map(L.baseNo).filter((x) => x.length >= 6);
@@ -127,9 +156,12 @@
     if (!ex && !nb.length && n.name) ex = Object.values(db.contracts).find((c) => L.norm(c.name) === L.norm(n.name));
     if (ex) {
       const keep = ex.edited || {};
+      // 같은 계약의 예전 차수(-00)가 나중에 와도 최신 차수(-01) 값을 덮지 않음(빈 칸만 채움)
+      const older = n.ord != null && ex.ord != null && n.ord < ex.ord;
       for (const k of ['type', 'name', 'vendor', 'no', 'amount', 'contractDate', 'startDate', 'endDate', 'period', 'officer', 'dept', 'org', 'url', 'method', 'law', 'lawDtl', 'rep', 'bizno', 'ntceNo', 'untyNo', 'chgDt', 'corpRaw']) {
-        if (!keep[k] && n[k]) ex[k] = n[k];
+        if (!keep[k] && n[k] && (!older || !ex[k])) ex[k] = n[k];
       }
+      if (n.ord != null && (ex.ord == null || n.ord > ex.ord)) ex.ord = n.ord;
       if (n.budgetAuto) { ex.budgetAuto = n.budgetAuto; ex.budgetWhy = n.budgetWhy || ''; }
       ex.nums = [...new Set([...(ex.nums || []), ...(n.nums || [])])];
       if (n.source === 'api') ex.source = 'api';
@@ -767,11 +799,11 @@
 
   // ---------- 나라장터 세부 정보(감사·검사 서식용) ----------
   // 변경이력 → 당초 계약금액·설계변경·기간연장, 공고가 있는 계약은 입찰공고(예산)·예비가격(예정가격·기초금액)·낙찰(업체 주소), 그 밖엔 조달업체 기본정보(주소)
-  const needsEnrich = (c) => c && (c.untyNo || c.ntceNo || c.bizno) && (!c.g2b || c.g2b.v !== 2 || c.g2b.chgDt !== (c.chgDt || '') || c.g2b.retry);
+  const needsEnrich = (c) => c && (c.untyNo || c.ntceNo || c.bizno) && (!c.g2b || c.g2b.v !== 3 || c.g2b.chgDt !== (c.chgDt || '') || c.g2b.retry);
   // 서비스마다 결과를 남김(st): ok 받음 · none 자료 없음 · skip 해당 없음(공고번호·사업자번호 없음) · err 못 받음(이유)
   const G2B_LABEL = { chg: '변경이력', bid: '입찰공고(예산)', prepar: '예정가격', scsbid: '낙찰', corp: '업체 정보' };
   async function enrichOne(c, errs, corpCache, diag) {
-    const g = { v: 2, at: new Date().toISOString(), chgDt: c.chgDt || '', st: {} }; let retry = false;
+    const g = { v: 3, at: new Date().toISOString(), chgDt: c.chgDt || '', st: {} }; let retry = false;
     const get = async (kind, arg) => {
       const name = L.G2B[kind].name; if (errs.has(name)) { retry = true; g.st[kind] = 'err:' + errs.get(name); return null; }
       try {
@@ -862,6 +894,27 @@
       ${cks.map((k) => `<div class="vck ${k.ok === true ? 'ok' : k.ok === false ? 'bad' : 'info'}"><span class="vm">${k.ok === true ? '✓' : k.ok === false ? '!' : '·'}</span><span class="vl">${esc(k.label)}</span>
         <span class="vn">나라장터 <b>${esc(k.nara)}</b></span><span class="vd">서류 <b>${esc(k.doc)}</b> <small class="muted">${esc(k.from)}</small></span>${k.note ? `<span class="vnote">${esc(k.note)}</span>` : ''}</div>`).join('')}</div>`;
   }
+  // 나라장터 변경이력: 차수마다 설계변경·기간연장을 고름(기본값은 앞 차수와 비교한 자동 판단)
+  function chgTable(c, m) {
+    const rows = (c.g2b && c.g2b.chgRows) || [];
+    if (!rows.length) return '';
+    const picked = m.chgKind || {}, K = L.CHG_KINDS;
+    const ordLabel = (r) => (r.first ? '원계약' : `${r.ord}차 변경`);
+    const body = rows.map((r) => {
+      const amt = wonText(r.amount) + (r.diff ? ` <small class="${r.diff > 0 ? 'up' : 'down'}">(${r.diff > 0 ? '+' : '−'}${esc(wonText(Math.abs(r.diff)))})</small>` : '');
+      const end = r.prevEnd && r.end && r.prevEnd !== r.end ? `${esc(L.fmtDate(r.prevEnd))} → <b>${esc(L.fmtDate(r.end))}</b>` : esc(L.fmtDate(r.end));
+      let sel = '<span class="muted">—</span>';
+      if (!r.first) {
+        const cur = picked[r.no] || r.auto || '';
+        const opts = (cur ? '' : '<option value="" selected>고르세요</option>') + Object.entries(K).map(([k, t]) => `<option value="${k}"${k === cur ? ' selected' : ''}>${esc(t)}${k === r.auto ? ' (자동)' : ''}</option>`).join('');
+        const tag = picked[r.no] ? '<small class="as">직접</small>' : r.auto ? '<small class="as">자동</small>' : '<small class="as warn">앞 차수가 없어 직접 골라 주세요</small>';
+        sel = `<select data-chgkind="${esc(r.no)}">${opts}</select> ${tag}`;
+      }
+      return `<tr${picked[r.no] === 'none' || (!picked[r.no] && r.auto === 'none') ? ' class="off"' : ''}><td>${esc(ordLabel(r))}<br><small class="muted">${esc(r.no)}</small></td><td>${esc(L.fmtDate(r.date))}</td><td class="num">${amt}</td><td>${end}</td><td>${sel}</td></tr>`;
+    }).join('');
+    return `<div class="chgtbl"><div class="agroup">나라장터 변경이력 <small class="muted">차수마다 구분을 고르면 서식의 설계변경·공사기간 연장 칸에 들어갑니다. 해당 없음은 빠집니다</small></div>
+      <div class="tblwrap"><table><thead><tr><th>차수</th><th>변경일</th><th>계약금액(증감)</th><th>준공일</th><th>구분</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
+  }
   function auditCard(c) {
     const F = JH.forms, m = memoOf(c);
     // 비워 두면 쓰는 값(자동) — 직접 넣은 감사 칸을 뺀 메모로 계산
@@ -897,6 +950,7 @@
       <div class="cbody">
       <p class="memo-foot" style="margin:0 0 8px">나라장터와 올린 서류(견적서·설계내역서·사업자등록증 등)에서 자동으로 채워 종합검사(엑셀)·행정사무감사(한글) 서식에 들어갑니다. 따로 쓸 필요 없고, 틀린 것만 [직접 고치기]로 고치세요.</p>
       ${g2bLine(c)}
+      ${chgTable(c, m)}
       ${checkBlock(cks)}
       <div class="audit-acts"><button type="button" class="btn sm" data-act="auditdocs" title="견적서·설계내역서·사업자등록증 등을 다시 읽어 빈칸을 채웁니다(PC 안 AI 사용, 외부로 보내지 않음)">서류에서 다시 읽기</button>${c.source === 'api' ? '<button type="button" class="btn sm ghost" data-act="g2bre" title="변경이력·예정가격·낙찰·업체 주소를 나라장터에서 다시 받습니다">나라장터에서 다시 받기</button>' : ''}<button type="button" class="btn sm ghost" data-act="auditedit">${edit ? '다 고침' : '직접 고치기'}</button></div>
       <div class="${edit ? 'memo-grid audit-grid' : 'audit-view'}">${fields}</div></div></details>`;
@@ -1346,6 +1400,15 @@
     const s = $('#memoState'); if (s) s.textContent = '저장 중…';
     saveDb().then(() => { const s2 = $('#memoState'); if (s2) s2.textContent = '저장됨 · 이 PC에만 저장, 인쇄본에는 들어가지 않습니다'; });
   });
+  document.addEventListener('change', (e) => {
+    const t = e.target.closest && e.target.closest('[data-chgkind]'); if (!t) return;
+    const c = ui.sel && db.contracts[ui.sel]; if (!c) return;
+    const row = ((c.g2b && c.g2b.chgRows) || []).find((r) => r.no === t.dataset.chgkind);
+    const ck = { ...((c.memo || {}).chgKind || {}) };
+    if (!t.value || (row && t.value === row.auto)) delete ck[t.dataset.chgkind]; else ck[t.dataset.chgkind] = t.value;
+    c.memo = { ...(c.memo || {}), chgKind: ck }; c.memoAt = new Date().toISOString();
+    saveDb().then(() => render());
+  });
   document.addEventListener('focusout', (e) => { if (e.target.closest && e.target.closest('[data-memo]')) renderList(); });
   document.addEventListener('toggle', (e) => {
     const d = e.target; if (!d.dataset || !d.dataset.card) return;
@@ -1461,6 +1524,7 @@
       cfg = mergeCfg((await S.readJson(CFG_PATH)) || {});
       const saved = await S.readJson(DB_PATH);
       if (saved && saved.contracts) { db = { ...db, ...saved }; await S.writeJson('서류대장.백업.json', saved); }
+      mergeSameContracts();
       // 서류 목록이 바뀌면(2: 대금청구에 완납증명서·지역개발채권, 착공계 손해배상공제·노무비 개인정보 동의서, 준공계 하자보수보증서)
       // 저장해 둔 목록에 새 기본 목록을 넣고, 직접 추가한 서류는 그대로 둠
       if (db.checklists && db.checklistsVer !== CHECKLIST_VER) {

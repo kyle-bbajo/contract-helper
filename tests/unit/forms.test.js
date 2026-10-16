@@ -154,3 +154,34 @@ test('업체목록 칸: 칸이 빠지거나 순서가 달라도 업체명 바로
   assert.equal(L.parseCorpRows('[1^주계약업체^단독^한빛환경 주식회사^^대한민국^100^^박담당^1112233333]')[0].rep, '', '대표자 칸이 비면 담당자를 대표자로 잡지 않음');
   assert.deepEqual(L.parseCorpList('[1^구성원^공동이행^(주)둘째^이대표^대한민국^30^^^2223344444],[2^주계약업체^공동이행^(주)첫째^김대표^대한민국^70^^^1112233333]'), ['(주)첫째', '(주)둘째']);
 });
+
+test('변경이력 차수마다 고르기: 자동 기본값, 둘 다, 해당 없음, 한 줄만 온 경우', () => {
+  const N = 'R26TE01234567';
+  const sm = L.summarizeChanges([
+    { dcsnCntrctNo: N + '00', totCntrctAmt: '48000000', ttalCcmpltDate: '2026-09-30', cntrctCnclsDate: '2026-05-28' },
+    { dcsnCntrctNo: N + '01', totCntrctAmt: '48000000', ttalCcmpltDate: '2026-10-10', cntrctDate: '2026-09-20' },
+    { dcsnCntrctNo: N + '02', totCntrctAmt: '47139000', ttalCcmpltDate: '2026-10-10', cntrctDate: '2026-10-08' },
+  ]);
+  assert.deepEqual(sm.chgRows.map((r) => [r.ord, r.first, r.auto]), [[0, true, 'orig'], [1, false, 'ext'], [2, false, 'design']]);
+  const c = { key: 'k', name: '시험 공사', amount: 47139000, g2b: sm };
+  let r = F.rowOf(c);
+  assert.equal(r.extDate, '20260920'); assert.equal(r.extOrig, '20260930');
+  assert.deepEqual(r.chg, [{ date: '20261008', amount: 47139000, diff: -861000 }]);
+  // 1차를 둘 다로 고르면 설계변경에도 들어감(금액 증감 0)
+  r = F.rowOf({ ...c, memo: { chgKind: { [N + '01']: 'both' } } });
+  assert.equal(r.chg.length, 2); assert.equal(r.chg[0].date, '20260920'); assert.equal(r.extDate, '20260920');
+  // 해당 없음으로 고르면 서식에서 빠짐
+  r = F.rowOf({ ...c, memo: { chgKind: { [N + '01']: 'none', [N + '02']: 'none' } } });
+  assert.deepEqual(r.chg, []); assert.equal(r.extDate, ''); assert.equal(r.extOrig, '');
+  // 직접 넣은 감사 칸이 가장 우선
+  r = F.rowOf({ ...c, memo: { chgKind: { [N + '02']: 'none' }, aChgDate: '20261001', aChgAmt: '47000000' } });
+  assert.equal(r.chg.length, 1); assert.equal(r.chg[0].date, '20261001'); assert.equal(r.chg[0].amount, 47000000);
+  // 원계약 없이 변경 차수 한 줄만: 표에는 보이고, 고르기 전에는 서식에 안 들어감, 고르면 들어감
+  const one = L.summarizeChanges([{ dcsnCntrctNo: N + '-01', totCntrctAmt: '50000000', ttalCcmpltDate: '2026-12-31', cntrctDate: '2026-11-02' }]);
+  assert.equal(one.chgRows.length, 1); assert.equal(one.chgRows[0].first, false); assert.equal(one.chgRows[0].auto, '');
+  assert.equal(one.origAmount, 0);
+  const c1 = { key: 'k1', name: '시험 용역', amount: 50000000, g2b: one };
+  assert.deepEqual(F.rowOf(c1).chg, []);
+  r = F.rowOf({ ...c1, memo: { chgKind: { [N + '-01']: 'both' } } });
+  assert.equal(r.chg.length, 1); assert.equal(r.chg[0].amount, 50000000); assert.equal(r.extDate, '20261102'); assert.equal(r.extOrig, '');
+});

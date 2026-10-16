@@ -279,6 +279,16 @@ print(json.dumps({'names': wb.sheetnames, 'head': rows[0], 'rows': rows[1:], 'de
   assert.match(av, /경기도 용인시 처인구 중부대로 1199/, '업체 주소 자동');
   assert.match(await page.textContent('.g2bst'), /변경이력 받음/);
   assert.ok(await page.$('.vchecks, .g2bst'), '나라장터와 서류 맞춰 보기 자리');
+  // 변경이력 표: 차수마다 구분(자동 기본값) → 해당 없음으로 고르면 서식 값에서 빠지고, 자동으로 되돌릴 수 있음
+  assert.equal(await page.locator('.chgtbl tbody tr').count(), 3, '원계약·1차·2차');
+  assert.equal(await page.inputValue('[data-chgkind="R26BK01234567-01"]'), 'ext');
+  assert.equal(await page.inputValue('[data-chgkind="R26BK01234567-02"]'), 'design');
+  await page.selectOption('[data-chgkind="R26BK01234567-02"]', 'none');
+  await page.waitForFunction(() => document.querySelector('.chgtbl tbody tr:nth-child(3)').classList.contains('off'));
+  assert.doesNotMatch(await page.textContent('.audit-view'), /47,139,000원/, '해당 없음은 설계변경에서 빠짐');
+  await page.screenshot({ path: join(SHOTS, '4b-변경이력.png') });
+  await page.selectOption('[data-chgkind="R26BK01234567-02"]', 'design');
+  await page.waitForFunction(() => !document.querySelector('.chgtbl tbody tr:nth-child(3)').classList.contains('off'));
   await page.click('[data-act="auditedit"]');
   assert.match(await page.getAttribute('[data-memo="aAward"]', 'placeholder'), /48,000,000원/, '당초 계약금액(변경이력)');
   assert.match(await page.getAttribute('[data-memo="aAddr"]', 'placeholder'), /경기도 용인시 처인구 중부대로 1199/, '조달업체 주소');
@@ -327,7 +337,7 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   await waitFor(() => readdirSync(xdir).filter((f) => f.endsWith('.xlsx')).length >= 2, 20000, '종합검사 바로 받기');
   step('현황판 [행정사무감사 서식]·[종합검사 서식] 누르면 나라장터·서류에서 채운 파일을 바로 받음');
   await page.click('.views [data-view="contracts"]');
-  step('감사·검사 자료: 나라장터 변경이력·업체 주소 자동 + 직접 넣은 값 → 종합검사 엑셀(양식 그대로) · 행정사무감사 한글(받은 양식에 채움)');
+  step('감사·검사 자료: 나라장터 변경이력(차수마다 구분 고름)·업체 주소 자동 + 직접 넣은 값 → 종합검사 엑셀(양식 그대로) · 행정사무감사 한글(받은 양식에 채움)');
 
   // 지난 계약처럼 파일 없이 이미 받은 서류: 줄마다 [받음], 빠진 서류 한 번에 [받음]
   await page.click('.citem:has-text("시청사 옥상 방수공사")');
