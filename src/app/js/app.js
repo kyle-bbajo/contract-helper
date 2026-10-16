@@ -434,7 +434,7 @@
       return `<div class="citem${c.key === ui.sel ? ' on' : ''}" role="listitem" tabindex="0" data-key="${esc(c.key)}">
         <div class="nm" title="${esc(c.name)}">${hl(c.name || '이름 없는 계약')}</div>
         <div class="st">${pillFor(st, c)}</div>
-        <div class="meta"><span>${hl(c.vendor || '업체 미상')}</span><span>${esc(c.type)}</span>${c.endDate ? `<span class="date"${st.late ? ' style="color:var(--seal)"' : ''}>준공 ${esc(L.fmtDate(c.endDate))}</span>` : ''}${m.note || m.person ? `<span class="memo-dot" title="${esc([m.dept, m.person, m.phone].filter(Boolean).join(' ') + (m.note ? '\n' + m.note : ''))}">메모</span>` : ''}</div>
+        <div class="meta"><span>${hl(c.vendor || '업체 미상')}</span><span>${esc(c.type)}</span>${isExt(c) ? '<span class="ext-dot" title="외부 예산(e나라도움 등)">외부</span>' : ''}${c.endDate ? `<span class="date"${st.late ? ' style="color:var(--seal)"' : ''}>준공 ${esc(L.fmtDate(c.endDate))}</span>` : ''}${m.note || m.person ? `<span class="memo-dot" title="${esc([m.dept, m.person, m.phone].filter(Boolean).join(' ') + (m.note ? '\n' + m.note : ''))}">메모</span>` : ''}</div>
         ${memoHit ? `<div class="hit">${hl(String(memoHit).replace(/\s+/g, ' ').slice(0, 80))}</div>` : ''}
         <div class="bar-mini"><i style="width:${pct}%"></i></div></div>`;
     }).join('') + (hidden ? `<button type="button" class="more-hits" data-act="searchall">담당자·구분·상태 거름 때문에 안 보이는 계약 <b>${hidden}건</b> — 모두에서 찾기</button>` : '')
@@ -482,11 +482,28 @@
       <button class="x" data-act="del" data-doc="${d.id}" title="빼기" aria-label="빼기">✕</button></div>`;
   }
   // 우리 예산이 아닌 사업(e나라도움 보조금 등)은 구매요구서 대신 일반 기안문이 옴
-  const isExt = (c) => !!c && (c.budget ? c.budget === 'ext' : c.budgetAuto === 'ext');
+  // 예산 판단 순서: 직접 고른 값 > 서류 내용(e나라도움·보조금 등 → 외부, 구매요구서 → 우리) > 나라장터 응답 > 모름
+  const EXT_TEXT = /(e나라도움|이나라도움|국고보조|보조금|외부재정|재정연계)/;
+  function budgetOf(c) {
+    if (!c) return { v: 'unknown' };
+    if (c.budget) return { v: c.budget, why: '직접 고름', manual: true };
+    const docs = docsOf(c.key);
+    const ext = docs.find((d) => EXT_TEXT.test(d.text || ''));
+    if (ext) { const m = (ext.text || '').match(EXT_TEXT); return { v: 'ext', why: `서류 "${ext.name}"에 '${m ? m[1] : ''}'` }; }
+    const req = docs.find((d) => /-req$/.test(d.itemId || '') && /구매요구|구매요청/.test((d.title || '') + L.norm(d.name)));
+    if (req) return { v: 'own', why: `구매요구서 "${req.name}"` };
+    const nm = L.norm(c.name || ''); const hit = (cfg.extNames || []).find((w) => w && nm.includes(L.norm(w)));
+    if (hit) return { v: 'ext', why: `사업 이름 '${hit}'(설정)` };
+    if (c.budgetAuto === 'ext') return { v: 'ext', why: '나라장터: 외부재정연계' };
+    return { v: 'unknown', why: '' };
+  }
+  const isExt = (c) => budgetOf(c).v === 'ext';
+  const budgetText = (c) => ({ own: '우리 예산', ext: '외부 예산(e나라도움 등)', unknown: '모름' }[budgetOf(c).v]);
   const BUDGET = { own: '우리 예산', ext: '외부 예산(e나라도움 등)' };
   function itemView(c, x) {
     if (isExt(c) && /-req$/.test(x.id)) return { name: '일반 기안문', note: '우리 예산이 아니라 구매요구서 대신 기안문으로 옴' };
-    if (!isExt(c) && /-req$/.test(x.id)) return { name: '구매요구서', note: '설계내역서·시방서 등 포함 (외부 예산 사업은 오른쪽 메모에서 예산을 바꾸면 기안문으로 바뀜)' };
+    if (budgetOf(c).v === 'own' && /-req$/.test(x.id)) return { name: '구매요구서', note: '설계내역서·시방서 등 포함' };
+    if (/-req$/.test(x.id)) return { name: '구매요구서 또는 기안문', note: '우리 예산이면 구매요구서, 외부 예산(e나라도움 등)이면 일반 기안문 — 들어온 서류로 예산을 알아냅니다' };
     return { name: x.name, note: x.note };
   }
   // 업체에 다시 받을 서류: 업체·메일로 받는 서류 중 빠진 것 + 유효기간이 지출요청일보다 먼저 끝나는 증명서
@@ -514,10 +531,10 @@
   function memoCard(c) {
     const m = memoOf(c);
     const f = (k, label, ph, extra = '') => `<label class="mf"><span>${label}</span><input type="text" data-memo="${k}" value="${esc(m[k] || '')}" placeholder="${esc(ph)}" autocomplete="off"${extra}></label>`;
-    const b = isExt(c) ? 'ext' : 'own';
-    // 예산 출처: 나라장터에서 알아낸 값 / 직접 바꾼 값
-    const auto = c.budgetAuto === 'ext' ? '나라장터: 외부재정연계' : '';
-    const src = c.budget ? `직접 바꿈${auto ? ` · <button type="button" class="link sm" data-act="budgetauto">나라장터 값으로</button>` : ''}` : auto ? `<span title="${esc(c.budgetWhy || '')}">${esc(auto)}</span>` : '';
+    const bo = budgetOf(c), b = bo.v;
+    // 예산 출처: 직접 / 서류 / 나라장터 / 모름
+    const src = bo.manual ? `직접 고름 · <button type="button" class="link sm" data-act="budgetauto">자동으로</button>`
+      : b === 'unknown' ? '<span class="unk">모름 — 구매요구서·기안문이 오거나 설정의 외부 예산 사업 이름에 맞으면 자동으로</span>' : `<span title="${esc(bo.why)}">자동: ${esc(bo.why.length > 28 ? bo.why.slice(0, 28) + '…' : bo.why)}</span>`;
     return `<section class="memo" aria-label="계약 메모">
       <div class="memo-head"><h3>메모</h3><span class="muted" id="memoState">자동 저장</span></div>
       <div class="mf"><span>예산${src ? ` <small class="bsrc">${src}</small>` : ''}</span><div class="seg budget" role="group" aria-label="예산 구분">${[['own', '우리 예산'], ['ext', '외부(e나라도움 등)']].map(([k, v]) => `<button type="button" data-act="budget" data-v="${k}" class="${k === b ? 'on' : ''}" aria-pressed="${k === b}" title="${esc(BUDGET[k])}">${esc(v)}</button>`).join('')}</div></div>
@@ -546,7 +563,7 @@
     el.innerHTML = `
       <div class="dhead">
         <div>
-          <div class="kicker"><span class="tag">${esc(c.type)}</span>${srcLabel ? `<span class="tag src">${esc(srcLabel)}</span>` : ''}${c.no ? `<span class="num">${esc(c.no)}</span>` : ''}</div>
+          <div class="kicker"><span class="tag">${esc(c.type)}</span>${isExt(c) ? '<span class="tag ext" title="우리 예산이 아닌 사업(e나라도움 등)">외부 예산</span>' : ''}${srcLabel ? `<span class="tag src">${esc(srcLabel)}</span>` : ''}${c.no ? `<span class="num">${esc(c.no)}</span>` : ''}</div>
           <h1 class="cname">${esc(c.name || '이름 없는 계약')}</h1>
           <div class="facts">
             <span>업체 <b>${esc(c.vendor || '-')}</b></span>
@@ -638,7 +655,7 @@
         { h: '필수 서류', w: 10 }, { h: '빠진 서류', w: 40, type: 'wrap' }, { h: '재발급 필요(유효기간)', w: 34, type: 'wrap' }, { h: '지출요청일', w: 12, type: 'date' }, { h: '원본 받음', w: 9, type: 'int' }, { h: '지출일', w: 12, type: 'date' }, { h: '지출 메모', w: 18 }, { h: '특이사항', w: 44, type: 'wrap' }],
       rows: rows.map(({ c, st }, i) => {
         const m = memoOf(c);
-        return [i + 1, stateText(st), c.name, c.type, BUDGET[isExt(c) ? 'ext' : 'own'], c.vendor, c.no, c.amount || '', c.startDate, c.endDate, st.late ? '준공 지남' : '',
+        return [i + 1, stateText(st), c.name, c.type, budgetText(c), c.vendor, c.no, c.amount || '', c.startDate, c.endDate, st.late ? '준공 지남' : '',
           c.officer, c.dept, m.dept, m.person, m.phone, `${st.reqDone}/${st.reqTotal}`, st.missing.map((x) => itemView(c, x).name).join(', '),
           st.expired.map((x) => `${itemView(c, x.item).name}(${L.fmtDate(x.valid)}까지)`).join(', '), st.basis ? st.basis.date : '', st.origCount || '', c.paidDate, c.payMemo, m.note];
       }),

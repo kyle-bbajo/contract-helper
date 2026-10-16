@@ -33,7 +33,7 @@
     if (key === '구분') { const ws = N.WORK_TYPES[val] || []; if (!ws.some((w) => w.name === n.v.공종)) n.v.공종 = ws[0] ? ws[0].name : ''; n.manual.업종제한 = false; }
     if (key === '공종') n.manual.업종제한 = false;
     n.v = N.applyRules(n.v, n.manual, app().cfg);
-    n.updatedAt = Date.now(); save();
+    n.updatedAt = n.vAt = Date.now(); save();
   }
 
   // ---------- 유사 공고에서 배우기 ----------
@@ -120,6 +120,30 @@
     render();
   }
 
+  // ---------- 문장 초안: 배운 문장(기본값) · 기본 문장 · AI ----------
+  const hasLearned = (n) => !!(n.learned && n.learned.bids && n.learned.bids.some((b) => b.clauses && b.clauses.length));
+  const modeOf = (n) => (n.dmode === 'ai' && n.ai ? 'ai' : n.dmode === 'basic' || !hasLearned(n) ? 'basic' : 'learned');
+  function sectionsOf(n) {
+    const m = modeOf(n);
+    if (m === 'ai') return n.ai.sections;
+    return m === 'basic' ? N.draft(n.v) : N.draft(n.v, n.learned);
+  }
+  const aiCfg = () => { const nt = app().cfg.notice || {}; return { key: (nt.aiKey || '').trim(), model: (nt.aiModel || '').trim() || 'claude-sonnet-5-5' }; };
+  async function writeWithAi(n) {
+    const a = aiCfg();
+    if (!a.key) { app().toast('AI를 쓰려면 설정 → 공고문에서 Claude API 키를 넣어 주세요.', 'err', { label: '설정 열기', run: () => JH.settings.open('notice') }); return; }
+    app().progress('AI가 비슷한 공고 문장을 보고 다시 쓰는 중', .4);
+    try {
+      const base = hasLearned(n) ? N.draft(n.v, n.learned) : N.draft(n.v);
+      const r = await S.ai({ key: a.key, model: a.model, system: N.AI_SYSTEM, prompt: N.aiPrompt(n.v, n.learned, base) });
+      const text = (r.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('');
+      n.ai = { at: Date.now(), model: r.model || a.model, sections: N.parseAi(text) };
+      n.dmode = 'ai'; n.updatedAt = Date.now(); save(true);
+      app().toast('AI 초안을 만들었습니다. 내용을 꼭 확인한 뒤 쓰세요.', 'ok');
+    } catch (e) { console.error(e); app().toast('AI로 쓰지 못했습니다: ' + e.message, 'err'); }
+    finally { app().progress(null); render(); }
+  }
+
   // ---------- 진행 상태 ----------
   function setStatus(n, st) { n.status = st; n.updatedAt = Date.now(); save(true); render(); }
   // 나라장터 입찰공고번호를 넣으면 '나라장터 등록'으로 넘기고, 나라장터에서 실제 공고를 찾아 공고명·개찰일시를 받아 둠
@@ -154,7 +178,7 @@
     try { const r = await S.list(TPL_DIR, false); return r.files.filter((f) => /\.(hwp|hwpx)$/i.test(f.path)); } catch (_) { return []; }
   }
   async function fillTemplate(tplPath) {
-    const n = cur(); const values = N.templateValues(n.v);
+    const n = cur(); const values = N.templateValues(n.v, sectionsOf(n));
     const name = L.safeName(n.v.공고명 || '공고문', 60) + (/\.hwpx$/i.test(tplPath) ? '.hwpx' : '.hwp');
     app().progress('한글 양식에 채우는 중', .5);
     try {
@@ -247,7 +271,8 @@
     const st = N.statusOf(n), locked = st === 'posted';
     const secs = N.SECTIONS.map((sec) => `<fieldset class="nsec"${locked ? ' disabled' : ''}><legend>${esc(sec)}</legend><div class="ngrid">${N.FIELDS.filter((f) => f.sec === sec && f.key !== '공고명').map((f) => field(f, n)).join('')}</div>
       ${sec === '일정' && s && s.summary.입찰기간일수 ? `<div class="learn-hint">비슷한 공고는 입찰서 제출 기간이 보통 <b>${s.summary.입찰기간일수}일</b>입니다. <button type="button" class="link sm" data-nact="schedule">공고일 기준으로 일정 채우기</button> <span class="muted">법정 공고기간을 꼭 확인하세요.</span></div>` : ''}</fieldset>`).join('');
-    const draft = N.draft(n.v);
+    const draft = sectionsOf(n), dm = modeOf(n);
+    const stale = dm === 'ai' && n.vAt && n.vAt > n.ai.at;
     el.innerHTML = `
       <div class="nhead">
         <input id="nTitle" class="ntitle" data-key="공고명" value="${esc(n.v.공고명)}" placeholder="공고명을 입력하세요" aria-label="공고명"${locked ? ' readonly' : ''}>
@@ -284,8 +309,15 @@
       </section>
       <div class="ncols">
         <div class="nform">${secs}</div>
-        <aside class="draft"><div class="draft-head"><h3>문장 초안</h3><span class="muted">고칠 곳은 왼쪽에서 바꾸면 바로 반영됩니다</span></div>
-          ${draft.map((d, i) => `<div class="dsec"><div class="dsec-head"><b>${esc(d.title)}</b><button type="button" class="link sm" data-copy="${i}">복사</button></div><pre>${esc(d.body)}</pre></div>`).join('')}
+        <aside class="draft"><div class="draft-head"><h3>문장 초안</h3>
+            <div class="seg dmode" role="group" aria-label="초안 종류">
+              ${hasLearned(n) ? `<button type="button" data-dmode="learned" class="${dm === 'learned' ? 'on' : ''}" title="비슷한 공고들이 공통으로 쓴 실제 문장을 이번 업종·지역으로 바꿈">배운 문장</button>` : ''}
+              <button type="button" data-dmode="basic" class="${dm === 'basic' ? 'on' : ''}" title="항목 값으로 만든 기본 문장">기본</button>
+              ${n.ai ? `<button type="button" data-dmode="ai" class="${dm === 'ai' ? 'on' : ''}" title="AI가 다시 쓴 문장">AI</button>` : ''}
+            </div>
+            <button type="button" class="btn sm${n.ai ? '' : ' primary'}" data-nact="ai" title="비슷한 공고의 실제 문장과 이번 항목 값을 AI(Claude)에 보내 공고문 문체로 다시 씁니다">${n.ai ? 'AI로 다시 쓰기' : 'AI로 쓰기'}</button></div>
+          <p class="muted small draft-note">${dm === 'ai' ? `AI 초안${stale ? ' · <b class="warn-t">항목을 바꿨습니다. 반영하려면 [AI로 다시 쓰기]</b>' : ''} — 지어낸 내용이 없는지 꼭 확인하세요.` : dm === 'learned' ? `비슷한 공고 ${n.learned.bids.filter((b) => b.clauses && b.clauses.length).length}건의 실제 문장에서 배웠습니다. 왼쪽 값을 바꾸면 바로 반영됩니다.` : '왼쪽 값을 바꾸면 바로 반영됩니다. 위에서 [비슷한 공고 찾기]를 하면 실제 공고 문장으로 배웁니다.'}</p>
+          ${draft.map((d, i) => `<div class="dsec"><div class="dsec-head"><b>${esc(d.title)}</b>${d.learned ? `<span class="lbadge" title="비슷한 공고 ${d.learned}건 중 여러 건이 쓴 문장">배움</span>` : ''}<button type="button" class="link sm" data-copy="${i}">복사</button></div><pre>${esc(d.body)}</pre></div>`).join('')}
           <p class="muted small">초안입니다. 회사 표준 공고문과 관계 법령에 맞는지 확인한 뒤 사용하세요.</p>
         </aside>
       </div>`;
@@ -294,8 +326,9 @@
   function refreshLive() {
     const n = cur(); if (!n) return;
     for (const f of N.FIELDS) { const el = $(`#nf-${CSS.escape(f.key)}`); if (el && document.activeElement !== el && f.auto) el.value = n.v[f.key] || ''; }
-    const draft = N.draft(n.v);
-    $$('.dsec pre').forEach((p, i) => { if (draft[i]) p.textContent = draft[i].body; });
+    if (modeOf(n) === 'ai') { const note = $('.draft-note'); if (note && !note.querySelector('.warn-t')) render(); return; } // AI 문장은 그대로, 다시 쓰라는 안내만
+    const draft = sectionsOf(n);
+    $$('.draft .dsec pre').forEach((p, i) => { if (draft[i]) p.textContent = draft[i].body; });
     const t = $(`.citem[data-nid="${n.id}"] .nm`); if (t) t.textContent = n.v.공고명 || '제목 없는 공고문';
   }
 
@@ -307,7 +340,9 @@
     const n = cur();
     if (ap) { setVal(ap.dataset.apply, ap.dataset.val, true); render(); return; }
     if (ra) { n.manual[ra.dataset.reauto] = false; setVal(ra.dataset.reauto, n.v[ra.dataset.reauto], false); render(); return; }
-    if (cp) { const d = N.draft(n.v)[+cp.dataset.copy]; await copy(d.title + '\n' + d.body); return; }
+    if (cp) { const d = sectionsOf(n)[+cp.dataset.copy]; await copy(d.title + '\n' + d.body); return; }
+    const dmb = e.target.closest('[data-dmode]');
+    if (dmb) { n.dmode = dmb.dataset.dmode; save(); render(); return; }
     const cc = e.target.closest('[data-clause]');
     if (cc) { const [bi, ci] = cc.dataset.clause.split(':').map(Number); await copy(n.learned.bids.filter((b) => b.clauses && b.clauses.length)[bi].clauses[ci].text); return; }
     if (!a) return;
@@ -315,10 +350,11 @@
     if (act === 'new') create();
     else if (act === 'learn') learnSimilar($('#lScope').value, Number($('#lMonths').value), $('#lKeyword').value.trim());
     else if (act === 'schedule') applySchedule();
-    else if (act === 'copyall') await copy(N.draft(n.v).map((d) => (d.title === '제목' ? '' : d.title + '\n') + d.body).join('\n\n'));
+    else if (act === 'copyall') await copy(sectionsOf(n).map((d) => (d.title === '제목' ? '' : d.title + '\n') + d.body).join('\n\n'));
+    else if (act === 'ai') await writeWithAi(n);
     else if (act === 'openlast') S.openFile(n.lastFile).catch((err) => app().toast(err.message, 'err'));
     else if (act === 'openref') S.openFile(a.dataset.path).catch((err) => app().toast(err.message, 'err'));
-    else if (act === 'dup') { const c = JSON.parse(JSON.stringify(n)); c.id = L.uid(); c.v.공고명 = (c.v.공고명 || '') + ' (복사)'; c.v.공고번호 = ''; c.lastFile = ''; c.status = 'draft'; delete c.g2b; c.createdAt = c.updatedAt = Date.now(); store.notices.unshift(c); sel = c.id; save(true); render(); }
+    else if (act === 'dup') { const c = JSON.parse(JSON.stringify(n)); c.id = L.uid(); c.v.공고명 = (c.v.공고명 || '') + ' (복사)'; c.v.공고번호 = ''; c.lastFile = ''; c.status = 'draft'; delete c.g2b; delete c.ai; delete c.dmode; c.createdAt = c.updatedAt = Date.now(); store.notices.unshift(c); sel = c.id; save(true); render(); }
     else if (act === 'markdone') setStatus(n, 'done');
     else if (act === 'markdraft') setStatus(n, 'draft');
     else if (act === 'g2b') await registerBid(n, $('#g2bNo').value);

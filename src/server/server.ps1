@@ -412,6 +412,29 @@ function Handle($stream, $req) {
       return
     }
 
+    '/api/ai' {
+      # AI(Claude) 중계 — api.anthropic.com 만, 키는 요청마다 화면에서 받음(이 PC 설정 파일에만 저장)
+      if ($req.Method -ne 'POST') { Send-Error $stream 405 'method'; return }
+      try {
+        $j = $Utf8.GetString($req.Body) | ConvertFrom-Json
+        if (-not [string]$j.key) { Send-Error $stream 400 'AI 키가 없습니다'; return }
+        $payload = @{ model = [string]$j.model; max_tokens = 4000; system = [string]$j.system; messages = @(@{ role = 'user'; content = [string]$j.prompt }) } | ConvertTo-Json -Depth 6 -Compress
+        $wc = New-Object System.Net.WebClient
+        $wc.Encoding = $Utf8
+        $wc.Headers.Add('x-api-key', [string]$j.key)
+        $wc.Headers.Add('anthropic-version', '2023-06-01')
+        $wc.Headers.Add('content-type', 'application/json')
+        $resp = $wc.UploadData('https://api.anthropic.com/v1/messages', 'POST', $Utf8.GetBytes($payload))
+        Send-Bytes $stream 200 'application/json; charset=utf-8' $resp $null
+      } catch [System.Net.WebException] {
+        $msg = $_.Exception.Message
+        $r = $_.Exception.Response
+        if ($r) { try { $sr = New-Object System.IO.StreamReader($r.GetResponseStream(), $Utf8); $t = $sr.ReadToEnd(); if ($t) { $msg = $t } } catch {} }
+        Send-Error $stream 502 ('AI 연결 실패: ' + $msg)
+      } catch { Send-Error $stream 502 ('AI 연결 실패: ' + $_.Exception.Message) }
+      return
+    }
+
     '/api/hwpfill' {
       try {
         $body = $Utf8.GetString($req.Body) | ConvertFrom-Json

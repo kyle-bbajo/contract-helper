@@ -454,3 +454,13 @@ body[data-mod="home"] .views button.on::after { display: none; }
 .rcv-t { color: var(--ok); font-weight: 600; }
 .orig-toggle.recv input { accent-color: var(--ok); }
 .req .recvall { justify-self: start; text-align: left; }
+.tag.ext { background: #ece6f7; color: #5b3f99; }
+.ext-dot { flex: none; font-size: 11px; font-weight: 700; color: #5b3f99; background: #ece6f7; border-radius: 4px; padding: 0 5px; }
+.bsrc .unk { color: var(--amber); }
+.draft-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.draft-head h3 { margin-right: auto; }
+.seg.dmode button { padding: 3px 10px; font-size: 12.5px; }
+.draft-note { margin: 6px 0 10px; }
+.draft-note .warn-t { color: var(--amber); }
+.lbadge { font-size: 11px; font-weight: 700; color: var(--ok); background: var(--ok-soft); border-radius: 4px; padding: 0 5px; margin-left: 6px; }
+.dsec-head .lbadge + .link { margin-left: auto; }

@@ -24,6 +24,7 @@
     $('#cfgInstt').value = cfg.insttNm || '';
     $('#cfgInsttDiv').value = cfg.insttDivCd || '1'; $('#cfgOfficer').value = cfg.officer || '';
     $('#cfgMonths').value = String(cfg.months || 6);
+    $('#cfgExtNames').value = (cfg.extNames || []).join('\n');
     note('');
     draft = JSON.parse(JSON.stringify({ 공사: JH.app.lists('공사'), 용역: JH.app.lists('용역') }));
     renderRows();
@@ -31,7 +32,8 @@
     const nt = cfg.notice || {};
     $('#ntDept').value = nt.dept || ''; $('#ntPhone').value = nt.phone || ''; $('#ntRegion').value = nt.region || '경기도';
     $('#ntWinwin').value = nt.winwinMin ? Number(nt.winwinMin).toLocaleString('ko-KR') : '';
-    $('#phKeys').innerHTML = [...JH.notice.logic.FIELDS.map((f) => f.key), '지역제한문장'].map((k) => `<button type="button" class="phk" data-ph="${esc(k)}">{{${esc(k)}}}</button>`).join('');
+    $('#ntAiKey').value = nt.aiKey || ''; $('#ntAiModel').value = nt.aiModel || '';
+    $('#phKeys').innerHTML = [...JH.notice.logic.FIELDS.map((f) => f.key), '지역제한문장', '입찰참가자격', '낙찰자결정문장'].map((k) => `<button type="button" class="phk" data-ph="${esc(k)}">{{${esc(k)}}}</button>`).join('');
     renderTpls();
     tab(name || 'nara');
     dlg.showModal();
@@ -39,7 +41,8 @@
   function note(t, kind) { const n = $('#naraNote'); n.textContent = t; n.className = 'note' + (kind ? ' ' + kind : ''); }
   function readNara() {
     return { ...JH.app.cfg, apiKey: $('#cfgKey').value.trim() || (JH.app.org || {}).apiKey || '', insttNm: $('#cfgInstt').value.trim(), insttDivCd: $('#cfgInsttDiv').value,
-      officer: $('#cfgOfficer').value.trim(), months: Number($('#cfgMonths').value) || 6 };
+      officer: $('#cfgOfficer').value.trim(), months: Number($('#cfgMonths').value) || 6,
+      extNames: $('#cfgExtNames').value.split(/\n+/).map((s) => s.trim()).filter(Boolean) };
   }
   async function testNara() {
     const c = readNara();
@@ -78,6 +81,7 @@
   $$('.dlg-tabs button', dlg).forEach((b) => b.addEventListener('click', () => tab(b.dataset.tab)));
   $('#btnSettings').onclick = () => open();
   $('#btnTestNara').onclick = testNara;
+  $('#cfgExtNames').addEventListener('change', async () => { JH.app.cfg.extNames = readNara().extNames; await JH.app.saveCfg(); JH.app.render(); JH.app.toast('외부 예산 사업 이름을 저장했습니다.', 'ok'); });
   $('#btnSaveNara').onclick = async () => {
     const c = readNara();
     if (!(await testNara())) return;
@@ -119,7 +123,7 @@
   $('#btnSaveNotice').onclick = async () => {
     const c = JH.app.cfg;
     c.notice = { ...(c.notice || {}), dept: $('#ntDept').value.trim(), phone: $('#ntPhone').value.trim(), region: $('#ntRegion').value,
-      winwinMin: Number($('#ntWinwin').value.replace(/[^\d]/g, '')) || 0 };
+      winwinMin: Number($('#ntWinwin').value.replace(/[^\d]/g, '')) || 0, aiKey: $('#ntAiKey').value.trim(), aiModel: $('#ntAiModel').value.trim() };
     await JH.app.saveCfg(); JH.app.toast('공고문 설정을 저장했습니다. 새 공고문부터 적용됩니다.', 'ok');
   };
   $('#phKeys').addEventListener('click', async (e) => { const b = e.target.closest('[data-ph]'); if (!b) return; try { await navigator.clipboard.writeText(`{{${b.dataset.ph}}}`); JH.app.toast(`{{${b.dataset.ph}}} 복사했습니다.`, 'ok'); } catch (_) {} });

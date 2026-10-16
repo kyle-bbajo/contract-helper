@@ -249,8 +249,9 @@
     if (!r || /전국|없음/.test(r)) return '';
     return `입찰공고일 전일부터 입찰일(낙찰자는 계약체결일)까지 법인등기부상 본점 소재지(개인사업자는 사업자등록증상 소재지)가 ${r}에 있는 자`;
   }
-  function draft(v) {
+  function draft(v, learned) {
     const kind = v.구분 === '용역' ? '용역' : '공사';
+    const ls = learned ? learnedSections(learned, v) : null;
     const S = [];
     const line = (label, val) => (val ? `  ${label}: ${val}` : null);
     S.push({ title: '제목', body: `${v.기관명 || ''} 공고 제${v.공고번호 || '    '}호\n\n「${v.공고명 || '(공고명)'}」 입찰 공고\n\n${kind === '공사' ? '공사' : '용역'} 입찰을 다음과 같이 공고합니다.` });
@@ -262,7 +263,11 @@
       `  입찰방법: 전자입찰, ${v.계약방법 || ''}${v.낙찰자결정방법 ? `, ${v.낙찰자결정방법}` : ''}`,
     ].filter(Boolean).join('\n') });
     const q = [v.업종제한, regionSentence(v.지역제한), '관계 법령에 따른 경쟁입찰 참가자격을 갖추고 국가종합전자조달시스템(나라장터)에 입찰참가자격을 등록한 자'].filter(Boolean);
-    S.push({ title: '2. 입찰참가자격', body: q.map((x, i) => `  ${'가나다라마'[i]}. ${x}`).join('\n') +
+    if (ls && ls.입찰참가자격.length >= 2) {
+      // 비슷한 공고들이 공통으로 쓴 참가자격 문장(이번 업종·지역으로 바꿈)
+      S.push({ title: '2. 입찰참가자격', learned: ls.n, body: ls.입찰참가자격.map((x, i) => `  ${'가나다라마바사아'[i]}. ${x.text}`).join('\n') +
+        (v.공동도급 && !ls.입찰참가자격.some((x) => /공동/.test(x.text)) ? `\n  ${'가나다라마바사아'[ls.입찰참가자격.length]}. 공동도급: ${v.공동도급}` : '') });
+    } else S.push({ title: '2. 입찰참가자격', body: q.map((x, i) => `  ${'가나다라마'[i]}. ${x}`).join('\n') +
       (v.공동도급 ? `\n  ${'가나다라마'[q.length]}. 공동도급: ${v.공동도급}` : '') });
     S.push({ title: '3. 입찰 일정', body: [
       v.공고일 ? `  공고일: ${fmtDT(v.공고일)}` : null,
@@ -270,7 +275,8 @@
       `  개찰: ${fmtDT(v.개찰일시) || '(일시)'}, 국가종합전자조달시스템(나라장터)`,
       `  현장설명: ${v.현장설명 || '없음'}`,
     ].filter(Boolean).join('\n') });
-    S.push({ title: '4. 낙찰자 결정방법', body: v.낙찰자결정방법 === '적격심사'
+    if (ls && ls.낙찰자결정.length) S.push({ title: '4. 낙찰자 결정방법', learned: ls.n, body: ls.낙찰자결정.map((x) => `  ${x.text}`).join('\n') });
+    else S.push({ title: '4. 낙찰자 결정방법', body: v.낙찰자결정방법 === '적격심사'
       ? `  예정가격 이하로서 낙찰하한율${v.낙찰하한율 ? `(${v.낙찰하한율})` : ''} 이상으로 입찰한 자 중 최저가격으로 입찰한 자 순으로 적격심사를 하여, 종합평점이 기준 이상인 자를 낙찰자로 결정합니다.`
       : `  ${v.낙찰자결정방법 || ''}${v.낙찰하한율 ? ` (낙찰하한율 ${v.낙찰하한율})` : ''}` });
     S.push({ title: '5. 입찰보증금', body: `  ${v.입찰보증금 || ''}` });
@@ -283,9 +289,92 @@
     return S;
   }
 
+  // ---------- 비슷한 공고의 실제 문장에서 배우기 ----------
+  // 공고마다 다른 값(지역·업종·비율·금액·날짜)을 자리표시로 바꿔 같은 문장끼리 묶고, 여러 공고가 공통으로 쓴 문장을 이번 값으로 채움
+  const BULLET = /^\s*([가-하]\s*[\.\)]|\(?\d{1,2}\s*[\.\)]|[①-⑳]|[-·•○◦▪※*□■])\s*/;
+  const RE_REGION = /((서울|부산|대구|인천|광주|대전|울산|세종)(특별시|광역시|특별자치시)?|(경기|강원|충청북|충청남|충북|충남|전라북|전라남|전북|전남|경상북|경상남|경북|경남|제주)(특별자치)?도)(\s*[가-힣]{1,4}[시군구])?|[가-힣]{1,4}[시군](?=\s*(에|관내|내에|소재|지역))/g;
+  const RE_LICENSE = /「[^」]{2,40}」\s*(에|의)?\s*(따른|따라|의한|의하여|규정에\s*의한)\s*[가-힣·]{2,20}?업(?=\s|을|를|으로|의|에|등록|\(|,|$)/g;
+  const RE_RATE = /\d{1,3}(\.\d{1,4})?\s*%/g;
+  const RE_MONEY = /금\s*[\d,]+\s*원|[\d,]{5,}\s*원/g;
+  const RE_DATE = /(20\d{2})\s*[.\-\/년]\s*\d{1,2}\s*[.\-\/월]\s*\d{1,2}\s*[.일]?/g;
+  const RE_TIME = /\d{1,2}\s*:\s*\d{2}/g;
+  function slotify(s) {
+    return String(s).replace(RE_LICENSE, '{업종}').replace(RE_REGION, '{지역}').replace(RE_RATE, '{율}').replace(RE_MONEY, '{금액}')
+      .replace(RE_DATE, '{날짜}').replace(RE_TIME, '{시각}').replace(/\s+/g, ' ').trim();
+  }
+  const CLAUSE_LINES = (text) => String(text || '').split(/\n+/).map((l) => l.replace(BULLET, '').replace(/\s+/g, ' ').trim()).filter((l) => l.length >= 10 && l.length <= 400);
+  function learnSentences(bids) {
+    const by = {}; let n = 0;
+    for (const b of bids || []) {
+      if (!b.clauses || !b.clauses.length) continue;
+      n++;
+      for (const c of b.clauses) {
+        const seen = new Set();
+        CLAUSE_LINES(c.text).forEach((line, i) => {
+          const key = slotify(line); if (seen.has(key)) return; seen.add(key);
+          const t = (by[c.title] = by[c.title] || {});
+          const e = (t[key] = t[key] || { key, count: 0, pos: 0, samples: [] });
+          e.count++; e.pos += i; if (e.samples.length < 2) e.samples.push(line);
+        });
+      }
+    }
+    const out = {};
+    for (const [title, m] of Object.entries(by)) out[title] = Object.values(m).map((e) => ({ ...e, pos: e.pos / e.count })).sort((a, b) => b.count - a.count || a.pos - b.pos);
+    return { n, by: out };
+  }
+  // 자리표시 채우기: 이번 공고 값이 없으면 ○○로 둠, 지역제한이 없는 공고면 지역 문장은 뺌
+  function fillSlots(key, v) {
+    const region = v.지역제한 && !/전국|없음/.test(v.지역제한) ? v.지역제한 : '';
+    if (/\{지역\}/.test(key) && !region) return null;
+    const lic = String(v.업종제한 || '').replace(/\s*(등록업체|등록을\s*(한|필한)\s*(자|업체)|등록\s*업체)\s*$/, '').trim();
+    return key.replace(/\{지역\}/g, region).replace(/\{업종\}/g, lic || '○○업').replace(/\{율\}/g, v.낙찰하한율 || '○○%')
+      .replace(/\{금액\}/g, '금 ○○원').replace(/\{날짜\}/g, '○○').replace(/\{시각\}/g, '○○:○○');
+  }
+  // 배운 문장 초안: 절 제목별로 공통 문장(공고 3건 이상이면 2건 이상이 쓴 것)
+  function learnedSections(learned, v) {
+    if (!learned || !learned.bids) return null;
+    const L = learnSentences(learned.bids);
+    if (!L.n) return null;
+    const min = L.n >= 3 ? 2 : 1;
+    const pick = (title, max) => (L.by[title] || []).filter((e) => e.count >= min).slice(0, max)
+      .sort((a, b) => a.pos - b.pos).map((e) => ({ text: fillSlots(e.key, v), count: e.count })).filter((x) => x.text);
+    return { n: L.n, 입찰참가자격: pick('입찰참가자격', 8), 낙찰자결정: pick('낙찰자 결정', 2), 입찰보증금: pick('입찰보증금', 1), 공동도급: pick('공동도급', 1) };
+  }
+
+  // ---------- AI(Claude)로 다시 쓰기: 질문 만들기·답 읽기 ----------
+  const AI_SYSTEM = [
+    '당신은 한국 지방공기업 계약 담당자를 돕는 입찰 공고문 작성 보조입니다.',
+    '주어진 이번 공고의 항목 값과, 비슷한 실제 공고문에서 뽑은 문장만 근거로 씁니다.',
+    '근거에 없는 자격 요건·법령 조항·금액·날짜를 새로 지어내지 않습니다. 값이 없으면 ○○로 남깁니다.',
+    '실제 공고문의 문체와 형식(가. 나. 다. 항목, ~한 자, ~합니다)을 따르고, 다른 공고의 지역·업종·기관명은 이번 공고 값으로 바꿉니다.',
+    '답은 설명 없이 JSON 하나만 냅니다.',
+  ].join('\n');
+  function aiPrompt(v, learned, sections) {
+    const facts = FIELDS.map((f) => [f.label || f.key, v[f.key]]).filter(([, x]) => x).map(([k, x]) => `- ${k}: ${x}`).join('\n');
+    const refs = (learned && learned.bids || []).filter((b) => b.clauses && b.clauses.length).slice(0, 6)
+      .map((b, i) => `[${i + 1}] ${b.name} (${b.org})\n` + b.clauses.map((c) => `  <${c.title}>\n  ${String(c.text).replace(/\n/g, '\n  ')}`).join('\n')).join('\n\n');
+    const now = sections.map((s) => `### ${s.title}\n${s.body}`).join('\n\n');
+    return [
+      '## 이번 공고 항목', facts || '(없음)', '',
+      '## 비슷한 실제 공고문에서 뽑은 문장', refs || '(없음 — 이번 공고 항목과 지금 초안만 근거로 다듬으세요)', '',
+      '## 지금 초안', now, '',
+      '## 할 일',
+      '지금 초안의 각 절을 실제 공고문 문체로 다시 쓰세요. 특히 "입찰참가자격"은 비슷한 공고들이 공통으로 쓴 요건을 이번 공고의 업종·지역 값으로 맞춰 쓰세요.',
+      '절 제목은 지금 초안과 똑같이 두고, 결과는 이 형식의 JSON 하나만: {"sections":[{"title":"절 제목","body":"본문"}]}',
+    ].join('\n');
+  }
+  function parseAi(text) {
+    const s = String(text || ''); const a = s.indexOf('{'), b = s.lastIndexOf('}');
+    if (a < 0 || b <= a) throw new Error('AI 답에서 결과를 찾지 못했습니다.');
+    const j = JSON.parse(s.slice(a, b + 1));
+    const secs = (j.sections || []).filter((x) => x && x.title && typeof x.body === 'string').map((x) => ({ title: String(x.title), body: x.body }));
+    if (!secs.length) throw new Error('AI 답이 비어 있습니다.');
+    return secs;
+  }
+
   // ---------- 한글 양식 ----------
   // 양식에 쓸 값: {{공고명}} 같은 표시를 이 값으로 바꿈
-  function templateValues(v) {
+  function templateValues(v, sections) {
     const out = {};
     for (const f of FIELDS) {
       let x = v[f.key] == null ? '' : String(v[f.key]);
@@ -293,6 +382,9 @@
       out[f.key] = x;
     }
     out['지역제한문장'] = regionSentence(v.지역제한);
+    const sec = (re) => { const s = (sections || draft(v)).find((x) => re.test(x.title)); return s ? s.body.replace(/^ {2}/gm, '') : ''; };
+    out['입찰참가자격'] = sec(/입찰참가자격/);
+    out['낙찰자결정문장'] = sec(/낙찰자 결정/);
     return out;
   }
   const xmlEsc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -362,7 +454,7 @@
   }
 
   const api = { WORK_TYPES, workType, FIELDS, SECTIONS, labelOf, money, won, blank, applyRules,
-    BID_OPS, bidSearchUrl, bidDetailUrl, STATUS, STATUS_ORDER, statusOf, parseBidNo, bidByNoUrl, normalizeBid, attachmentsOf, extractClauses, regionLabel, learn, mapMethod, mapContract,
+    BID_OPS, bidSearchUrl, bidDetailUrl, slotify, learnSentences, learnedSections, aiPrompt, parseAi, AI_SYSTEM, STATUS, STATUS_ORDER, statusOf, parseBidNo, bidByNoUrl, normalizeBid, attachmentsOf, extractClauses, regionLabel, learn, mapMethod, mapContract,
     draft, regionSentence, templateValues, fillHwpxXml, fillHwpx, zipStore, crc32, placeholdersIn, fmtDT };
   root.JH = root.JH || {};
   root.JH.notice = Object.assign(root.JH.notice || {}, { logic: api });

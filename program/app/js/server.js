@@ -39,6 +39,8 @@
       return JH.logic.parseApiText(await r.text());
     },
     hwp2pdf: (path) => call('POST', '/api/hwp2pdf', { path }),
+    // AI(Claude) 중계 — 키는 이 PC 설정에만 있고, 연결 창구가 api.anthropic.com으로만 보냄
+    ai: (body) => call('POST', '/api/ai', null, JSON.stringify(body)),
     async fetchFile(url) { const r = await call('GET', '/api/fetchfile', { u: url }); return new Uint8Array(await r.arrayBuffer()); },
     openFile: (path) => call('POST', '/api/open', { path, launch: '1' }),
     open: (path) => call('POST', '/api/open', { path }),

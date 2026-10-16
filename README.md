@@ -31,6 +31,8 @@ exe 없이 Windows 기본 프로그램(PowerShell 5.1, Edge)만으로 동작합�
 - 자동 규칙: 공종 → 업종제한(2022 전문건설 대업종 기준), 추정가격 → 부가세·추정금액, 설정한 기준 금액 → 상생결제 적용 여부
 - 배우기: 입찰공고정보서비스(`getBidPblancList…PPSSrch`)를 업종명·금액 범위·기관·공고명으로 검색 → 지역제한(`PrtcptPsblRgn`)·면허(`LicenseLimit`)·낙찰하한율·낙찰방법·계약방법·공동도급·입찰기간의 빈도
 - 첨부 공고문: `ntceSpecDocUrl1~10` 내려받아(g2b.go.kr만 허용) HWP 본문/HWPX/PDF 글자 → 입찰참가자격 등 문장 추출, 원문은 `공고문/참고/`
+- 배운 문장: 첨부 공고문 문장을 자리표시({지역}·{업종}·{율}·{금액}·{날짜})로 바꿔 공고 간 빈도를 세고, 공통 문장을 이번 값으로 채움(`learnSentences`, `learnedSections`)
+- AI로 쓰기(선택): 설정의 Claude API 키로 `server.ps1`의 `/api/ai`가 `https://api.anthropic.com/v1/messages`로 중계. 보내는 내용은 공고 항목 값과 공개된 공고문 문장
 - 진행 상태: 작성 중 → 작성 완료(한글 양식을 만들면 자동) → 나라장터 등록. 등록은 담당자가 나라장터에서 직접 하고(공개된 등록 API 없음), 받은 입찰공고번호를 넣으면 `getBidPblancListInfoCnstwk/Servc`(inqryDiv=2)로 찾아 확인·잠금
 - 한글 양식: `{{항목}}` 표시를 설치된 한글(COM, AllReplace)로 바꿔 저장, 실패 시 HWPX는 브라우저에서 직접 치환(서식 경계로 쪼개진 표시도 처리, mimetype 무압축 첫 항목)
 

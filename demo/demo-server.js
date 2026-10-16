@@ -137,6 +137,15 @@
         .map(([p, b]) => ({ path: p, size: b.length, mtime: new Date().toISOString() }));
       return { ok: true, files: out };
     },
+    // 시연판: 실제 AI 대신 배운 문장을 공고문 문체로 정리한 예시를 돌려줌
+    async ai(body) {
+      await new Promise((r) => setTimeout(r, 900));
+      const n = root.JH.notice.current && root.JH.notice.current();
+      const secs = root.JH.notice.logic.draft(n.v, n.learned).map((s) => ({ title: s.title, body: s.body }));
+      const q = secs.find((s) => /입찰참가자격/.test(s.title));
+      if (q) q.body += `\n  ${'가나다라마바사아'[q.body.split('\n').length] || '※'}. 입찰참가자격 등록은 입찰서 제출 마감일 전일까지 마쳐야 합니다.(시연: 실제로는 Claude가 비슷한 공고 문장을 보고 씁니다)`;
+      return { model: body.model, content: [{ type: 'text', text: JSON.stringify({ sections: secs }) }] };
+    },
     async nara(url) { await new Promise((r) => setTimeout(r, 120)); return naraMock(url); },
     async fetchFile() { return new Uint8Array(await (await fetch('samples/attach-notice.hwp')).arrayBuffer()); },
     async hwp2pdf() { throw new Error('시연판에서는 한글→PDF 변환을 하지 않습니다. 실제 프로그램은 설치된 한글로 자동 변환합니다.'); },
@@ -156,7 +165,7 @@
   const SAMPLES = ['noname.pdf', 'noname(1).pdf', 'noname(2).pdf', 'noname(3).pdf', 'noname(4).pdf', 'noname(5).pdf', 'noname(6).pdf', 'noname(7).pdf', 'noname(8).jpg', 'noname(9).hwp', 'noname(10).hwpx'];
   async function seed() {
     files.clear();
-    await server.writeJson('설정.json', { officer: ME, notice: { dept: '계약팀', phone: '031-000-0000', winwinMin: 50000000 } });
+    await server.writeJson('설정.json', { officer: ME, notice: { dept: '계약팀', phone: '031-000-0000', winwinMin: 50000000, aiKey: '시연용' } });
     const tpl = new Uint8Array(await (await fetch('samples/공고문양식.hwpx')).arrayBuffer());
     files.set('공고문/양식/공고문양식.hwpx', tpl);
     const now = Date.now();

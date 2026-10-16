@@ -111,3 +111,27 @@ test('공고문 진행 상태와 나라장터 입찰공고번호 읽기', () => 
   assert.equal(N.parseBidNo('공고번호'), null);
   assert.match(N.bidByNoUrl('용역', 'R26BK01234567', 'k'), /getBidPblancListInfoServc\?serviceKey=k&inqryDiv=2&bidNtceNo=R26BK01234567/);
 });
+
+test('비슷한 공고의 실제 문장에서 배워 이번 업종·지역으로 채움, AI 질문·답', () => {
+  const bids = [['용인시', ''], ['수원시', ''], ['용인시', ' 추가']].map(([r, x], i) => ({ name: 'b' + i, org: 'o', clauses: [
+    { title: '입찰참가자격', text: ['가. 「전기공사업법」에 따른 전기공사업 등록업체', `나. 입찰공고일 전일부터 입찰일까지 법인등기부상 본점 소재지가 경기도 ${r}에 있는 자`, `다. 중소기업 확인서 소지자${x}`, '라. 이 공고에만 있는 특이한 조건' + i].join('\n') },
+    { title: '낙찰자 결정', text: '예정가격 이하 낙찰하한율 87.745% 이상 입찰자 중 최저가 순으로 적격심사' }] }));
+  const v = { 구분: '공사', 공고명: '테스트', 지역제한: '용인시', 업종제한: '「정보통신공사업법」에 따른 정보통신공사업 등록업체', 낙찰하한율: '86.745%', 낙찰자결정방법: '적격심사' };
+  const ls = N.learnedSections({ bids }, v);
+  assert.equal(ls.n, 3);
+  assert.deepEqual(ls.입찰참가자격.map((x) => x.text), [
+    '「정보통신공사업법」에 따른 정보통신공사업 등록업체',
+    '입찰공고일 전일부터 입찰일까지 법인등기부상 본점 소재지가 용인시에 있는 자',
+    '중소기업 확인서 소지자']); // 2건 이상이 쓴 문장만, 한 공고에만 있는 조건은 뺌
+  assert.match(ls.낙찰자결정[0].text, /낙찰하한율 86\.745% 이상/);
+  // 지역제한이 없는 공고면 지역 문장은 뺌
+  assert.ok(!N.learnedSections({ bids }, { ...v, 지역제한: '제한 없음(전국)' }).입찰참가자격.some((x) => /소재지/.test(x.text)));
+  const d = N.draft(v, { bids });
+  const q = d.find((s) => /입찰참가자격/.test(s.title));
+  assert.equal(q.learned, 3); assert.match(q.body, /가\. 「정보통신공사업법」/);
+  assert.match(N.templateValues(v, d)['입찰참가자격'], /^가\. 「정보통신공사업법」/);
+  const p = N.aiPrompt(v, { bids }, d);
+  assert.match(p, /## 이번 공고 항목[\s\S]*지역제한|지역/); assert.match(p, /\[1\] b0 \(o\)/); assert.match(p, /"sections"/);
+  assert.deepEqual(N.parseAi('좋습니다.\n{"sections":[{"title":"2. 입찰참가자격","body":"가. ..."}]}'), [{ title: '2. 입찰참가자격', body: '가. ...' }]);
+  assert.throws(() => N.parseAi('죄송합니다'), /결과를 찾지 못했습니다/);
+});

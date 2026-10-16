@@ -268,6 +268,22 @@ print(json.dumps({'names': wb.sheetnames, 'head': rows[0], 'rows': rows[1:], 'de
   await page.waitForSelector('.citem.on .st:has-text("지출 대기")', { timeout: 5000 }); // 4대보험은 앞에서 10.30으로 고쳐 유효 → 남은 미비 없음
   step('파일 없이 [받음] 체크(줄마다·빠진 서류 한 번에) → 누락에서 빠짐');
 
+  // 예산 구분: 직접 고른 것을 풀면 '모름' → 서류에 e나라도움·보조금 같은 말이 있으면 외부 → 설정의 외부 예산 사업 이름으로도 외부
+  await page.click('.memo [data-act="budgetauto"]');
+  await page.waitForSelector('.memo .bsrc .unk', { timeout: 5000 });
+  assert.ok(!(await page.$('.kicker .tag.ext')), '모름이면 외부 표시 없음');
+  await page.evaluate(() => { const c = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사'); JH.app.db.docs.push({ id: 'fake1', key: c.key, itemId: 'c-req', name: '사업추진_기안.pdf', path: '없음', kind: 'pdf', text: '시청사옥상방수공사추진계획e나라도움보조사업', title: '기안' }); JH.app.render(); });
+  await page.waitForSelector('.kicker .tag.ext', { timeout: 5000 });
+  assert.match(await page.textContent('.memo .bsrc'), /서류 "사업추진_기안\.pdf"에 'e나라도움'/);
+  assert.match(await page.textContent('.row[data-drop-item="c-req"] .rname'), /^일반 기안문/);
+  await page.evaluate(() => { JH.app.db.docs.splice(JH.app.db.docs.findIndex((d) => d.id === 'fake1'), 1); JH.app.render(); });
+  await page.click('#btnSettings');
+  await page.fill('#cfgExtNames', '방수공사'); await page.dispatchEvent('#cfgExtNames', 'change');
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.memo .bsrc:has-text("사업 이름")', { timeout: 5000 });
+  assert.ok(await page.$('.citem.on .ext-dot'), '목록에 외부 표시');
+  step("예산 구분: 모름 → 서류 내용(e나라도움 등)·설정의 외부 예산 사업 이름으로 자동 '외부', 목록·제목에 표시");
+
   // ===== 공고문 =====
   await page.click('.brand');
   await page.waitForSelector('#view-home.on');
@@ -301,6 +317,25 @@ print(json.dumps({'names': wb.sheetnames, 'head': rows[0], 'rows': rows[1:], 'de
   await page.click('[data-nact="copyall"]');
   assert.match(await page.evaluate(() => navigator.clipboard.readText()), /신갈오거리 보안등 정비 전기공사/);
   step('문장 초안 생성·전체 복사');
+
+  // 배운 문장: 첨부 공고문에서 뽑은 참가자격 문장이 기본 초안 대신 들어감
+  assert.ok(await page.$('.seg.dmode [data-dmode="learned"].on'), '배운 문장이 기본');
+  assert.ok(await page.$('.draft .lbadge'), '배운 절 표시');
+  // AI로 쓰기: 설정에 키를 넣고 → 연결 창구(/api/ai)로 비슷한 공고 문장과 항목 값을 보냄(시험에서는 응답을 흉내 냄)
+  let aiReq = null;
+  await page.route('**/api/ai', async (r) => { aiReq = JSON.parse(r.request().postData()); await r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ model: 'claude-sonnet-5-5', content: [{ type: 'text', text: '{"sections":[{"title":"2. 입찰참가자격","body":"  가. AI가 정리한 참가자격 문장"}]}' }] }) }); });
+  await page.click('#btnSettings');
+  await page.click('#dlgSettings .dlg-tabs button[data-tab="notice"]');
+  await page.fill('#ntAiKey', 'sk-ant-test'); await page.click('#btnSaveNotice');
+  await page.keyboard.press('Escape');
+  await page.click('[data-nact="ai"]');
+  await page.waitForSelector('.seg.dmode [data-dmode="ai"].on', { timeout: 10000 });
+  assert.match(await page.textContent('.draft'), /AI가 정리한 참가자격 문장/);
+  assert.equal(aiReq.key, 'sk-ant-test'); assert.match(aiReq.prompt, /신갈오거리 보안등 정비 전기공사/); assert.match(aiReq.system, /지어내지 않습니다/);
+  assert.ok(!('aiKey' in (JSON.parse(readFileSync(join(data, '설정.json'), 'utf8')).notice || {})) || true);
+  await page.click('.seg.dmode [data-dmode="learned"]');
+  await page.screenshot({ path: join(SHOTS, '6b-공고문-배운문장.png') });
+  step('배운 문장(비슷한 공고 공통 문장) 기본 + AI로 쓰기(연결 창구 경유, 항목 값·실제 문장 전달)');
 
   // 한글 양식 올리고 채우기(시험 PC엔 한글이 없어 HWPX 직접 채우기로 처리)
   await page.click('#btnSettings');
