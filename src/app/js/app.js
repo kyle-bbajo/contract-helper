@@ -311,7 +311,7 @@
   // ---------- 나라장터 계약 목록 ----------
   // full이 아니면 지난번에 불러온 달부터만(여럿이 인증키 하나를 같이 쓰므로 조회 횟수를 아낌)
   // 나라장터에서 받아 두는 항목이 늘면 올림 → 한 번은 기간 전체를 다시 받아 예전에 불러온 계약도 새 항목(계약방법·대표자·사업자번호·통합계약번호 등)을 채움
-  const FETCH_VER = 2;
+  const FETCH_VER = 3; // 3: 업체목록을 화면 순서로도 읽음(업체명·대표자)
   async function fetchContracts(full) {
     if (!cfg.apiKey || !cfg.insttNm) { toast('설정에서 인증키와 기관명을 먼저 넣어 주세요.', 'err'); JH.settings.open('nara'); return; }
     const stale = contracts().some((c) => c.source === 'api' && !c.untyNo && !c.method && !c.corpRaw);

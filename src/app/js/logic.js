@@ -320,17 +320,26 @@
   // 업체목록: 실제 응답은 [순번^주계약업체^단독^업체명^대표자^대한민국^지분율^업체명^^사업자번호] 형태, 여러 업체면 ],[ 로 이어짐
   // 주계약업체를 맨 앞으로(공동도급이면 도급업체가 먼저 올 수 있음)
   // 업체목록 칸 하나하나: 명세는 [순번^업체구분^공동도급방식^업체명^대표자명^국적명^지분율^채권자명^담당자성명^사업자등록번호]지만
-  // 실제로는 칸이 빠지거나 순서가 다를 수 있어 '업체명'을 먼저 찾고 그 바로 뒤를 대표자로 봄
-  const CORP_STOP = /^(단독|공동|주계약|부계약|대표사|구성원|분담|주계약업체|도급업체|분담업체|부계약업체|공동수급업체|구성원업체|혼합방식|혼합|공동이행|분담이행|주계약자관리방식|대한민국|한국|내국|외국|국내|국외|[\d.,\s%*-]*|Y|N)$/;
-  const isPerson = (x, name) => !!x && x !== name && !CORP_STOP.test(x) && (/^[가-힣*○●]{2,6}$/.test(x) && /[가-힣]/.test(x) || /^[A-Za-z][A-Za-z .]{1,29}$/.test(x)) && !/(주식회사|회사|건설|산업|사무소|기술|㈜|\(주\)|공사|엔지니어링|대한민국)/.test(x);
+  // 나라장터 화면은 [구분^공동도급방식^사업자등록번호^업체명^공종^지분율^전체지분율^업체담당자^대표자명] 순서라 순서에 기대지 않음
+  //  - 업체명: (주)·주식회사·건설·사무소 같은 말이 든 칸 → 없으면 사람 이름처럼 보이지 않는 첫 글자 칸
+  //  - 대표자: 사람 이름처럼 보이는 칸. 여럿이면 가리지 않은 이름(담당자는 송** 처럼 가려 오는 일이 많음), 그다음 업체명 바로 뒤
+  const CORP_STOP = /^(단독|공동|단독계약|공동계약|주계약|부계약|대표|대표사|구성원|분담|주계약업체|도급업체|분담업체|부계약업체|공동수급업체|구성원업체|혼합방식|혼합|공동이행|분담이행|공동이행방식|분담이행방식|주계약자관리방식|일반|대한민국|한국|내국|외국|국내|국외|[\d.,\s%*-]*|Y|N)$/;
+  const CORP_MARK = /(주식회사|유한회사|합자회사|합명회사|\(주\)|㈜|\(유\)|\(합\)|회사|건설|산업|사무소|기술|엔지니어링|이앤씨|이엔씨|E&C|개발|공사|설비|전기|통신|환경|조경|건축|종합|상사|테크|시스템|코리아|그룹|컨설팅|디자인|연구소|협동조합)/;
+  const isPerson = (x) => !!x && !CORP_STOP.test(x) && !CORP_MARK.test(x) && (/^[가-힣*○●]{2,5}$/.test(x) && /[가-힣]/.test(x) || /^[A-Za-z][A-Za-z .]{1,29}$/.test(x));
+  const masked = (x) => /[*○●]/.test(x);
   function corpFields(s) {
     return String(s || '').split(/\]\s*,?\s*\[/).map((e) => e.replace(/^\[|\]$/g, '').split('^').map((x) => x.trim())).map((f) => {
-      const ni = f.findIndex((x, i) => i >= 1 && x && /[가-힣A-Za-z]/.test(x) && !CORP_STOP.test(x) && !/^(주계약|부계약|대표|구성원)/.test(x));
-      const name = ni >= 0 ? f[ni] : '';
-      const rep = ni >= 0 ? [f[ni + 1]].find((x) => isPerson(x, name)) || '' : '';
+      const cand = f.map((x, i) => ({ x, i })).filter(({ x, i }) => i >= 1 && x && /[가-힣A-Za-z]/.test(x) && !CORP_STOP.test(x) && !/^(주계약|부계약|대표|구성원)/.test(x) && !/(계약|방식)$/.test(x));
+      const nm = cand.find(({ x }) => CORP_MARK.test(x)) || cand.find(({ x }) => !isPerson(x)) || cand[0];
+      const name = nm ? nm.x : '';
+      const people = cand.filter(({ x, i }) => (!nm || i !== nm.i) && isPerson(x));
+      // 명세 순서(국적 '대한민국'이 있음)면 업체명 바로 뒤 칸만, 아니면(화면 순서) 끝 쪽의 가리지 않은 이름 → 없으면 끝 쪽 이름
+      const spec = f.some((x) => /^(대한민국|한국)$/.test(x));
+      const pick = spec ? people.find(({ i }) => nm && i === nm.i + 1) || null
+        : [...people].reverse().find(({ x }) => !masked(x)) || [...people].reverse()[0] || null;
       const bizno = (f.find((x) => /^\d{3}-?\d{2}-?\d{5}$/.test(x)) || '').replace(/\D/g, '');
-      const role = f.slice(1, ni >= 0 ? ni : 3).find((x) => /주계약|부계약|대표|구성원|도급|분담/.test(x)) || f[1] || '';
-      return { role, name, rep, bizno };
+      const role = f.slice(1).find((x) => /주계약|부계약|^대표|구성원|도급|분담/.test(x)) || f[1] || '';
+      return { role, name, rep: pick ? pick.x : '', bizno };
     }).filter((r) => r.name);
   }
   // corpList → 업체명들(주계약업체를 맨 앞으로)
@@ -342,7 +351,7 @@
   function parseCorpRows(s) {
     if (!s) return [];
     const rows = corpFields(s);
-    rows.sort((a, b) => (/주계약|대표/.test(b.role) ? 1 : 0) - (/주계약|대표/.test(a.role) ? 1 : 0));
+    rows.sort((a, b) => (/주계약|^대표/.test(b.role) ? 1 : 0) - (/주계약|^대표/.test(a.role) ? 1 : 0));
     return rows;
   }
   // 외부재정연계(e나라도움 등 우리 예산이 아닌 사업) 알아내기
