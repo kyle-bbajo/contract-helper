@@ -37,12 +37,13 @@
 
   // 한 계약 → 서식 한 줄에 필요한 값. x.finish: 준공계·준공조서에서 읽은 실제 준공일(앱이 넘김)
   function rowOf(c, x = {}) {
-    const m = c.memo || {}, g = c.g2b || {};
-    const pick = (memoKey, auto, src) => (String(m[memoKey] || '').trim() ? { v: m[memoKey], src: '직접' } : auto ? { v: auto, src } : { v: '', src: '' });
-    const budget = pick('aBudget', g.budget, '나라장터 입찰공고'), design = pick('aDesign', g.bssamt, '나라장터 기초금액');
-    const est = pick('aEst', g.plnprc, '나라장터 예정가격');
+    const m = c.memo || {}, g = c.g2b || {}, dv = c.docVals || {};
+    // 값 고르는 순서: 직접 넣은 값 > 나라장터(기준) > 서류에서 읽은 값
+    const pick = (memoKey, auto, src, docV) => (String(m[memoKey] || '').trim() ? { v: m[memoKey], src: '직접' } : auto ? { v: auto, src } : docV ? { v: docV, src: '서류' } : { v: '', src: '' });
+    const budget = pick('aBudget', g.budget, '나라장터 입찰공고', dv.budget), design = pick('aDesign', g.bssamt, '나라장터 기초금액', dv.design);
+    const est = pick('aEst', g.plnprc, '나라장터 예정가격', dv.est);
     const award = pick('aAward', g.origAmount || c.amount, g.origAmount ? '나라장터 당초 계약' : '계약금액');
-    const rep = pick('aRep', c.rep || g.rep, '나라장터'), addr = pick('aAddr', g.addr, '나라장터');
+    const rep = pick('aRep', c.rep || g.rep, '나라장터', dv.rep), addr = pick('aAddr', g.addr, '나라장터', dv.addr);
     const actual = pick('aActual', x.finish, '준공계·준공조서');
     const method = pick('aMethod', c.method, '나라장터');
     const reason = pick('aReason', L.contractReason(c.law, c.lawDtl), '나라장터 근거법률');

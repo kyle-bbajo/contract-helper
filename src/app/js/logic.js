@@ -449,6 +449,67 @@
     if (!r.valid && validDays && (r.issue || r.last)) { r.valid = addDays(r.issue || r.last, validDays - 1); r.validHow = 'calc'; }
     return r;
   }
+  // ---------- 서류에서 읽은 값으로 나라장터 값 확인(나라장터가 기준) ----------
+  // 서류 한 건에서: 계약금액, 계약기간(시작·끝), 착공일, 준공기한, 준공일·검사일, 업체·대표자·주소, 예정가격·설계금액·예산액
+  function docFacts(lines) {
+    const ls = (lines || []).map((x) => String(x || ''));
+    const t = ls.join('\n'), out = {};
+    const amt = t.match(/(?:총\s*)?계\s*약\s*금\s*액[^\d\n]{0,24}([\d,]{6,})/); if (amt) { const n = Number(amt[1].replace(/\D/g, '')); if (n >= 100000) out.amount = n; }
+    for (let i = 0; i < ls.length; i++) {
+      const l = ls[i];
+      if (!out.end && /(계\s*약|공\s*사|용\s*역|과\s*업|이\s*행)\s*기\s*간/.test(l)) {
+        let ds = datesIn(l); if (ds.length < 2) ds = ds.concat(datesIn(ls[i + 1]));
+        if (ds.length >= 2) { out.start = ds[0]; out.end = ds[ds.length - 1]; }
+      }
+      if (!out.startDay && /착\s*공\s*(일|년\s*월\s*일|일\s*자|예\s*정\s*일)/.test(l)) { const d = datesIn(l)[0] || datesIn(ls[i + 1])[0]; if (d) out.startDay = d; }
+      if (!out.due && /준\s*공\s*(기\s*한|예\s*정\s*일|예\s*정)|완\s*료\s*(기\s*한|예\s*정)|납\s*품\s*기\s*한/.test(l)) { const d = datesIn(l)[0] || datesIn(ls[i + 1])[0]; if (d) out.due = d; }
+    }
+    const dt = extractDates(ls); if (dt.finish) out.finish = dt.finish; if (dt.inspect) out.inspect = dt.inspect;
+    const m = findMeta(ls); if (m.vendor) out.vendor = m.vendor;
+    Object.assign(out, scanAuditFields(ls));
+    return out;
+  }
+  // 나라장터 값과 서류 값 비교 → [{ key, label, nara, doc, from, ok, note }]. ok: true 같음 · false 다름(서류 확인) · null 참고
+  function verifyFacts(c, docs, nameOf) {
+    const g = c.g2b || {}, out = [];
+    const facts = (re) => (docs || []).filter((d) => d.facts && re.test(d.itemId || ''));
+    const pickF = (re, k) => { for (const d of facts(re)) if (d.facts[k]) return { v: d.facts[k], d }; return null; };
+    const src = (d) => (nameOf ? nameOf(d) : d.name);
+    const f8 = fmtDate;
+    // 계약금액: 당초 또는 변경 후 금액 중 하나와 같으면 맞음
+    const ca = pickF(/-contract$/, 'amount');
+    if (ca && (c.amount || g.origAmount)) {
+      const known = [[g.origAmount, '당초'], ...(g.amtChanges || []).map((x, i) => [x.amount, `${i + 1}차 변경`]), [c.amount, '현재']].filter(([v]) => v);
+      const hit = known.find(([v]) => v === ca.v);
+      out.push({ key: 'amount', label: '계약금액', nara: won(c.amount) + (g.origAmount && g.origAmount !== c.amount ? ` (당초 ${won(g.origAmount)})` : ''), doc: won(ca.v), from: src(ca.d), ok: !!hit, note: hit ? (hit[1] === '현재' ? '' : `${hit[1]} 금액과 같음`) : '나라장터 금액과 다릅니다 — 서류를 확인하세요' });
+    }
+    // 계약기간 끝(준공기한): 당초·변경 후 준공일 중 하나와 같으면 맞음
+    const ce = pickF(/-contract$/, 'end') || pickF(/-contract$|-start$/, 'due');
+    if (ce && c.endDate) {
+      const known = [[g.origEnd, '당초'], ...(g.endChanges || []).map((x, i) => [x.to, `${i + 1}차 연장`]), [String(c.endDate).replace(/\D/g, '').slice(0, 8), '현재']].filter(([v]) => v);
+      const hit = known.find(([v]) => v === ce.v);
+      out.push({ key: 'end', label: '준공기한', nara: f8(c.endDate) + (g.origEnd && g.origEnd !== String(c.endDate).replace(/\D/g, '').slice(0, 8) ? ` (당초 ${f8(g.origEnd)})` : ''), doc: f8(ce.v), from: src(ce.d), ok: !!hit, note: hit ? (hit[1] === '현재' ? '' : `${hit[1]} 준공일과 같음`) : '나라장터 준공기한과 다릅니다 — 변경계약을 나라장터에 등록했는지, 서류가 맞는지 확인하세요' });
+    }
+    // 착공일
+    const cs = pickF(/-start$/, 'startDay') || pickF(/-contract$/, 'start');
+    if (cs && c.startDate) { const n = String(c.startDate).replace(/\D/g, '').slice(0, 8); out.push({ key: 'start', label: '착공일', nara: f8(n), doc: f8(cs.v), from: src(cs.d), ok: cs.v === n, note: cs.v === n ? '' : '나라장터 착공일과 다릅니다' }); }
+    // 실제 준공일이 준공기한을 넘으면 알림(지체상금·기간연장 확인)
+    const fin = pickF(/-finish$/, 'finish') || pickF(/-inspect$/, 'inspect');
+    if (fin && c.endDate) { const due = String(c.endDate).replace(/\D/g, '').slice(0, 8); const late = fin.v > due; out.push({ key: 'finish', label: '실제 준공일', nara: `준공기한 ${f8(due)}`, doc: f8(fin.v), from: src(fin.d), ok: late ? false : null, note: late ? '준공기한이 지나 준공 — 기간연장 등록 또는 지체상금을 확인하세요' : '준공기한 안에 준공' }); }
+    // 업체·대표자·주소
+    const vd = pickF(/-contract$|-related$|-estimate$/, 'vendor');
+    if (vd && c.vendor) { const same = vendorCore(vd.v) === vendorCore(c.vendor) || vendorCore(vd.v).includes(vendorCore(c.vendor)) || vendorCore(c.vendor).includes(vendorCore(vd.v)); out.push({ key: 'vendor', label: '업체', nara: c.vendor, doc: vd.v, from: src(vd.d), ok: same, note: same ? '' : '나라장터 업체와 다릅니다' }); }
+    const rp = pickF(/-related$|-contract$|-estimate$/, 'rep'), naraRep = c.rep || g.rep;
+    if (rp && naraRep) out.push({ key: 'rep', label: '대표자', nara: naraRep, doc: rp.v, from: src(rp.d), ok: norm(rp.v) === norm(naraRep), note: norm(rp.v) === norm(naraRep) ? '' : '나라장터 대표자와 다릅니다(대표자 변경 여부 확인)' });
+    const ad = pickF(/-related$|-contract$|-estimate$/, 'addr');
+    if (ad && g.addr) { const a = norm(ad.v).slice(0, 12), b = norm(g.addr).slice(0, 12); const same = a === b || norm(g.addr).includes(a) || norm(ad.v).includes(b); out.push({ key: 'addr', label: '업체 주소', nara: g.addr, doc: ad.v, from: src(ad.d), ok: same, note: same ? '' : '나라장터 주소와 다릅니다(본점 이전 여부 확인)' }); }
+    // 예정가격·기초금액·예산액(나라장터에 있을 때만)
+    for (const [k, nk, label] of [['est', 'plnprc', '예정가격'], ['design', 'bssamt', '기초금액·설계금액'], ['budget', 'budget', '예산액']]) {
+      const dv = pickF(/./, k); if (!dv || !g[nk]) continue;
+      out.push({ key: k, label, nara: won(g[nk]), doc: won(dv.v), from: src(dv.d), ok: dv.v === g[nk], note: dv.v === g[nk] ? '' : '나라장터 값과 다릅니다' });
+    }
+    return out;
+  }
   // 유효기간을 따지는 증명서: 4대 사회보험·고용산재 완납증명서, 국세·지방세 납세증명서
   const isCertItem = (id) => /-(inspaid|emppaid|tax|ltax)$/.test(String(id || ''));
 
@@ -483,7 +544,7 @@
     classifyItem, guessType, findMeta, vendorCore, baseNo, contractScore, matchContract, contractKey,
     API_BASE, API_OPS, TYPES, apiUrl, monthRanges, parseApiText, parseApiBody, parseCorpList, parseCorpRows, normalizeApiItem, detectExtFinance,
     G2B, g2bUrl, scanAuditFields, summarizeChanges, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
-    checklistStatus, fmtDate, toDate, won, safeName, datesIn, extractDates, addDays, isCertItem, vendorMail,
+    checklistStatus, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail,
   };
   root.JH = root.JH || {};
   root.JH.logic = api;

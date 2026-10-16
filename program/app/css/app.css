@@ -602,3 +602,14 @@ body.resizing { cursor: col-resize; user-select: none; }
 @keyframes dsecflash { 0% { background: var(--amber-soft); } 100% { background: transparent; } }
 .draft .dsec.flash { animation: dsecflash 1.6s ease-out; }
 @media (prefers-reduced-motion: reduce) { .draft .dsec.flash { animation: none; } }
+/* 나라장터와 서류 맞춰 보기 */
+.vchecks { display: grid; gap: 4px; margin: 4px 0 10px; }
+.vck { display: grid; grid-template-columns: 1.4em 7.5em minmax(0, 1fr) minmax(0, 1fr); gap: 2px 10px; align-items: baseline; font-size: 13px; padding: 5px 8px; border-radius: 6px; background: var(--rule-soft); }
+.vck.ok .vm { color: var(--ok); font-weight: 700; }
+.vck.bad { background: var(--seal-soft); }
+.vck.bad .vm { color: var(--seal); font-weight: 800; }
+.vck .vl { color: var(--muted); font-weight: 600; font-size: 12.5px; }
+.vck .vn, .vck .vd { min-width: 0; overflow-wrap: anywhere; }
+.vck .vnote { grid-column: 3 / -1; font-size: 12px; color: var(--ink-2); }
+.vck.bad .vnote { color: var(--seal); font-weight: 600; }
+@media (max-width: 700px) { .vck { grid-template-columns: 1.4em minmax(0, 1fr); } .vck .vl, .vck .vn, .vck .vd, .vck .vnote { grid-column: 2; } }

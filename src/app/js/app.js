@@ -190,7 +190,7 @@
         const saved = await S.save(dir, fname, r.bytes);
         db.docs.push({
           id: r.id, key: c ? c.key : null, itemId: item ? item.id : null, path: saved.path, name: r.name, kind: r.kind,
-          size: r.size, mime: r.mime, addedAt: new Date().toISOString(), ocr: r.ocr, meta: r.meta, text: r.text, title: r.title, dates: r.dates, manual: !!forced,
+          size: r.size, mime: r.mime, addedAt: new Date().toISOString(), ocr: r.ocr, meta: r.meta, text: r.text, title: r.title, dates: r.dates, manual: !!forced, facts: L.docFacts(r.lines),
         });
         if (c) { byContract[c.key] = (byContract[c.key] || 0) + 1; c.updatedAt = Date.now(); } else inbox++;
         if (c && item && AUDIT_DOC.test(item.id)) (auditLines[c.key] = auditLines[c.key] || []).push(r.lines);
@@ -795,6 +795,17 @@
     const errs = [...new Set(Object.values(st).filter((v) => String(v).startsWith('err:')).map((v) => v.slice(4)))];
     return `<p class="g2bst small">나라장터 ${esc(L.fmtDate(String(g.at).slice(0, 10)))}: ${parts.join(' · ')}${noNtce ? ' · <span class="muted">입찰공고 없는 수의계약이라 예산액·설계금액·예정가격은 서류(견적서·설계내역서·기안문)에서 읽습니다</span>' : ''}</p>${errs.length ? `<p class="g2bst bad-t small">못 받은 이유: ${esc(errs.join(' / '))}</p>` : ''}`;
   }
+  // 나라장터(기준)와 서류 맞춰 보기
+  function checksOf(c) {
+    const list = lists(c.type);
+    return L.verifyFacts(c, docsOf(c.key), (d) => ((list.find((x) => x.id === d.itemId) || {}).name || d.name));
+  }
+  function checkBlock(cks) {
+    if (!cks.length) return '<p class="g2bst muted small">서류에서 계약금액·기간·업체를 읽으면 나라장터 값과 맞춰 봅니다(계약서·착공계·준공계·사업자등록증 등을 올리면).</p>';
+    return `<div class="vchecks"><div class="agroup">나라장터와 서류 맞춰 보기 <span class="muted">(나라장터가 기준)</span></div>
+      ${cks.map((k) => `<div class="vck ${k.ok === true ? 'ok' : k.ok === false ? 'bad' : 'info'}"><span class="vm">${k.ok === true ? '✓' : k.ok === false ? '!' : '·'}</span><span class="vl">${esc(k.label)}</span>
+        <span class="vn">나라장터 <b>${esc(k.nara)}</b></span><span class="vd">서류 <b>${esc(k.doc)}</b> <small class="muted">${esc(k.from)}</small></span>${k.note ? `<span class="vnote">${esc(k.note)}</span>` : ''}</div>`).join('')}</div>`;
+  }
   function auditCard(c) {
     const F = JH.forms, m = memoOf(c);
     // 비워 두면 쓰는 값(자동) — 직접 넣은 감사 칸을 뺀 메모로 계산
@@ -810,6 +821,7 @@
     const r = F.rowOf(c, { finish: finishOf(c) });
     const blanks = F.missingOf(r, 'inspect').concat(F.isSole(r) && r.amount >= 10000000 ? F.missingOf(r, 'audit') : []);
     const uniq = [...new Set(blanks)];
+    const cks = checksOf(c), bad = cks.filter((k) => k.ok === false);
     let group = '';
     const edit = !!ui.auditEdit;
     let autoN = 0;
@@ -825,29 +837,29 @@
       return `${head}<label class="mf${f.wide ? ' wide' : ''}"><span>${esc(f.label)}</span><input type="text" data-memo="${f.k}" value="${esc(m[f.k] || '')}" placeholder="${esc(av ? '자동: ' + av : f.ph)}"${av ? ` title="${esc('비워 두면 ' + av + (as ? ' (' + as + ')' : ''))}"` : ''}${f.money ? ' inputmode="numeric"' : ''} autocomplete="off"></label>`;
     }).join('');
     return `<details class="dcard memo audit" data-card="audit"${cardOpen.audit || ui.auditOpen ? ' open' : ''} data-audit="1">
-      <summary><h3>감사·검사 자료</h3><span class="csum">${uniq.length ? `<span class="ablank">빈칸 ${esc(uniq.join('·'))}</span>` : '<span class="afull">다 채움</span>'}<span class="muted"> · 나라장터·서류에서 자동</span></span></summary>
+      <summary><h3>감사·검사 자료</h3><span class="csum">${bad.length ? `<span class="bad-t">서류와 다름 ${esc(bad.map((k) => k.label).join('·'))}</span> · ` : ''}${uniq.length ? `<span class="ablank">빈칸 ${esc(uniq.join('·'))}</span>` : '<span class="afull">다 채움</span>'}<span class="muted"> · 나라장터 기준, 서류로 확인</span></span></summary>
       <div class="cbody">
       <p class="memo-foot" style="margin:0 0 8px">나라장터와 올린 서류(견적서·설계내역서·사업자등록증 등)에서 자동으로 채워 종합검사(엑셀)·행정사무감사(한글) 서식에 들어갑니다. 따로 쓸 필요 없고, 틀린 것만 [직접 고치기]로 고치세요.</p>
       ${g2bLine(c)}
+      ${checkBlock(cks)}
       <div class="audit-acts"><button type="button" class="btn sm" data-act="auditdocs" title="견적서·설계내역서·사업자등록증 등을 다시 읽어 빈칸을 채웁니다(PC 안 AI 사용, 외부로 보내지 않음)">서류에서 다시 읽기</button>${c.source === 'api' ? '<button type="button" class="btn sm ghost" data-act="g2bre" title="변경이력·예정가격·낙찰·업체 주소를 나라장터에서 다시 받습니다">나라장터에서 다시 받기</button>' : ''}<button type="button" class="btn sm ghost" data-act="auditedit">${edit ? '다 고침' : '직접 고치기'}</button></div>
       <div class="${edit ? 'memo-grid audit-grid' : 'audit-view'}">${fields}</div></div></details>`;
   }
 
   // 서류 글자 → 감사 칸(정규식으로 먼저, 남은 칸은 PC 안 AI)
-  const AUDIT_DOC = /-(estimate|related|req|contract|finish|inspect)$/;
+  const AUDIT_DOC = /-(estimate|related|req|contract|start|finish|inspect)$/;
   const AUDIT_AI_SYSTEM = '너는 공공기관 계약 서류에서 값을 찾아 JSON으로만 답한다. 서류에 적혀 있지 않은 값은 null로 둔다. 추측하거나 계산하지 않는다. 금액은 원 단위 정수(쉼표 없이)로 쓴다.';
   const AUDIT_MAP = { budget: 'aBudget', design: 'aDesign', est: 'aEst', addr: 'aAddr', rep: 'aRep' };
   // 서류 글자(줄 묶음 여러 개)에서 글자 규칙으로 찾은 값을 빈 감사 칸에만 넣음. 넣은 칸 수를 돌려줌(저장은 부른 쪽에서)
+  // 서류에서 읽은 값(예정가격·설계금액·예산액·주소·대표자)은 c.docVals에 따로 둠 — 나라장터 값이 있으면 나라장터가 먼저(서류는 확인용)
   function fillAuditFrom(c, lineSets) {
     if (!c) return 0;
     const found = {};
     for (const ls of lineSets) for (const [k, v] of Object.entries(L.scanAuditFields(ls || []))) if (!found[k]) found[k] = v;
-    const cur = formRow(c); let n = 0;
-    for (const [k, mk] of Object.entries(AUDIT_MAP)) {
-      if (!found[k] || String(memoOf(c)[mk] || '').trim() || cur[k]) continue;
-      c.memo = { ...(c.memo || {}), [mk]: String(found[k]) }; n++;
-    }
-    if (n) c.memoAt = new Date().toISOString();
+    const before = formRow(c); let n = 0;
+    const dv = { ...(c.docVals || {}) };
+    for (const k of Object.keys(AUDIT_MAP)) if (found[k] && !dv[k]) { dv[k] = found[k]; if (!before[k]) n++; }
+    c.docVals = dv;
     return n;
   }
   async function fillFromDocs(c, quiet, opt = {}) {
@@ -857,13 +869,13 @@
     for (let i = 0; i < docs.length; i++) {
       const d = docs[i];
       if (!quiet) progress(`서류에서 예정가격·주소 등을 찾는 중 (${i + 1}/${docs.length})`, i / docs.length * .5);
-      try { const b = await S.readBytes(d.path); const { lines } = await R.read(b, d.kind, d.mime); texts.push({ name: (lists(c.type).find((x) => x.id === d.itemId) || {}).name || d.name, lines }); } catch (_) { /* 못 읽는 파일은 건너뜀 */ }
+      try { const b = await S.readBytes(d.path); const { lines } = await R.read(b, d.kind, d.mime); if (!d.facts) d.facts = L.docFacts(lines); texts.push({ name: (lists(c.type).find((x) => x.id === d.itemId) || {}).name || d.name, lines }); } catch (_) { /* 못 읽는 파일은 건너뜀 */ }
     }
     const found = {};
     for (const t of texts) for (const [k, v] of Object.entries(L.scanAuditFields(t.lines))) if (!found[k]) found[k] = v;
     const MAP = AUDIT_MAP;
     const cur = formRow(c);
-    const empty = (k) => !String(memoOf(c)[MAP[k]] || '').trim() && !cur[k];
+    const empty = (k) => !String(memoOf(c)[MAP[k]] || '').trim() && !cur[k] && !(c.docVals || {})[k];
     let by = '서류';
     if (opt.ai !== false && Object.keys(MAP).some((k) => empty(k) && !found[k]) && await JH.ai.pick(true)) {
       if (!quiet) progress('PC AI가 서류를 읽는 중 (1~2분 걸릴 수 있습니다)', .6);
@@ -881,8 +893,8 @@
       } catch (e) { console.warn('AI 읽기 실패', e); }
     }
     const filled = [];
-    for (const [k, mk] of Object.entries(MAP)) if (found[k] && empty(k)) { c.memo = { ...(c.memo || {}), [mk]: String(found[k]) }; filled.push(JH.forms.FIELDS.find((f) => f.k === mk).label); }
-    if (filled.length) { c.memoAt = new Date().toISOString(); await saveDb(true); }
+    for (const [k, mk] of Object.entries(MAP)) if (found[k] && empty(k)) { c.docVals = { ...(c.docVals || {}), [k]: found[k] }; filled.push(JH.forms.FIELDS.find((f) => f.k === mk).label); }
+    await saveDb(true);
     if (!quiet) { progress(null); toast(filled.length ? `${by}에서 ${filled.join('·')}을(를) 채웠습니다. 맞는지 확인해 주세요.` : '서류에서 새로 채울 값을 찾지 못했습니다.', filled.length ? 'ok' : ''); }
     return filled.length;
   }
@@ -895,9 +907,12 @@
     const sig = docs.map((d) => d.id).join(',');
     if (c.auditSig === sig || autoTried.has(c.key + '|' + sig)) return;
     autoTried.add(c.key + '|' + sig);
-    const r = formRow(c);
-    if (!JH.forms.missingOf(r, 'inspect').length) { c.auditSig = sig; return; }
-    fillFromDocs(c, true, { ai: false }).then((n) => { c.auditSig = sig; saveDb(); if (n && ui.sel === c.key && ui.view === 'contracts') { toast(`서류에서 감사·검사 칸 ${n}개를 채웠습니다.`, 'ok'); render(); } }).catch(() => {});
+    const needFacts = docs.some((d) => !d.facts);
+    if (!needFacts && !JH.forms.missingOf(formRow(c), 'inspect').length) { c.auditSig = sig; return; }
+    fillFromDocs(c, true, { ai: false }).then((n) => {
+      c.auditSig = sig; saveDb();
+      if ((n || needFacts) && ui.sel === c.key && ui.view === 'contracts') { if (n) toast(`서류에서 감사·검사 칸 ${n}개를 채웠습니다.`, 'ok'); render(); }
+    }).catch(() => {});
   }
 
   // ---------- 감사·검사 제출 서식 ----------

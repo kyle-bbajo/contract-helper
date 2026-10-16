@@ -278,6 +278,7 @@ print(json.dumps({'names': wb.sheetnames, 'head': rows[0], 'rows': rows[1:], 'de
   assert.match(av, /48,000,000원[\s\S]*나라장터/, '당초 계약금액(변경이력) 자동');
   assert.match(av, /경기도 용인시 처인구 중부대로 1199/, '업체 주소 자동');
   assert.match(await page.textContent('.g2bst'), /변경이력 받음/);
+  assert.ok(await page.$('.vchecks, .g2bst'), '나라장터와 서류 맞춰 보기 자리');
   await page.click('[data-act="auditedit"]');
   assert.match(await page.getAttribute('[data-memo="aAward"]', 'placeholder'), /48,000,000원/, '당초 계약금액(변경이력)');
   assert.match(await page.getAttribute('[data-memo="aAddr"]', 'placeholder'), /경기도 용인시 처인구 중부대로 1199/, '조달업체 주소');

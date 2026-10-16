@@ -110,3 +110,23 @@ test('나라장터 결과코드: 자료 없음은 빈 목록, 새 게이트웨�
   assert.throws(() => L.parseApiBody({ response: { header: { resultCode: '20', resultMsg: 'SERVICE ACCESS DENIED ERROR.' } } }), /권한이 없습니다/);
   assert.equal(L.parseApiBody({ response: { header: { resultCode: '00' }, body: { items: { item: { a: 1 } }, totalCount: 1 } } }).items.length, 1);
 });
+
+test('나라장터가 기준: 값은 직접 > 나라장터 > 서류, 서류 값은 나라장터와 맞춰 보기', () => {
+  const c = { key: 'k', type: '공사', name: '시청사 옥상 방수공사', vendor: '(주)다해토건', amount: 47139000, startDate: '20260601', endDate: '20261010', rep: '홍길동',
+    g2b: { origAmount: 48000000, origEnd: '20260930', amtChanges: [{ date: '20261008', amount: 47139000, diff: -861000 }], endChanges: [{ date: '20260920', from: '20260930', to: '20261010' }], addr: '경기도 용인시 처인구 중부대로 1199' },
+    docVals: { addr: '경기도 수원시 아무로 1', est: 50000000 } };
+  const r = F.rowOf(c);
+  assert.equal(r.addr, '경기도 용인시 처인구 중부대로 1199', '주소는 나라장터 먼저'); assert.equal(r.src.addr, '나라장터');
+  assert.equal(r.est, 50000000, '나라장터에 없으면 서류'); assert.equal(r.src.est, '서류');
+  const facts = L.docFacts(['공 사 계 약 서', '계약금액 : 금 48,000,000원', '공사기간 : 2026. 6. 1. ~ 2026. 9. 30.', '대표자 : 홍길동', '주소: 경기도 용인시 처인구 중부대로 1199']);
+  assert.deepEqual({ amount: facts.amount, start: facts.start, end: facts.end, rep: facts.rep }, { amount: 48000000, start: '20260601', end: '20260930', rep: '홍길동' });
+  const fin = L.docFacts(['준 공 계', '준공일자 : 2026. 10. 15.']);
+  const ck = L.verifyFacts(c, [{ itemId: 'c-contract', name: '계약서.pdf', facts }, { itemId: 'c-finish', name: '준공계.pdf', facts: fin }]);
+  const by = Object.fromEntries(ck.map((k) => [k.key, k]));
+  assert.equal(by.amount.ok, true); assert.match(by.amount.note, /당초/);
+  assert.equal(by.end.ok, true); assert.match(by.end.note, /당초/);
+  assert.equal(by.start.ok, true);
+  assert.equal(by.finish.ok, false, '준공기한 지나 준공'); assert.match(by.finish.note, /지체상금/);
+  const ck2 = L.verifyFacts({ ...c, amount: 30000000, g2b: {} }, [{ itemId: 'c-contract', name: 'a', facts }]);
+  assert.equal(ck2.find((k) => k.key === 'amount').ok, false, '나라장터와 다른 금액');
+});
