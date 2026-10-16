@@ -104,6 +104,31 @@ print(json.dumps({'first': names[0], 'stored': z.infolist()[0].compress_type, 'p
   if (out.valid !== null) assert.equal(out.valid, true);
 });
 
+test('행정사무감사 한글: 계약이 많으면 쪽마다 표를 잘라 새 표로(머리 2줄 다시, 【구분】(계속), 쪽 넘김)', () => {
+  const base = F.auditCandidates(C.map((c) => F.rowOf(c)), 10000000);
+  const one = base.find((r) => r.type === '공사');
+  const many = Array.from({ length: 30 }, (_, i) => ({ ...one, key: 'k' + i, name: `${one.name} ${i + 1}` }));
+  const rows = many.concat(base.filter((r) => r.type === '용역'));
+  const f = join(mkdtempSync(join(tmpdir(), 'form-')), 'p.hwpx'); writeFileSync(f, F.auditHwpx(rows));
+  const out = JSON.parse(execFileSync('python3', ['-c', `
+import json, sys, zipfile, re, xml.dom.minidom
+s = zipfile.ZipFile(sys.argv[1]).read('Contents/section0.xml').decode('utf-8'); xml.dom.minidom.parseString(s)
+tbls = re.findall(r'<hp:tbl [^>]*>', s)
+print(json.dumps({'rowCnt': [int(re.search(r'rowCnt="(\\d+)"', t).group(1)) for t in tbls], 'split': [re.search(r'pageBreak="([A-Z]+)"', t).group(1) for t in tbls],
+  'breaks': len(re.findall(r'<hp:p [^>]*pageBreak="1"', s)), 'labels': [t for t in re.findall(r'<hp:t>([^<]*)</hp:t>', s) if t.startswith('【')],
+  'names': [t for t in re.findall(r'<hp:t>([^<]*)</hp:t>', s) if t.startswith(${JSON.stringify(one.name)})]}, ensure_ascii=False))`, f]).toString());
+  const gongsa = out.rowCnt.slice(0, out.rowCnt.length - 2);
+  assert.ok(gongsa.length >= 3, `공사 30건은 여러 쪽(표 ${gongsa.length}개)`);
+  assert.equal(gongsa.reduce((a, n) => a + n - 2, 0), 30, '나눠도 30건 모두, 겹치거나 빠짐 없이');
+  assert.ok(gongsa.every((n) => n - 2 <= 12), '한 쪽에 너무 많이 넣지 않음');
+  assert.ok(out.split.every((s) => s === 'NONE'), '쪽마다 자른 표는 쪽을 넘지 않음');
+  assert.ok(out.breaks >= gongsa.length - 1, '공사 표마다 앞에서 쪽 넘김');
+  assert.ok(out.labels[0].startsWith('【공사】') && !out.labels[0].includes('(계속)'));
+  assert.ok(out.labels.slice(1, gongsa.length).every((t) => t.startsWith('【공사】(계속)')));
+  assert.ok(out.labels.some((t) => t.startsWith('【용역】')));
+  assert.equal(new Set(out.names).size, 30);
+});
+
 test('나라장터 결과코드: 자료 없음은 빈 목록, 새 게이트웨이 영어 오류는 우리말로', () => {
   assert.deepEqual(L.parseApiBody({ response: { header: { resultCode: '03', resultMsg: 'NODATA_ERROR' } } }), { items: [], total: 0 });
   assert.throws(() => L.parseApiBody({ response: { header: { resultCode: '30', resultMsg: 'SERVICE KEY IS NOT REGISTERED ERROR.' } } }), /인증키가 등록되지 않았습니다/);

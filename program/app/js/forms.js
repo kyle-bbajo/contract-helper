@@ -158,7 +158,63 @@
     const paras = String(text == null ? '' : text).split('\n').map((ln) => `<hp:p id="2147483648" paraPrIDRef="${ppr}" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="${cpr}">${ln === '' ? '' : `<hp:t>${xesc(ln)}</hp:t>`}</hp:run></hp:p>`).join('');
     return tc.replace(/(<hp:subList\b[^>]*>)[\s\S]*?(<\/hp:subList>)/, `$1${paras}$2`);
   }
-  function fillTable(tbl, records) {
+  // ---- 쪽 나누기: 표가 쪽을 넘어가지 않게, 쪽마다 표를 따로 만듦 ----
+  // 글자 폭 어림(한글·한자 1칸, 숫자·영문 0.55칸, 띄어쓰기 0.35칸) — HWPUNIT
+  const textW = (s, fontH) => [...String(s || '')].reduce((w, ch) => w + (/[ᄀ-ᇿ㄰-㆏가-힣一-鿿【】]/.test(ch) ? 1 : ch === ' ' ? 0.35 : 0.55), 0) * fontH;
+  const LINE = 1.4 * 1.06; // 줄 간격 140% + 여유
+  const fontOf = (header, id) => +((header.match(new RegExp(`<hh:charPr id="${id}" height="(\\d+)"`)) || [])[1] || 1000);
+  // 자간(예: -9%)만큼 글자 폭을 줄임
+  const spacingOf = (header, id) => { const m = header.match(new RegExp(`<hh:charPr id="${id}"[\\s\\S]*?<hh:spacing hangul="(-?\\d+)"`)); return m ? 1 + +m[1] / 100 : 1; };
+  const paraH = (header, id) => Math.ceil(fontOf(header, id) * 1.6);
+  // 양식 표의 칸 너비·여백·글자 크기, 머리 2줄 높이
+  function tplGeom(tbl, header) {
+    const rows = [...tbl.matchAll(/<hp:tr>[\s\S]*?<\/hp:tr>/g)].map((m) => m[0]);
+    const tpl = rows[2] || rows[rows.length - 1];
+    const cols = cellsOf(tpl).map((tc) => {
+      const mg = tc.match(/<hp:cellMargin left="(\d+)" right="(\d+)" top="(\d+)" bottom="(\d+)"/) || [0, 141, 141, 141, 141];
+      const cpr = (tc.match(/charPrIDRef="(\d+)"/) || [])[1];
+      return {
+        wf: spacingOf(header, cpr),
+        col: +((tc.match(/colAddr="(\d+)"/) || [])[1] || 0),
+        inner: +((tc.match(/<hp:cellSz width="(\d+)"/) || [])[1] || 0) - +mg[1] - +mg[2],
+        vpad: +mg[3] + +mg[4],
+        font: fontOf(header, cpr),
+      };
+    });
+    const hOf = (r) => Math.max(...[...r.matchAll(/<hp:cellSz width="\d+" height="(\d+)"\/>/g)].map((m) => +m[1]).concat(0));
+    const om = tbl.match(/<hp:outMargin left="\d+" right="\d+" top="(\d+)" bottom="(\d+)"/);
+    return { cols, hdrH: rows.slice(0, 2).reduce((a, r) => a + hOf(r), 0), pad: om ? +om[1] + +om[2] : 280 };
+  }
+  // 한 계약 줄의 높이 어림: 칸마다 (줄 수 × 글자 크기 × 줄 간격 + 위아래 여백) 중 가장 큰 값
+  function recH(rec, g) {
+    return Math.max(ROW_H, ...g.cols.map((c) => {
+      const text = rec ? (rec[c.col] == null ? '' : rec[c.col]) : (c.col === 0 ? '해당 없음' : '');
+      const lines = String(text).split('\n').reduce((n, ln) => n + Math.max(1, Math.ceil(textW(ln, c.font) * c.wf / Math.max(c.inner, 1))), 0);
+      return Math.ceil(lines * c.font * LINE + c.vpad);
+    }));
+  }
+  // 본문이 들어가는 높이(용지 - 위·아래 여백 - 머리말·꼬리말). landscape="NARROWLY"는 가로 용지
+  function bodyHeight(sec) {
+    const p = sec.match(/<hp:pagePr landscape="([A-Z]+)" width="(\d+)" height="(\d+)"/);
+    const m = sec.match(/<hp:margin header="(\d+)" footer="(\d+)" gutter="\d+" left="\d+" right="\d+" top="(\d+)" bottom="(\d+)"/);
+    if (!p || !m) return 41000;
+    const H = p[1] === 'NARROWLY' ? Math.min(+p[2], +p[3]) : Math.max(+p[2], +p[3]);
+    return H - +m[1] - +m[2] - +m[3] - +m[4];
+  }
+  // 줄 높이 목록을 쪽마다 들어갈 만큼 나눔. firstRoom: 첫 쪽에 남은 높이, room: 새 쪽 높이
+  // → [{ from, to, newPage }] (newPage: 이 묶음 앞에서 쪽을 넘김)
+  function paginate(hs, firstRoom, room) {
+    const out = []; let k = 0, avail = firstRoom, newPage = false;
+    if (hs.length && hs[0] > firstRoom && firstRoom < room) { avail = room; newPage = true; }
+    while (k < hs.length) {
+      const from = k; let h = 0;
+      while (k < hs.length && (k === from || h + hs[k] <= avail)) { h += hs[k]; k++; }
+      out.push({ from, to: k, newPage, h, over: h > avail });
+      avail = room; newPage = true;
+    }
+    return out;
+  }
+  function fillTable(tbl, records, split) {
     const first = tbl.indexOf('<hp:tr>');
     const head = tbl.slice(0, first);
     const rows = [...tbl.matchAll(/<hp:tr>[\s\S]*?<\/hp:tr>/g)].map((m) => m[0]);
@@ -175,7 +231,8 @@
       return `<hp:tr>${cells.join('')}</hp:tr>`;
     });
     const height = hdr.reduce((a, r) => a + hOf(r), 0) + ROW_H * recs.length;
-    const h2 = head.replace(/rowCnt="\d+"/, `rowCnt="${2 + recs.length}"`).replace(/pageBreak="[A-Z]+"/, 'pageBreak="CELL"').replace(/repeatHeader="\d"/, 'repeatHeader="1"')
+    // 쪽마다 따로 만든 표는 쪽을 넘지 않게(NONE). 한 줄이 한 쪽보다 길 때만 칸 단위로 나눔(CELL)
+    const h2 = head.replace(/rowCnt="\d+"/, `rowCnt="${2 + recs.length}"`).replace(/pageBreak="[A-Z]+"/, `pageBreak="${split ? 'CELL' : 'NONE'}"`).replace(/repeatHeader="\d"/, 'repeatHeader="1"')
       .replace(/(<hp:sz width="\d+" widthRelTo="[A-Z]+" height=")\d+/, `$1${height}`);
     return h2 + hdr.join('') + body.join('') + '</hp:tbl>';
   }
@@ -209,7 +266,7 @@
     const pHead = p0.match(/^<hp:p\b[^>]*>/)[0];
     const labelAt = p0.indexOf('<hp:run charPrIDRef="9">');
     const ctrlRuns = p0.slice(pHead.length, labelAt > 0 ? labelAt : p0.indexOf('</hp:p>'));
-    const label = (type) => `<hp:run charPrIDRef="9"><hp:t>【${type}】${' '.repeat(95)}</hp:t></hp:run><hp:run charPrIDRef="18"><hp:t> (단위 : 천원)</hp:t></hp:run>`;
+    const label = (type, cont) => `<hp:run charPrIDRef="9"><hp:t>【${type}】${cont ? '(계속)' : ''}${' '.repeat(cont ? 89 : 95)}</hp:t></hp:run><hp:run charPrIDRef="18"><hp:t> (단위 : 천원)</hp:t></hp:run>`;
     const P = (ppr, cpr, inner) => `<hp:p id="0" paraPrIDRef="${ppr}" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">${inner || `<hp:run charPrIDRef="${cpr}"/>`}</hp:p>`;
     let { header, id: rightId } = addRightPara(T.header, '17');
     const parts = [];
@@ -221,13 +278,28 @@
       parts.push(P(String(rightId), '18', `<hp:run charPrIDRef="18"><hp:t>${xesc(signLine('작성자', o.writer))}</hp:t></hp:run>`));
       parts.push(P('17', '9'));
     }
+    // 쪽마다 표를 잘라 넣음: 남은 높이에 들어갈 만큼만 한 표로, 넘치면 쪽을 넘기고 【구분】(계속) + 머리 2줄부터 새 표
+    const bodyH = Math.floor(bodyHeight(sec) * 0.95);
+    const labelH = Math.max(paraH(header, '9'), paraH(header, '18')), blankH = paraH(header, '26');
+    let used = withTitle ? paraH(header, '26') * 2 + paraH(header, '18') * 2 + paraH(header, '9') : 0;
+    const BR = (p) => p.replace('pageBreak="0"', 'pageBreak="1"');
     types.forEach((type, i) => {
       const tbl = tbls[TPL_ORDER.indexOf(type)] || tbls[0];
       const list = rows.filter((r) => r.type === type).sort(byDate);
-      if (i === 0 && !withTitle) parts.push(pHead + ctrlRuns + label(type) + '</hp:p>');
-      else parts.push(P('17', '9', label(type)));
-      parts.push(`<hp:p id="2147483648" paraPrIDRef="26" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="26">${fillTable(tbl, auditRecords(list))}<hp:t/></hp:run></hp:p>`);
-      parts.push(P('26', '26'));
+      const recs = auditRecords(list), g = tplGeom(tbl, header);
+      const items = recs.length ? recs : [null];
+      const top = labelH + g.hdrH + g.pad;
+      const pages = paginate(items.map((r) => recH(r, g)), bodyH - used - top, bodyH - top);
+      pages.forEach((pg, j) => {
+        if (pg.newPage) used = 0;
+        const lab = label(type, j > 0);
+        if (i === 0 && j === 0 && !withTitle && !pg.newPage) parts.push(pHead + ctrlRuns + lab + '</hp:p>');
+        else parts.push((pg.newPage ? BR : (x) => x)(P('17', '9', lab)));
+        const chunk = items.slice(pg.from, pg.to).filter(Boolean);
+        parts.push(`<hp:p id="2147483648" paraPrIDRef="26" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="26">${fillTable(tbl, chunk, pg.over)}<hp:t/></hp:run></hp:p>`);
+        used += top + pg.h;
+      });
+      parts.push(P('26', '26')); used += blankH;
     });
     const section = open + parts.join('') + '</hs:sec>';
     const DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>';
