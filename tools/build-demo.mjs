@@ -93,11 +93,11 @@ for (const f of readdirSync(join(ROOT, 'tests/fixtures/docs'))) if (!/\.hwpx?$/i
   root.JH_DemoCMapFactory = DemoCMapFactory;
   const PDFJS_OPTS = { CMapReaderFactory: DemoCMapFactory, cMapPacked: true,`);
   // 글자 인식 엔진은 브라우저 저장소(keyval-store)를 먼저 보므로 한국어 데이터를 거기에 넣어 둠
-  rep("    ocrWorker = await withTimeout(root.Tesseract.createWorker('kor', 1, {", `    const kor = b64(await (await fetch('vendor/tesseract/lang/kor.b64.txt')).text());
+  rep("    ocrWorker = await withTimeout(T.createWorker('kor', 1, {", `    const kor = b64(await (await fetch('vendor/tesseract/lang/kor.b64.txt')).text());
     await new Promise((ok, no) => { const rq = indexedDB.open('keyval-store'); rq.onupgradeneeded = () => rq.result.createObjectStore('keyval');
       rq.onerror = () => no(rq.error); rq.onsuccess = () => { const tx = rq.result.transaction('keyval', 'readwrite'); tx.objectStore('keyval').put(kor, './kor.traineddata');
         tx.oncomplete = () => { rq.result.close(); ok(); }; tx.onerror = () => no(tx.error); }; });
-    ocrWorker = await withTimeout(root.Tesseract.createWorker('kor', 1, {`);
+    ocrWorker = await withTimeout(T.createWorker('kor', 1, {`);
   writeFileSync(p, r);
   // 게시 규칙: 글자 파일에 U+FFFD 문자를 그대로 두지 않음
   for (const f of ['vendor/pdf-lib.min.js']) { const q = join(OUT, f); writeFileSync(q, readFileSync(q, 'utf8').replaceAll('\uFFFD', '\\uFFFD')); }

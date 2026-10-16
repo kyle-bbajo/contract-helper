@@ -2,11 +2,26 @@
 (function (root) {
   'use strict';
   const PDFJS_OPTS = { cMapUrl: 'vendor/pdfjs/cmaps/', cMapPacked: true, isEvalSupported: false, disableFontFace: true, useSystemFonts: false, verbosity: 0 };
-  if (root.pdfjsLib) root.pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdfjs/pdf.worker.min.js';
+  // 큰 라이브러리(PDF 읽기·만들기, 글자 인식)는 처음 쓸 때 불러옴 — 켜기가 빨라짐
+  const LIBS = { pdfjs: ['vendor/pdfjs/pdf.min.js', () => root.pdfjsLib], pdflib: ['vendor/pdf-lib.min.js', () => root.PDFLib], tesseract: ['vendor/tesseract/tesseract.min.js', () => root.Tesseract], formtpl: ['js/forms-tpl.js', () => root.JH && root.JH.formTpl] };
+  const loading = {};
+  function lib(name) {
+    const [src, get] = LIBS[name];
+    if (get()) return Promise.resolve(get());
+    loading[name] = loading[name] || new Promise((res, rej) => {
+      const el = document.createElement('script'); el.src = src;
+      el.onload = () => { if (name === 'pdfjs') root.pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdfjs/pdf.worker.min.js'; res(get()); };
+      el.onerror = () => { delete loading[name]; rej(new Error(src + '을 불러오지 못했습니다')); };
+      document.head.append(el);
+    });
+    return loading[name];
+  }
+  root.JH = root.JH || {}; root.JH.lib = lib;
+  const pdfjs = () => lib('pdfjs');
 
   // PDF 글자를 줄 단위로 (글자 간격을 보고 띄어쓰기 복원)
   async function pdfLines(bytes, maxPages = 3) {
-    const doc = await root.pdfjsLib.getDocument({ data: bytes.slice(), ...PDFJS_OPTS }).promise;
+    const doc = await (await pdfjs()).getDocument({ data: bytes.slice(), ...PDFJS_OPTS }).promise;
     const lines = [];
     try {
       for (let p = 1; p <= Math.min(maxPages, doc.numPages); p++) {
@@ -47,7 +62,8 @@
   async function getOcr() {
     if (ocrWorker) return ocrWorker;
     const abs = (p) => new URL(p, location.href).href;
-    ocrWorker = await withTimeout(root.Tesseract.createWorker('kor', 1, {
+    const T = await lib('tesseract');
+    ocrWorker = await withTimeout(T.createWorker('kor', 1, {
       workerPath: abs('vendor/tesseract/worker.min.js'), corePath: abs('vendor/tesseract/core'), langPath: abs('vendor/tesseract/lang'),
       workerBlobURL: false, gzip: true, logger: () => {},
     }), 90000, '글자 인식 준비');
@@ -65,7 +81,7 @@
       const bmp = await createImageBitmap(new Blob([bytes], { type: type || 'image/*' }));
       return capCanvas(bmp, bmp.width, bmp.height);
     }
-    const doc = await root.pdfjsLib.getDocument({ data: bytes.slice(), ...PDFJS_OPTS }).promise;
+    const doc = await (await pdfjs()).getDocument({ data: bytes.slice(), ...PDFJS_OPTS }).promise;
     try {
       const page = await doc.getPage(1); const v1 = page.getViewport({ scale: 1 });
       const vp = page.getViewport({ scale: Math.min(3, 2200 / Math.max(v1.width, v1.height)) });
@@ -76,7 +92,7 @@
     } finally { doc.destroy(); }
   }
   async function ocrLines(bytes, kind, type) {
-    if (ocrBroken || !root.Tesseract) return null;
+    if (ocrBroken) return null;
     try {
       const w = await getOcr();
       const { data } = await withTimeout(w.recognize(await firstPageCanvas(bytes, kind, type)), 120000, '글자 인식');
@@ -112,8 +128,8 @@
   }
   // 쪽마다 앞부분 글자(여러 양식이 든 파일에서 쪽별 서류 이름 찾기). 글자 PDF는 40쪽까지, 스캔 PDF는 8쪽까지 위쪽만 글자 인식
   async function pageHeads(bytes, kind) {
-    if (kind !== 'pdf' || !root.pdfjsLib) return null;
-    const doc = await root.pdfjsLib.getDocument({ data: bytes.slice(), ...PDFJS_OPTS }).promise;
+    if (kind !== 'pdf') return null;
+    const doc = await (await pdfjs()).getDocument({ data: bytes.slice(), ...PDFJS_OPTS }).promise;
     const heads = [];
     try {
       const n = Math.min(40, doc.numPages);
@@ -126,7 +142,7 @@
         for (const it of tc.items) { if (!it.str || !it.str.trim()) continue; const y = it.transform[5]; let r = rows.find((q) => Math.abs(q.y - y) < 4); if (!r) rows.push(r = { y, s: [] }); r.s.push({ x: it.transform[4], t: it.str }); }
         rows.sort((a, b) => b.y - a.y);
         let head = rows.slice(0, 8).map((r) => r.s.sort((a, b) => a.x - b.x).map((x) => x.t).join(' ')).join(' ');
-        if (JH.logic.norm(head).length < 4 && scanned < 8 && !ocrBroken && root.Tesseract) {
+        if (JH.logic.norm(head).length < 4 && scanned < 8 && !ocrBroken) {
           // 스캔본: 쪽 위쪽 30%만 그려 글자 인식
           scanned++;
           try {

@@ -117,7 +117,7 @@
    * @param getFile  async (doc) => { bytes, name, kind } (한글은 변환된 PDF가 있으면 그것)
    */
   async function build(c, list, docs, getFile, opts) {
-    const { PDFDocument } = root.PDFLib;
+    const { PDFDocument } = await JH.lib('pdflib');
     const out = await PDFDocument.create();
     const useCover = opts.cover !== false, useHolder = opts.holder !== false;
     const originals = c.originals || {}, received = c.received || {};

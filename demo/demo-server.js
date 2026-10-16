@@ -95,7 +95,7 @@
   async function showPdf(bytes, title, note) {
     const body = overlay(title);
     if (note) document.getElementById('demoOvNote').textContent = note;
-    const doc = await root.pdfjsLib.getDocument({ data: bytes.slice(), cMapUrl: 'vendor/pdfjs/cmaps/', cMapPacked: true, isEvalSupported: false }).promise;
+    const doc = await (await JH.lib('pdfjs')).getDocument({ data: bytes.slice(), cMapUrl: 'vendor/pdfjs/cmaps/', cMapPacked: true, isEvalSupported: false }).promise;
     body.innerHTML = '';
     for (let p = 1; p <= Math.min(doc.numPages, 30); p++) {
       const page = await doc.getPage(p); const vp = page.getViewport({ scale: 1.3 });

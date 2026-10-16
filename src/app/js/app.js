@@ -2,7 +2,7 @@
 (function (root) {
   'use strict';
   const L = JH.logic, S = JH.server, R = JH.readers;
-  const DB_PATH = '서류대장.json', CFG_PATH = '설정.json', INBOX = '미분류';
+  const DB_PATH = '서류대장.json', TEXT_PATH = '서류본문.json', BACKUP_PATH = '서류대장.백업.json', CFG_PATH = '설정.json', INBOX = '미분류';
   const $ = (s, el = document) => el.querySelector(s);
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -34,7 +34,14 @@
   const CHECKLIST_VER = 3;
   const lists = (type) => (db.checklists && db.checklists[type]) || defaults[type] || defaults.공사;
   const contracts = () => Object.values(db.contracts).filter((c) => !c.archived);
-  const docsOf = (key) => db.docs.filter((d) => d.key === key);
+  // 계약별 서류: 화면을 그리는 동안은 한 번 만든 색인(docIndex)으로 찾음(서류 수천 개여도 계약마다 다시 훑지 않음)
+  let docIndex = null, stCache = null;
+  const docsOf = (key) => { if (docIndex) return docIndex.get(key) || []; return db.docs.filter((d) => d.key === key); };
+  function withIndex(fn) {
+    const nested = !!docIndex;
+    if (!nested) { docIndex = new Map(); for (const d of db.docs) { if (!d.key) continue; const a = docIndex.get(d.key); if (a) a.push(d); else docIndex.set(d.key, [d]); } stCache = new Map(); }
+    try { return fn(); } finally { if (!nested) { docIndex = null; stCache = null; } }
+  }
   const inboxDocs = () => db.docs.filter((d) => !d.key);
   const today = () => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), d.getDate()); };
   const ymd = (d = new Date()) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
@@ -42,6 +49,10 @@
   // 파일 없이 갖춘 것으로 보는 서류: 종이 원본(원본) + 이미 받았거나 처리한 서류(받음 — 지난 계약 등)
   const gotMap = (c) => ({ ...(c.originals || {}), ...(c.received || {}) });
   function statusOf(c) {
+    if (stCache && stCache.has(c.key)) return stCache.get(c.key);
+    const st = statusOf0(c); if (stCache) stCache.set(c.key, st); return st;
+  }
+  function statusOf0(c) {
     const docs = docsOf(c.key);
     const st = L.checklistStatus(lists(c.type), docs, gotMap(c));
     const anything = docs.length > 0 || Object.values(gotMap(c)).some(Boolean);
@@ -87,14 +98,29 @@
   }
 
   // ---------- 저장 ----------
-  let saveTimer = null, saving = Promise.resolve();
+  // 서류대장은 서류 본문(글자)을 뺀 가벼운 파일로 저장하고, 본문은 서류가 늘거나 줄 때만 따로(서류본문.json) 저장
+  // → 체크 한 번에 수십 MB를 다시 쓰지 않음. 쓰는 중에 또 바뀌면 끝난 뒤 한 번 더 씀
+  let saveTimer = null, saving = Promise.resolve(), textDirty = false, again = false, inFlight = false;
+  const dbForSave = () => ({ ...db, docs: db.docs.map((d) => { if (!('text' in d)) return d; const { text, ...rest } = d; return rest; }) });
+  const textsForSave = () => { const o = {}; for (const d of db.docs) if (d.text) o[d.id] = d.text; return o; };
+  async function writeAll() {
+    if (textDirty) { textDirty = false; await S.writeJson(TEXT_PATH, textsForSave(), true); }
+    await S.writeJson(DB_PATH, dbForSave(), true);
+  }
   function saveDb(now) {
     clearTimeout(saveTimer);
-    const run = () => { saving = saving.then(() => S.writeJson(DB_PATH, db)).catch((e) => toast('서류대장을 저장하지 못했습니다: ' + e.message, 'err')); return saving; };
+    const run = () => {
+      if (inFlight) { again = true; return saving; }
+      inFlight = true;
+      saving = writeAll().catch((e) => toast('서류대장을 저장하지 못했습니다: ' + e.message, 'err')).finally(() => { inFlight = false; if (again) { again = false; run(); } });
+      return saving;
+    };
     if (now) return run();
     saveTimer = setTimeout(run, 350);
     return saving;
   }
+  // 창을 닫거나 숨기면 미뤄 둔 저장을 바로 보냄
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && saveTimer) { clearTimeout(saveTimer); saveTimer = null; saveDb(true); } });
   const saveCfg = () => S.writeJson(CFG_PATH, diffFromOrg(cfg));
 
   // ---------- 알림·진행 ----------
@@ -266,7 +292,7 @@
         const dir = c ? folderOf(c) : INBOX;
         const fname = item ? `${L.safeName(item.name, 30)}_${r.name}` : r.name;
         const saved = await S.save(dir, fname, r.bytes);
-        db.docs.push({
+        textDirty = true; db.docs.push({
           id: r.id, key: c ? c.key : null, itemId: item ? item.id : null, path: saved.path, name: r.name, kind: r.kind,
           size: r.size, mime: r.mime, addedAt: new Date().toISOString(), ocr: r.ocr, meta: r.meta, text: r.text, title: r.title, dates: r.dates, manual: !!forced, facts: L.docFacts(r.lines),
           ...(also.length ? { also, pagesOf } : {}),
@@ -319,7 +345,7 @@
   }
   async function removeDoc(d) {
     await S.remove(d.path); if (d.pdfPath) { try { await S.remove(d.pdfPath); } catch (_) {} }
-    db.docs = db.docs.filter((x) => x !== d); await saveDb(true);
+    db.docs = db.docs.filter((x) => x !== d); textDirty = true; await saveDb(true);
     toast(`"${d.name}"을 빼고 데이터 폴더의 _삭제됨으로 옮겼습니다.`);
   }
   // 미분류를 다시 자동 분류(계약 목록을 새로 불러온 뒤 등)
@@ -374,7 +400,7 @@
         let c = contracts().find((x) => x.folder && (dir === x.folder || dir.startsWith(x.folder + '/'))) || L.matchContract(contracts(), L.norm(L.stem(name)) + '|' + text);
         const doc = { id: L.uid(), key: c ? c.key : null, itemId: c ? L.classifyItem(lists(c.type), name, title) : null, path: f.path, name, kind, size: f.size,
           addedAt: new Date().toISOString(), ocr, meta: L.findMeta(lines), text, title, dates: L.extractDates(lines), manual: false };
-        db.docs.push(doc); added++;
+        db.docs.push(doc); textDirty = true; added++;
         if (c && /^미분류\//.test(f.path)) await moveDoc(doc, c.key, doc.itemId, false);
       } catch (e) { console.warn('새 파일 읽기 실패', f.path, e); }
     }
@@ -500,8 +526,9 @@
   }
   // 목록 정렬: 날짜가 없는 계약은 맨 뒤
   const d8 = (s) => { const t = L.toDate(s); return t ? t.getTime() : null; };
-  const byDate = (pick, dir) => (a, b) => { const x = d8(pick(a)), y = d8(pick(b)); if (x == null || y == null) return (x == null) - (y == null) || b.updatedAt - a.updatedAt; return (x - y) * dir || a.name.localeCompare(b.name, 'ko'); };
-  const ko = (pick) => (a, b) => String(pick(a) || '힣').localeCompare(String(pick(b) || '힣'), 'ko', { numeric: true }) || (a.name || '').localeCompare(b.name || '', 'ko');
+  const byDate = (pick, dir) => (a, b) => { const x = d8(pick(a)), y = d8(pick(b)); if (x == null || y == null) return (x == null) - (y == null) || b.updatedAt - a.updatedAt; return (x - y) * dir || KO.compare(a.name || '', b.name || ''); };
+  const KO = new Intl.Collator('ko', { numeric: true }); // 비교 때마다 새로 만들지 않음(목록 정렬이 수십 배 빨라짐)
+  const ko = (pick) => (a, b) => KO.compare(String(pick(a) || '힣'), String(pick(b) || '힣')) || KO.compare(a.name || '', b.name || '');
   const SORTS = {
     'end-desc': byDate((c) => c.endDate, -1), 'end-asc': byDate((c) => c.endDate, 1),
     'date-desc': byDate((c) => c.contractDate || c.startDate, -1), 'date-asc': byDate((c) => c.contractDate || c.startDate, 1),
@@ -590,12 +617,15 @@
   // 우리 예산이 아닌 사업(e나라도움 보조금 등)은 구매요구서 대신 일반 기안문이 옴
   // 예산 판단 순서: 직접 고른 값 > 서류 내용(e나라도움·보조금 등 → 외부, 구매요구서 → 우리) > 나라장터 응답 > 모름
   const EXT_TEXT = /(e나라도움|이나라도움|국고보조|보조금|외부재정|재정연계)/;
+  const extMemo = new WeakMap();
   function budgetOf(c) {
     if (!c) return { v: 'unknown' };
     if (c.budget) return { v: c.budget, why: '직접 고름', manual: true };
     const docs = docsOf(c.key);
-    const ext = docs.find((d) => EXT_TEXT.test(d.text || ''));
-    if (ext) { const m = (ext.text || '').match(EXT_TEXT); return { v: 'ext', why: `서류 "${ext.name}"에 '${m ? m[1] : ''}'` }; }
+    // 서류 본문(수천 자)을 그릴 때마다 다시 훑지 않도록 서류마다 한 번만 찾아 둠
+    const extWord = (d) => { if (!extMemo.has(d)) { const m = (d.text || '').match(EXT_TEXT); extMemo.set(d, m ? m[1] : ''); } return extMemo.get(d); };
+    const ext = docs.find((d) => extWord(d));
+    if (ext) return { v: 'ext', why: `서류 "${ext.name}"에 '${extWord(ext)}'` };
     const req = docs.find((d) => /-req$/.test(d.itemId || '') && /구매요구|구매요청/.test((d.title || '') + L.norm(d.name)));
     if (req) return { v: 'own', why: `구매요구서 "${req.name}"` };
     const nm = L.norm(c.name || ''); const hit = (cfg.extNames || []).find((w) => w && nm.includes(L.norm(w)));
@@ -844,9 +874,12 @@
     } else { g.st.bid = g.st.prepar = g.st.scsbid = 'skip'; }
     const bz = c.bizno || g.bizno;
     if (bz && !g.addr) {
-      if (!(bz in corpCache)) corpCache[bz] = L.pickCorp(await get('corp', bz), bz);
-      else g.st.corp = corpCache[bz] ? 'ok' : 'none';
-      const k = corpCache[bz]; if (k) { g.addr = k.addr; if (!g.rep) g.rep = k.rep; }
+      // 같은 업체는 한 번만 조회(동시에 받는 계약끼리도 같은 조회를 기다려 씀)
+      const first = !(bz in corpCache);
+      if (first) corpCache[bz] = get('corp', bz).then((items) => L.pickCorp(items, bz));
+      const k = await corpCache[bz];
+      if (!first) g.st.corp = k ? 'ok' : 'none';
+      if (k) { g.addr = k.addr; if (!g.rep) g.rep = k.rep; }
     } else if (!bz) g.st.corp = 'skip';
     if (retry) g.retry = true;
     c.g2b = g;
@@ -856,11 +889,17 @@
     if (!todo.length || !cfg.apiKey) return { done: 0, errs: [] };
     const errs = new Map(), corp = {}, diag = [];
     try {
-      for (let i = 0; i < todo.length; i++) {
-        progress(`나라장터에서 세부 정보(예정가격·변경이력·업체 주소) 받는 중 ${i + 1}/${todo.length}`, i / todo.length);
-        await enrichOne(todo[i], errs, corp, diag);
-        if (i % 10 === 9) saveDb();
-      }
+      // 계약 3건씩 같이 받음(한 건씩 차례로 받을 때보다 2~3배 빠름 · 나라장터는 하루 조회 횟수만 제한)
+      let next = 0, done = 0;
+      const worker = async () => {
+        while (next < todo.length) {
+          const c = todo[next++];
+          await enrichOne(c, errs, corp, diag);
+          done++; progress(`나라장터에서 세부 정보(예정가격·변경이력·업체 주소) 받는 중 ${done}/${todo.length}`, done / todo.length);
+          if (done % 10 === 0) saveDb();
+        }
+      };
+      await Promise.all([worker(), worker(), worker()]);
     } finally {
       await saveDb(true); progress(null);
       // 받은 그대로(앞 40개) — 안 채워질 때 원인 확인용: 데이터 폴더 \진단\나라장터_세부응답.json
@@ -1088,6 +1127,7 @@
     let name, bytes, preview;
     if (kind === 'audit') {
       const opt = { min: o.min, types: o.types };
+      await JH.lib('formtpl'); // 한글 양식 본문(큰 파일)은 처음 만들 때 불러옴
       bytes = JH.forms.auditHwpx(rows, opt);
       name = `행정사무감사_수의계약현황(${JH.forms.manLabel(o.min).replace(/,/g, '')}이상)_${stamp}.hwpx`;
       preview = JH.forms.auditPreview(rows, opt);
@@ -1238,7 +1278,8 @@
       : '<li class="muted">아직 작성한 공고문이 없습니다.</li>';
   }
 
-  function render() {
+  function render() { return withIndex(render0); }
+  function render0() {
     const n = inboxDocs().length;
     const ic = $('#inboxCount'); ic.hidden = !n; ic.textContent = n;
     if (ui.view === 'home') { renderHome(); return; }
@@ -1542,9 +1583,25 @@
     try {
       const info = await S.ping();
       try { const r = await fetch('org.json', { cache: 'no-store' }); if (r.ok) org = await r.json(); } catch (_) {}
-      cfg = mergeCfg((await S.readJson(CFG_PATH)) || {});
-      const saved = await S.readJson(DB_PATH);
-      if (saved && saved.contracts) { db = { ...db, ...saved }; await S.writeJson('서류대장.백업.json', saved); }
+      // 설정·서류대장·서류 본문을 한꺼번에 요청(차례로 기다리지 않음)
+      const [cfg0, saved0, tx0] = await Promise.all([S.readJson(CFG_PATH), S.readJson(DB_PATH).catch((e) => { console.warn('서류대장 읽기 실패', e); return null; }), S.readJson(TEXT_PATH).catch(() => null)]);
+      cfg = mergeCfg(cfg0 || {});
+      let saved = saved0, fromBackup = false;
+      if (!(saved && saved.contracts)) {
+        // 저장 중에 끊겨 망가졌으면 지난번 켤 때 떠 둔 백업으로
+        let bk = null; try { bk = await S.readJson(BACKUP_PATH); } catch (_) { /* 없음 */ }
+        if (bk && bk.contracts) { saved = bk; fromBackup = true; }
+      }
+      if (saved && saved.contracts) {
+        db = { ...db, ...saved };
+        // 서류 본문(글자)은 따로 둔 파일에서 붙임(예전 버전 파일은 서류대장 안에 그대로 있음)
+        const tx = tx0;
+        if (tx) { for (const d of db.docs) if (!('text' in d) && tx[d.id]) d.text = tx[d.id]; }
+        else if (db.docs.some((d) => d.text)) textDirty = true; // 예전 형식(본문이 서류대장 안에) → 다음 저장 때 본문 파일을 만듦
+        // 백업은 화면을 그린 뒤에(켜기를 늦추지 않음)
+        setTimeout(() => S.writeJson(BACKUP_PATH, dbForSave(), true).catch(() => {}), 1500);
+        if (fromBackup) { toast('서류대장 파일이 망가져 있어 지난번 백업으로 열었습니다. 마지막에 한 일 몇 가지가 빠졌을 수 있습니다.', 'err'); saveDb(true); }
+      }
       mergeSameContracts();
       // 서류 목록이 바뀌면(2: 대금청구에 완납증명서·지역개발채권, 착공계 손해배상공제·노무비 개인정보 동의서, 준공계 하자보수보증서)
       // 저장해 둔 목록에 새 기본 목록을 넣고, 직접 추가한 서류는 그대로 둠

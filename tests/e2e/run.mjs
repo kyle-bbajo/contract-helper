@@ -159,6 +159,13 @@ try {
   // 1) 계약 폴더 이름 바꾸기 + 탐색기로 파일 직접 넣기
   renameSync(join(data, '계약', folderA), join(data, '계약', '방수공사(이름 바꿈)'));
   copyFileSync(join(DOCS, 'noname(3).pdf'), join(data, '계약', '방수공사(이름 바꿈)', '지방세_직접넣음.pdf'));
+  // 1-2) 예전 버전 서류대장(서류 본문이 안에 들어 있고 줄 바꿈이 있는 형식) + 새 형식 파일은 없음 → 그대로 읽히고 본문 파일로 나뉘는지
+  {
+    const ledger = JSON.parse(readFileSync(join(data, '서류대장.json'), 'utf8')), texts = JSON.parse(readFileSync(join(data, '서류본문.json'), 'utf8'));
+    assert.ok(!ledger.docs.some((d) => 'text' in d) && Object.keys(texts).length >= 5, '서류대장에는 본문 없음, 본문은 따로');
+    ledger.docs.forEach((d) => { if (texts[d.id]) d.text = texts[d.id]; });
+    writeFileSync(join(data, '서류대장.json'), JSON.stringify(ledger, null, 1)); rmSync(join(data, '서류본문.json'));
+  }
   // 2) 데이터 폴더를 바탕화면 → 문서\보관\ 으로 통째로 옮기기
   const moved = join(HOME, 'Documents', '보관', '계약업무도우미');
   mkdirSync(dirname(moved), { recursive: true });
@@ -173,6 +180,8 @@ try {
     return { folder: c.folder, missing: JH.app.db.docs.filter((d) => d.missing).length, extra: ds.find((d) => d.name === '지방세_직접넣음.pdf'), n: ds.length };
   });
   assert.equal(st.folder, '계약/방수공사(이름 바꿈)'); assert.equal(st.missing, 0);
+  assert.ok(await page.evaluate(() => JH.app.db.docs.filter((d) => d.text && d.text.length > 50).length >= 5), '예전 형식 서류대장의 본문도 그대로');
+  await waitFor(() => existsSync(join(data, '서류본문.json')) && !JSON.parse(readFileSync(join(data, '서류대장.json'), 'utf8')).docs.some((d) => 'text' in d), 20000, '본문을 따로 떼어 저장');
   assert.ok(st.extra && st.extra.itemId === 'c-ltax', '직접 넣은 지방세 서류 분류');
   assert.equal(JSON.parse(readFileSync(join(PROG, 'local.json'), 'utf8')).dataDir, moved);
   step('데이터 폴더를 통째로 옮겨도 표식으로 찾음 + 계약 폴더 이름 변경 추적 + 직접 넣은 파일 분류');

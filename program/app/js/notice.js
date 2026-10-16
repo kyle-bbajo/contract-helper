@@ -36,6 +36,8 @@
     n.updatedAt = n.vAt = Date.now(); save();
   }
 
+  // n개씩 같이 처리(나라장터 조회·첨부 받기를 차례로 기다리지 않음)
+  async function pmap(items, n, fn) { let i = 0; const w = async () => { while (i < items.length) await fn(items[i++]); }; await Promise.all(Array.from({ length: Math.min(n, items.length) }, w)); }
   // ---------- 유사 공고에서 배우기 ----------
   async function learnSimilar(scope, months, keyword0, org0) {
     const n = cur(), cfg = app().cfg;
@@ -95,25 +97,22 @@
       }
       const seen = new Set();
       bids = bids.filter((b) => b.no && !seen.has(b.no + b.ord) && seen.add(b.no + b.ord)).sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 40);
-      // 가까운 금액 순으로 12건만 지역·면허 제한 자세히
+      // 가까운 금액 순으로 12건만 지역·면허 제한 자세히(3건씩 같이 받음)
       const near = [...bids].sort((a, b) => Math.abs(a.price - p) - Math.abs(b.price - p)).slice(0, 12);
-      for (let i = 0; i < near.length; i++) {
-        app().progress(`조건 자세히 보는 중 ${i + 1}/${near.length}`, 0.6 + (i / near.length) * 0.4);
-        const b = near[i];
+      let seenN = 0;
+      await pmap(near, 3, async (b) => {
         try { const r = L.parseApiBody(await S.nara(N.bidDetailUrl('getBidPblancListInfoPrtcptPsblRgn', b.no, b.ord, cfg.apiKey))); b.regions = r.items.map((x) => x.prtcptPsblRgnNm).filter(Boolean); } catch (_) {}
         try { const r = L.parseApiBody(await S.nara(N.bidDetailUrl('getBidPblancListInfoLicenseLimit', b.no, b.ord, cfg.apiKey))); b.licenses = [...new Set(r.items.map((x) => x.lcnsLmtNm).filter(Boolean))]; } catch (_) {}
-      }
+        seenN++; app().progress(`조건 자세히 보는 중 ${seenN}/${near.length}`, 0.6 + (seenN / near.length) * 0.4);
+      });
       // 첨부 공고문 읽기: 가까운 공고 5건의 공고서(한글·PDF)를 받아 문장 뽑기, 원본은 데이터 폴더에 보관
       // 복합공사면 우리 공종 면허를 더 많이 요구한 공고를 앞으로(예: 토목 + 조경 둘 다 요구한 공고)
       const mine = N.worksOf(v).map((x) => x.license);
       const overlap = (b) => (b.licenses || []).filter((l) => mine.some((m) => l.includes(m.replace(/업$/, '')))).length;
       if (mine.length > 1) near.sort((a, b) => overlap(b) - overlap(a));
       const withFiles = (keyword0 ? bids : near).filter((b) => b.files && b.files.some((f) => /\.(hwpx?|pdf)$/i.test(f.name))).slice(0, 6);
-      let read = 0;
-      for (let i = 0; i < withFiles.length; i++) {
-        app().progress(`첨부 공고문 읽는 중 ${i + 1}/${withFiles.length}`, i / withFiles.length);
-        if (await readDoc(withFiles[i])) read++;
-      }
+      let read = 0, tried = 0;
+      await pmap(withFiles, 2, async (b) => { if (await readDoc(b)) read++; tried++; app().progress(`첨부 공고문 읽는 중 ${tried}/${withFiles.length}`, tried / withFiles.length); });
       S.writeJson('진단/공고검색.json', { at: new Date().toISOString(), 범위: scope, 기간개월: months, 찾아본것: log }).catch(() => {});
       const mine0 = ((n.learned && n.learned.bids) || []).filter((b) => b.uploaded); // 직접 올린 공고문은 다시 찾아도 남김
       bids = [...mine0, ...bids];
@@ -183,8 +182,8 @@
   async function readPicked(n) {
     const todo = used(n.learned).filter((b) => !isRead(b) && hasFile(b)).slice(0, 10);
     if (!todo.length) { app().toast('고른 공고 중 아직 안 읽은 첨부 공고문이 없습니다.'); return; }
-    let ok = 0;
-    try { for (let i = 0; i < todo.length; i++) { app().progress(`고른 공고의 공고문 읽는 중 ${i + 1}/${todo.length}`, i / todo.length); if (await readDoc(todo[i])) ok++; } }
+    let ok = 0, tried = 0;
+    try { await pmap(todo, 2, async (b) => { if (await readDoc(b)) ok++; tried++; app().progress(`고른 공고의 공고문 읽는 중 ${tried}/${todo.length}`, tried / todo.length); }); }
     finally { app().progress(null); }
     n.learned.read = n.learned.bids.filter(isRead).length; n.updatedAt = Date.now(); save(true); render();
     app().toast(`공고문 ${ok}/${todo.length}건을 읽었습니다.`, ok ? 'ok' : 'err');

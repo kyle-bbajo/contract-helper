@@ -98,6 +98,8 @@ main { min-height: 0; }
 .filters .seg button { flex: 1; }
 .items { overflow: auto; min-height: 0; }
 .citem { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 12px 14px; border-bottom: 1px solid var(--rule-soft); cursor: pointer; border-left: 3px solid transparent; }
+/* 화면 밖 목록 줄은 그리기를 미룸(계약 수백 건이어도 목록이 바로 뜸) */
+.citem { content-visibility: auto; contain-intrinsic-size: auto 78px; }
 .citem:hover { background: #fafbfc; }
 .citem.on { background: var(--ink-soft); border-left-color: var(--ink); }
 .citem .nm { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -173,6 +173,8 @@ function Read-Request($stream) {
     if ($n -le 0) { break }
     $body.Write($chunk, 0, $n)
   }
+  # 본문이 다 오기 전에 끊기면(창을 닫는 중 등) 잘린 내용으로 파일을 덮어쓰지 않도록 요청 자체를 버림
+  if ($body.Length -lt $len) { return $null }
   $req.Body = $body.ToArray()
   $q = @{}; $path = $req.Target
   $qi = $path.IndexOf('?')
@@ -408,13 +410,24 @@ function Handle($stream, $req) {
     }
 
     '/api/list' {
+      # 파일 수천 개여도 빠르게: .NET으로 바로 훑고 JSON도 직접 만듦(ConvertTo-Json·배열 += 는 수천 개에서 몇 초 걸림)
       $dir = Resolve-DataPath $q['dir']
-      $out = @()
+      $sb = New-Object System.Text.StringBuilder
+      [void]$sb.Append('{"ok":true,"files":[')
+      $first = $true
       if (Test-Path -LiteralPath $dir) {
-        $items = if ($q['recursive'] -eq '1') { Get-ChildItem -LiteralPath $dir -File -Recurse } else { Get-ChildItem -LiteralPath $dir -File }
-        foreach ($f in $items) { $out += @{ path = (Get-RelPath $f.FullName); size = $f.Length; mtime = $f.LastWriteTime.ToString('s') } }
+        $opt = if ($q['recursive'] -eq '1') { [IO.SearchOption]::AllDirectories } else { [IO.SearchOption]::TopDirectoryOnly }
+        $di = New-Object IO.DirectoryInfo($dir)
+        $rootLen = [IO.Path]::GetFullPath($script:DataDir).TrimEnd('\', '/').Length
+        foreach ($fi in $di.EnumerateFiles('*', $opt)) {
+          if (($fi.Attributes -band [IO.FileAttributes]::Hidden) -ne 0) { continue }
+          $rel = $fi.FullName.Substring($rootLen).TrimStart('\', '/').Replace('\', '/').Replace('"', '\"')
+          if (-not $first) { [void]$sb.Append(',') }; $first = $false
+          [void]$sb.Append('{"path":"').Append($rel).Append('","size":').Append($fi.Length).Append(',"mtime":"').Append($fi.LastWriteTime.ToString('s')).Append('"}')
+        }
       }
-      Send-Json $stream 200 @{ ok = $true; files = @($out) }; return
+      [void]$sb.Append(']}')
+      Send-Bytes $stream 200 'application/json; charset=utf-8' ($Utf8.GetBytes($sb.ToString())) $null; return
     }
 
     '/api/nara' {

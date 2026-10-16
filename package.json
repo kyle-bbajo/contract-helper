@@ -10,6 +10,8 @@
     "build": "node tools/build.mjs",
     "test": "node --test tests/unit/*.test.js",
     "test:e2e": "node tools/build.mjs && node tests/e2e/run.mjs",
+    "perf": "node tools/build.mjs && node tests/perf/bench.mjs",
+    "demo:smoke": "node tools/build-demo.mjs && node tests/perf/demo-smoke.mjs",
     "fixtures": "node tests/fixtures/make.mjs",
     "demo": "node tools/build.mjs && node tools/build-demo.mjs"
   },
