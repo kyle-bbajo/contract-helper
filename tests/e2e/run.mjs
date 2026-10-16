@@ -1,0 +1,233 @@
+// 통합 시험: 실제 연결 창구(server.ps1) + 페이지
+//  처음 화면 → 지출서류(불러오기·서류 넣기·원본·PDF 저장·미분류) → 폴더 옮김 인식 → 공고문(배우기·첨부 읽기·초안·한글 양식)
+// 나라장터·첨부파일은 시험용 응답으로 대신함(브라우저의 /api/nara, /api/fetchfile 요청을 가로챔)
+import { chromium } from 'playwright-core';
+import { spawn, execFileSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, renameSync, copyFileSync, rmSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const { PDFDocument } = require('pdf-lib');
+const CFB = require('cfb');
+const zlib = require('node:zlib');
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
+const PROG = join(ROOT, 'dist/계약업무도우미/program');
+const PWSH = process.env.PWSH || '/opt/pwsh/pwsh';
+const CHROME = process.env.CHROME || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+const SHOTS = join(ROOT, 'tests/e2e/screens'); mkdirSync(SHOTS, { recursive: true });
+const DOCS = join(ROOT, 'tests/fixtures/docs');
+
+// 가짜 사용자 폴더(바탕화면·문서) — 데이터 폴더 옮김 찾기 시험용
+const HOME = mkdtempSync(join(tmpdir(), 'jh-home-'));
+for (const d of ['Desktop', 'Documents', 'Downloads']) mkdirSync(join(HOME, d), { recursive: true });
+let data = join(HOME, 'Desktop', '계약업무도우미');
+mkdirSync(data, { recursive: true });
+rmSync(join(PROG, 'local.json'), { force: true }); rmSync(join(PROG, 'running.json'), { force: true });
+writeFileSync(join(PROG, 'local.json'), JSON.stringify({ dataDir: data }));
+// 동료가 처음 설치한 상태: 인증키·기관명은 묶음의 기관 공용 설정(org.json), 개인 설정은 상생결제 기준만
+writeFileSync(join(data, '설정.json'), JSON.stringify({ notice: { winwinMin: 50000000 } }));
+
+let srv, run, base;
+const waitFor = async (fn, ms = 20000, what = '') => { const t = Date.now(); for (;;) { try { const v = await fn(); if (v) return v; } catch (_) {} if (Date.now() - t > ms) throw new Error('시간 초과: ' + what); await new Promise((r) => setTimeout(r, 200)); } };
+async function startServer() {
+  rmSync(join(PROG, 'running.json'), { force: true });
+  srv = spawn(PWSH, ['-NoProfile', '-File', join(PROG, 'server.ps1'), '-NoBrowser', '-Port', '18890'], { stdio: 'inherit', env: { ...process.env, HOME } });
+  run = await waitFor(() => existsSync(join(PROG, 'running.json')) && JSON.parse(readFileSync(join(PROG, 'running.json'), 'utf8')), 60000, '연결 창구 시작');
+  base = `http://127.0.0.1:${run.port}/`;
+}
+async function stopServer() {
+  try { await fetch(base + 'api/quit', { method: 'POST', headers: { 'X-JH-Token': run.token } }); } catch (_) {}
+  await waitFor(() => !existsSync(join(PROG, 'running.json')), 10000, '연결 창구 종료');
+}
+
+// 시험용 나라장터 응답
+const api = (items) => JSON.stringify({ response: { header: { resultCode: '00', resultMsg: '정상' }, body: { items, numOfRows: 100, pageNo: 1, totalCount: items.length } } });
+const 공사 = [
+  { untyCntrctNo: 'R26BK01234567', dcsnCntrctNo: 'R26BK01234567-00', cnstwkNm: '시청사 옥상 방수공사', corpList: '[1^주계약업체^단독^100^(주)다해토건^홍길동^대한민국^1234567890]', totCntrctAmt: '48000000', cbgnDate: '2026-06-01', ttalCcmpltDate: '2026-10-10', cntrctInsttNm: '용인도시공사', cntrctInsttOfclNm: '박주호', cntrctInsttChrgDeptNm: '계약팀' },
+  { untyCntrctNo: 'R26BK05555555', dcsnCntrctNo: 'R26BK05555555-00', cnstwkNm: '처인구 공영주차장 전기설비 교체', corpList: '[1^주계약업체^단독^100^대한전기(주)^이몽룡^대한민국^2223334445]', totCntrctAmt: '73500000', ttalCcmpltDate: '2026-12-20', cntrctInsttNm: '용인도시공사', cntrctInsttOfclNm: '김철수' },
+];
+const 용역 = [
+  { untyCntrctNo: 'R26BS07654321', dcsnCntrctNo: 'R26BS07654321-00', cntrctNm: '체육관 시설 청소 용역', corpList: '[1^주계약업체^단독^100^한빛환경 주식회사^김영희^대한민국^5556667778]', totCntrctAmt: '21500000', wbgnDate: '2026-07-01', ttalScmpltDate: '2026-12-31', cntrctInsttNm: '용인도시공사', cntrctInsttOfclNm: '박주호' },
+];
+const bid = (no, name, price, rate, extra = {}) => ({ bidNtceNo: no, bidNtceOrd: '000', bidNtceNm: name, ntceInsttNm: '용인도시공사', bidNtceDt: '2026-09-01 10:00:00',
+  bidBeginDt: '2026-09-02 10:00:00', bidClseDt: '2026-09-09 10:00:00', opengDt: '2026-09-09 11:00:00', presmptPrce: String(price), sucsfbidLwltRate: rate,
+  sucsfbidMthdNm: '적격심사', cntrctCnclsMthdNm: '제한경쟁', ntceSpecDocUrl1: `https://www.g2b.go.kr/file/${no}`, ntceSpecFileNm1: '입찰공고문.hwp', ...extra });
+const BIDS = [bid('R26BK00000001', '신갈오거리 보안등 정비 전기공사', 31000000, '87.745'), bid('R26BK00000002', '동백 체육공원 조명 교체 전기공사', 45000000, '87.745'),
+  bid('R26BK00000003', '수지 주차장 수변전 설비 전기공사', 60000000, '86.745')];
+const REGIONS = { R26BK00000001: ['경기도 용인시'], R26BK00000002: ['경기도 용인시'], R26BK00000003: ['경기도'] };
+function hwpBytes(lines) {
+  const rec = (t) => { const body = Buffer.concat([Buffer.from(t, 'utf16le'), Buffer.from([13, 0])]); const h = Buffer.alloc(4); h.writeUInt32LE(67 | (body.length << 20), 0); return Buffer.concat([h, body]); };
+  const z = CFB.utils.cfb_new(); const fh = Buffer.alloc(256); fh.write('HWP Document File'); fh[36] = 1;
+  CFB.utils.cfb_add(z, '/FileHeader', fh); CFB.utils.cfb_add(z, '/BodyText/Section0', zlib.deflateRawSync(Buffer.concat(lines.map(rec))));
+  return Buffer.from(CFB.write(z, { type: 'buffer' }));
+}
+const ATTACH = hwpBytes(['「신갈오거리 보안등 정비 전기공사」 입찰 공고', '1. 입찰에 부치는 사항', '2. 입찰참가자격',
+  '가. 「전기공사업법」에 따른 전기공사업 등록업체', '나. 입찰공고일 전일부터 입찰일까지 법인등기부상 본점 소재지가 경기도 용인시에 있는 자', '3. 낙찰자 결정방법', '낙찰하한율 87.745% 이상 적격심사']);
+// 한글 양식(HWPX): {{항목}}이 서식 경계로 쪼개진 것 포함
+function hwpxTemplate() {
+  const sec = '<?xml version="1.0" encoding="UTF-8"?><hs:sec xmlns:hs="s" xmlns:hp="p"><hp:p><hp:run><hp:t>{{기관명}} 공고 제{{공고번호}}호</hp:t></hp:run></hp:p>' +
+    '<hp:p><hp:run><hp:t>「{{공</hp:t></hp:run><hp:run charPrIDRef="3"><hp:t>고명}}」 입찰 공고</hp:t></hp:run></hp:p><hp:p><hp:run><hp:t>추정가격 {{추정가격}}원, 지역 {{지역제한}}, 하한율 {{낙찰하한율}}</hp:t></hp:run></hp:p></hs:sec>';
+  const z = CFB.utils.cfb_new();
+  CFB.utils.cfb_add(z, '/mimetype', Buffer.from('application/hwp+zip'));
+  CFB.utils.cfb_add(z, '/Contents/section0.xml', Buffer.from(sec));
+  const f = join(HOME, '공고문양식.hwpx'); writeFileSync(f, CFB.write(z, { type: 'buffer', fileType: 'zip' })); return f;
+}
+
+const browser = await chromium.launch({ executablePath: CHROME });
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 920 }, acceptDownloads: true, permissions: ['clipboard-read', 'clipboard-write'] });
+const page = await ctx.newPage();
+const errors = [];
+page.on('pageerror', (e) => errors.push(String(e)));
+page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
+// 실패한 요청은 주소로 판단: 한글 변환·한글 양식 채우기는 시험 PC에 한글이 없어 실패가 정상(대체 방법으로 처리됨)
+page.on('response', (r) => { if (r.status() >= 500 && !/\/api\/(hwp2pdf|hwpfill)/.test(r.url())) errors.push(`${r.status()} ${r.url()}`); });
+await page.route('**/api/nara**', (r) => {
+  const u = decodeURIComponent(new URL(r.request().url()).searchParams.get('u'));
+  let body;
+  if (u.includes('PrtcptPsblRgn')) { const no = u.match(/bidNtceNo=([^&]+)/)[1]; body = api((REGIONS[no] || []).map((n) => ({ prtcptPsblRgnNm: n }))); }
+  else if (u.includes('LicenseLimit')) body = api([{ lcnsLmtNm: '전기공사업' }]);
+  else if (u.includes('BidPublicInfoService')) body = api(u.includes('bidNtceNm=') ? BIDS.filter((b) => b.bidNtceNm.includes(decodeURIComponent(u.match(/bidNtceNm=([^&]+)/)[1]).replace(/\+/g, ' '))) : BIDS);
+  else body = api(u.includes('Cnstwk') ? 공사 : 용역);
+  r.fulfill({ status: 200, contentType: 'text/plain; charset=utf-8', body });
+});
+await page.route('**/api/fetchfile**', (r) => r.fulfill({ status: 200, contentType: 'application/octet-stream', body: ATTACH }));
+let ok = 0; const step = (m) => { ok++; console.log('  ✓ ' + m); };
+
+try {
+  await startServer();
+  await page.goto(base);
+  // 첫 실행 안내: 이름·부서·연락처만 넣으면 공용 인증키로 바로 불러옴
+  await page.waitForSelector('#dlgWelcome[open]');
+  await page.screenshot({ path: join(SHOTS, '00-첫실행.png') });
+  await page.fill('#wName', '박주호'); await page.fill('#wDept', '계약팀'); await page.fill('#wPhone', '031-324-0000');
+  await page.click('#wSave');
+  await waitFor(() => page.evaluate(() => Object.keys(JH.app.db.contracts).length === 3), 20000, '계약 불러오기');
+  const saved = JSON.parse(readFileSync(join(data, '설정.json'), 'utf8'));
+  assert.equal(saved.officer, '박주호'); assert.ok(!('apiKey' in saved), '공용 인증키는 개인 설정에 복사하지 않음');
+  step('첫 실행: 이름만 넣으면 기관 공용 인증키로 내 담당 계약 자동 불러오기(개인 파일엔 키 저장 안 함)');
+  await waitFor(async () => /박주호님/.test(await page.textContent('#homeTitle')), 10000, '처음 화면 인사');
+  await page.screenshot({ path: join(SHOTS, '0-처음화면.png') });
+  step('처음 화면: 지출서류 정리 / 공고문 작성 두 갈래');
+
+  // ===== 지출서류 =====
+  await page.click('.door[data-view="contracts"]');
+  assert.equal(await page.$eval('#fOfficer', (s) => s.value), '박주호');
+  assert.equal(await page.$$eval('.citem', (e) => e.length), 2);
+  // 다시 불러오기는 지난번 이후 달만(조회 횟수 절약)
+  let calls = 0; page.on('request', (r) => { if (r.url().includes('/api/nara')) calls++; });
+  await page.click('#btnFetch');
+  await waitFor(() => page.$('.toast:has-text("나라장터 계약")'), 20000, '다시 불러오기');
+  assert.ok(calls <= 2, `다시 불러올 때 조회 ${calls}번`);
+  step(`나라장터 계약 3건 → 내 담당 2건, 다시 불러오기는 조회 ${calls}번만`);
+
+  await page.setInputFiles('#fileIn', readdirSync(DOCS).map((f) => join(DOCS, f)));
+  await waitFor(() => page.evaluate(() => JH.app.db.docs.length === 11), 120000, '서류 정리');
+  const docs = await page.evaluate(() => JH.app.db.docs.map((d) => ({ name: d.name, key: d.key, item: d.itemId })));
+  const want = { 'noname.pdf': 'c-contract', 'noname(1).pdf': 'c-estimate', 'noname(2).pdf': 'c-inspaid', 'noname(3).pdf': 'c-tax', 'noname(4).pdf': 's-contract',
+    'noname(5).pdf': 's-claim', 'noname(6).pdf': null, 'noname(7).pdf': 'c-start', 'noname(8).jpg': 'c-photo', 'noname(9).hwp': 'c-finish', 'noname(10).hwpx': 's-start' };
+  const wrong = docs.filter((d) => d.item !== want[d.name]);
+  assert.equal(wrong.length, 0, JSON.stringify(wrong));
+  step('noname 11개 자동 분류(스캔·한글 포함), 회의록만 미분류');
+
+  await page.click('.citem:has-text("시청사 옥상 방수공사")');
+  await page.check('input[data-act="orig"][data-item="c-laborconfirm"]');
+  await page.click('button[data-act="save"]');
+  await waitFor(() => page.$('.toast:has-text("PDF로 저장했습니다")'), 60000, 'PDF 저장');
+  const folderA = readdirSync(join(data, '계약')).find((d) => d.includes('시청사'));
+  const pdf = await PDFDocument.load(readFileSync(join(data, '계약', folderA, '인쇄본', readdirSync(join(data, '계약', folderA, '인쇄본'))[0])));
+  assert.equal(pdf.getPageCount(), 9);
+  step('원본 체크 + 한 번에 PDF 9쪽(표지·원본 자리·한글 자리)');
+
+  // ===== 폴더를 사람이 옮긴 경우 =====
+  await stopServer();
+  // 1) 계약 폴더 이름 바꾸기 + 탐색기로 파일 직접 넣기
+  renameSync(join(data, '계약', folderA), join(data, '계약', '방수공사(이름 바꿈)'));
+  copyFileSync(join(DOCS, 'noname(3).pdf'), join(data, '계약', '방수공사(이름 바꿈)', '지방세_직접넣음.pdf'));
+  // 2) 데이터 폴더를 바탕화면 → 문서\보관\ 으로 통째로 옮기기
+  const moved = join(HOME, 'Documents', '보관', '계약업무도우미');
+  mkdirSync(dirname(moved), { recursive: true });
+  renameSync(data, moved); data = moved;
+  await startServer();
+  await page.goto(base);
+  await waitFor(() => page.$('.toast:has-text("데이터 폴더가 옮겨진 것을 찾았습니다")'), 30000, '데이터 폴더 다시 찾기');
+  await waitFor(() => page.evaluate(() => JH.app.db.docs.length === 12), 60000, '직접 넣은 파일 읽기');
+  const st = await page.evaluate(() => {
+    const c = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사');
+    const ds = JH.app.db.docs.filter((d) => d.key === c.key);
+    return { folder: c.folder, missing: JH.app.db.docs.filter((d) => d.missing).length, extra: ds.find((d) => d.name === '지방세_직접넣음.pdf'), n: ds.length };
+  });
+  assert.equal(st.folder, '계약/방수공사(이름 바꿈)'); assert.equal(st.missing, 0);
+  assert.ok(st.extra && st.extra.itemId === 'c-ltax', '직접 넣은 지방세 서류 분류');
+  assert.equal(JSON.parse(readFileSync(join(PROG, 'local.json'), 'utf8')).dataDir, moved);
+  step('데이터 폴더를 통째로 옮겨도 표식으로 찾음 + 계약 폴더 이름 변경 추적 + 직접 넣은 파일 분류');
+
+  // ===== 공고문 =====
+  await page.click('.brand');
+  await page.waitForSelector('#view-home.on');
+  await page.click('.door[data-view="notice"]');
+  await page.click('[data-nact="new"] >> nth=0');
+  await page.waitForSelector('#nTitle');
+  await page.fill('#nTitle', '신갈오거리 보안등 정비 전기공사');
+  await page.fill('#nf-추정가격', '32000000'); await page.press('#nf-추정가격', 'Tab');
+  const v1 = await page.evaluate(() => JH.notice.logic && document.querySelector('#nf-업종제한').value);
+  assert.equal(v1, '「전기공사업법」에 따른 전기공사업 등록업체');
+  assert.equal(await page.inputValue('#nf-부가세'), '3,200,000');
+  assert.equal(await page.inputValue('#nf-상생결제'), '미적용');
+  assert.equal(await page.inputValue('#nf-지역제한'), '용인시');
+  step('자동 규칙: 전기공사 → 업종제한, 금액 → 부가세·상생결제(기준 5천만 원 미만 → 미적용), 기본 지역 용인시');
+
+  await page.fill('#lKeyword', '신갈오거리');
+  await page.click('[data-nact="learn"]');
+  await waitFor(() => page.$('.toast:has-text("첨부 공고문")'), 30000, '유사 공고 배우기');
+  await page.waitForSelector('.learn-hint');
+  const hint = await page.textContent('#nf-낙찰하한율 >> xpath=..');
+  assert.match(hint, /87\.745%/);
+  await page.click('[data-apply="낙찰하한율"]');
+  assert.equal(await page.inputValue('#nf-낙찰하한율'), '87.745%');
+  assert.ok(await page.$('.ref pre:has-text("전기공사업 등록업체")'), '첨부 공고문 문장');
+  assert.ok(readdirSync(join(data, '공고문', '참고')).length >= 1, '첨부 원문 보관');
+  await page.screenshot({ path: join(SHOTS, '6-공고문.png') });
+  step('신갈오거리 검색 → 조건 빈도 추천(하한율 87.745% 적용) + 첨부 한글 공고문 문장 추출·원문 보관');
+
+  const draft = await page.$$eval('.dsec pre', (ps) => ps.map((p) => p.textContent).join('\n'));
+  assert.match(draft, /전기공사업 등록업체/); assert.match(draft, /용인시에 있는 자/); assert.match(draft, /87\.745%/);
+  await page.click('[data-nact="copyall"]');
+  assert.match(await page.evaluate(() => navigator.clipboard.readText()), /신갈오거리 보안등 정비 전기공사/);
+  step('문장 초안 생성·전체 복사');
+
+  // 한글 양식 올리고 채우기(시험 PC엔 한글이 없어 HWPX 직접 채우기로 처리)
+  await page.click('#btnSettings');
+  await page.click('#dlgSettings .dlg-tabs button[data-tab="notice"]');
+  // 한글 파일명은 버퍼로 넘김(시험 PC에 UTF-8 로캘이 없어 한글 경로 전달이 깨짐 — 실제 파일 선택 창과 같은 방식)
+  await page.setInputFiles('#tplIn', { name: '공고문양식.hwpx', mimeType: 'application/octet-stream', buffer: readFileSync(hwpxTemplate()) });
+  await waitFor(() => page.evaluate(() => [...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('6개를 찾았습니다'))), 10000, '양식 점검');
+  await page.screenshot({ path: join(SHOTS, '7-설정-공고문.png') });
+  await page.keyboard.press('Escape');
+  await page.click('[data-nact="hwp"]');
+  await waitFor(() => page.$('.toast:has-text("한글 공고문을 만들었습니다")'), 20000, '한글 양식 채우기');
+  const outF = join(data, '공고문', '작성', readdirSync(join(data, '공고문', '작성'))[0]);
+  const xml = execFileSync('python3', ['-c', 'import zipfile,sys;z=zipfile.ZipFile(sys.argv[1]);assert z.infolist()[0].filename=="mimetype";print(z.read("Contents/section0.xml").decode())', outF]).toString();
+  assert.match(xml, /용인도시공사 공고/); assert.match(xml, /「신갈오거리 보안등 정비 전기공사」/); assert.match(xml, /추정가격 32,000,000원, 지역 용인시, 하한율 87\.745%/);
+  step('한글 양식(HWPX)의 {{항목}} 채워 새 파일 생성(쪼개진 표시 포함)');
+
+  await page.click('.brand');
+  await page.waitForSelector('#homeNotice li');
+  await page.screenshot({ path: join(SHOTS, '0b-처음화면-사용후.png') });
+  assert.deepEqual(errors, [], '콘솔 오류');
+  step('콘솔 오류 없음');
+  console.log(`\n통합 시험 통과 (${ok}단계). 화면: tests/e2e/screens/`);
+} catch (e) {
+  console.error('\n실패:', e.message, '\n콘솔:', errors.join('\n'));
+  try { console.error('알림:', await page.$$eval('.toast', (t) => t.map((x) => x.textContent))); } catch (_) {}
+  await page.screenshot({ path: join(SHOTS, 'fail.png') });
+  process.exitCode = 1;
+} finally {
+  try { await stopServer(); } catch (_) {}
+  await browser.close();
+  rmSync(join(PROG, 'local.json'), { force: true });
+  setTimeout(() => { try { srv.kill(); } catch (_) {} process.exit(); }, 500);
+}

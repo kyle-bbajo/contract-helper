@@ -1,0 +1,7 @@
+{
+  "insttNm": "용인도시공사",
+  "insttDivCd": "1",
+  "apiKey": "여기에_공공데이터포털_일반_인증키",
+  "months": 6,
+  "notice": { "region": "용인시", "winwinMin": 0 }
+}
