@@ -22,9 +22,12 @@
       { name: '철근·콘크리트공사', license: '철근·콘크리트공사업', law: '건설산업기본법' },
       { name: '지반조성·포장공사', license: '지반조성·포장공사업', law: '건설산업기본법' },
       { name: '해체·비계공사', license: '구조물해체·비계공사업', law: '건설산업기본법' },
+      { name: '상·하수도설비공사', license: '상·하수도설비공사업', law: '건설산업기본법' },
+      { name: '조경식재·시설물공사', license: '조경식재·시설물공사업', law: '건설산업기본법' },
       { name: '조경공사', license: '조경공사업', law: '건설산업기본법' },
       { name: '건축공사(종합)', license: '건축공사업', law: '건설산업기본법' },
       { name: '토목공사(종합)', license: '토목공사업', law: '건설산업기본법' },
+      { name: '토목건축공사(종합)', license: '토목건축공사업', law: '건설산업기본법' },
       { name: '기타', license: '', law: '' },
     ],
     용역: [
@@ -37,12 +40,32 @@
     ],
   };
   const workType = (kind, name) => (WORK_TYPES[kind] || []).find((w) => w.name === name) || null;
+  // 복합공사: 주공종 + 함께 들어가는 공종(부공종, "조경공사, 포장공사"처럼 쉼표로)
+  const splitList = (s) => String(s || '').split(/\s*[,·、]\s*/).map((x) => x.trim()).filter(Boolean);
+  const subWorks = (v) => splitList(v && v.부공종).filter((x) => x !== (v && v.공종)).map((x) => workType(v.구분, x) || { name: x, license: '', law: '' });
+  const worksOf = (v) => [workType(v.구분, v.공종), ...subWorks(v)].filter((w) => w && w.license);
+  const workLabel = (w) => `${String(w.name).replace(/\(.*\)/, '')}${w.license ? `(${w.license})` : ''}`;
+  // 법에 따라 따로 발주해야 하는 공사(전기공사업법 제11조, 정보통신공사업법 제25조, 소방시설공사업법 제21조)
+  const SEPARATE = /^(전기공사|정보통신공사|소방시설공사)$/;
+  const separateIn = (v) => [workType(v.구분, v.공종), ...subWorks(v)].filter((w) => w && SEPARATE.test(w.name)).map((w) => w.name);
+  // 업종 문구: 「법」에 따른 ○○업과 ○○업 (법이 다르면 법마다)
+  function licensePhrase(ws) {
+    const byLaw = []; for (const w of ws) { let g = byLaw.find((x) => x.law === w.law); if (!g) byLaw.push(g = { law: w.law, lic: [] }); g.lic.push(w.license); }
+    const join = (xs) => (xs.length <= 2 ? xs.join('과 ') : xs.slice(0, -1).join('·') + '과 ' + xs[xs.length - 1]);
+    return byLaw.map((g) => `${g.law ? `「${g.law}」에 따른 ` : ''}${join(g.lic)}`).join(' 및 ');
+  }
+  function licenseSentence(ws) {
+    if (!ws.length) return '';
+    if (ws.length === 1) return `「${ws[0].law}」에 따른 ${ws[0].license} 등록업체`;
+    return `${licensePhrase(ws)}을 모두 등록한 자 또는 ${ws.map((w) => w.license + ' 등록업체').join('와 ')}가 분담이행방식으로 공동수급체를 구성한 자`;
+  }
 
   // ---------- 항목 ----------
   // key는 한글 양식의 {{key}} 와 같음
   const FIELDS = [
     { key: '구분', sec: '기본', type: 'select', opts: ['공사', '용역'] },
-    { key: '공종', sec: '기본', type: 'select', optsFrom: 'work' },
+    { key: '공종', sec: '기본', type: 'select', optsFrom: 'work', label: '공종(주공종)' },
+    { key: '부공종', sec: '기본', type: 'multi', optsFrom: 'work', wide: true, label: '함께 들어가는 공종', hint: '복합공사(예: 토목 + 조경)일 때만 고름' },
     { key: '공고명', sec: '기본', type: 'text', wide: true, ph: '예: 시청사 옥상 방수공사' },
     { key: '공고번호', sec: '기본', type: 'text', label: '기관 공고번호', hint: '공고 제○○호', ph: '예: 2026-087' },
     { key: '현장', sec: '기본', type: 'text', wide: true, ph: '예: 용인시 처인구 중부대로 1199', label: '공사(용역) 장소' },
@@ -51,6 +74,7 @@
     { key: '부가세', sec: '금액', type: 'money', auto: true },
     { key: '추정금액', sec: '금액', type: 'money', auto: true, hint: '부가세 포함' },
     { key: '기초금액', sec: '금액', type: 'money' },
+    { key: '주공종금액', sec: '금액', type: 'money', label: '주공종 추정가격', hint: '복합공사일 때, 부가세 별도', showIf: (v) => !!subWorks(v).length },
     { key: '계약방법', sec: '입찰', type: 'select', opts: ['제한경쟁', '일반경쟁', '지명경쟁', '수의계약(2인 이상 견적)', '수의계약(1인 견적)'] },
     { key: '낙찰자결정방법', sec: '입찰', type: 'select', opts: ['적격심사', '최저가', '협상에 의한 계약', '2단계 경쟁'], label: '낙찰자 결정방법' },
     { key: '낙찰하한율', sec: '입찰', type: 'combo', hint: '유사 공고에서 배우기로 채울 수 있음' },
@@ -81,7 +105,7 @@
     const c = cfg || {};
     const n = c.notice || {};
     return {
-      구분: '공사', 공종: '전기공사', 공고명: '', 공고번호: '', 현장: '', 기간: '',
+      구분: '공사', 공종: '전기공사', 부공종: '', 주공종금액: '', 공고명: '', 공고번호: '', 현장: '', 기간: '',
       추정가격: '', 부가세: '', 추정금액: '', 기초금액: '',
       계약방법: '제한경쟁', 낙찰자결정방법: '적격심사', 낙찰하한율: '',
       업종제한: '', 지역제한: n.region || '경기도', 공동도급: '불허', 입찰보증금: '입찰금액의 100분의 5 이상',
@@ -96,7 +120,15 @@
     const out = { ...v };
     const set = (k, val) => { if (!m[k]) out[k] = val; };
     const w = workType(out.구분, out.공종);
-    if (w) set('업종제한', w.license ? `「${w.law}」에 따른 ${w.license} 등록업체` : out.업종제한 || '');
+    const ws = worksOf(out), subs = subWorks(out).filter((x) => x.license);
+    if (subs.length && w && w.license) {
+      set('업종제한', licenseSentence(ws));
+      set('공동도급', '허용(분담이행)'); // 복합공사는 각 업종 등록업체끼리 분담이행 공동도급이 일반적
+    } else {
+      if (w) set('업종제한', w.license ? `「${w.law}」에 따른 ${w.license} 등록업체` : out.업종제한 || '');
+      if (!m.공동도급 && out.공동도급 === '허용(분담이행)' && !subs.length) out.공동도급 = '불허';
+      if (!subs.length) out.주공종금액 = m.주공종금액 ? out.주공종금액 : '';
+    }
     const p = money(out.추정가격);
     set('부가세', p ? won(Math.round(p * 0.1)) : '');
     set('추정금액', p ? won(p + money(out.부가세)) : '');
@@ -259,8 +291,10 @@
     S.push({ title: '제목', body: `${v.기관명 || ''} 공고 제${v.공고번호 || '    '}호\n\n「${v.공고명 || '(공고명)'}」 입찰 공고\n\n${kind === '공사' ? '공사' : '용역'} 입찰을 다음과 같이 공고합니다.` });
     S.push({ title: '1. 입찰에 부치는 사항', body: [
       line(`${kind}명`, v.공고명), line(`${kind} 장소`, v.현장), line(`${kind} 기간`, v.기간),
+      subWorks(v).length ? `  공종: 주공종 ${workLabel(workType(v.구분, v.공종) || { name: v.공종 })}, 부공종 ${subWorks(v).map(workLabel).join(', ')}` : null,
       v.추정가격 ? `  추정가격: 금 ${won(money(v.추정가격))}원(부가가치세 별도)` : null,
       v.추정금액 ? `  추정금액: 금 ${won(money(v.추정금액))}원(부가가치세 포함)` : null,
+      subWorks(v).length && v.주공종금액 ? `  주공종 추정가격: 금 ${won(money(v.주공종금액))}원(부가가치세 별도)${money(v.추정가격) > money(v.주공종금액) ? `, 부공종 금 ${won(money(v.추정가격) - money(v.주공종금액))}원` : ''}` : null,
       v.기초금액 ? `  기초금액: 금 ${won(money(v.기초금액))}원` : null,
       `  입찰방법: 전자입찰, ${v.계약방법 || ''}${v.낙찰자결정방법 ? `, ${v.낙찰자결정방법}` : ''}`,
     ].filter(Boolean).join('\n') });
@@ -301,6 +335,13 @@
     return S;
   }
 
+  function jointBody(v) {
+    const j = v.공동도급 || '';
+    if (/불허/.test(j)) return '  가. 이 입찰은 공동계약을 허용하지 않습니다.';
+    if (/지역의무/.test(j)) return `  가. 이 입찰은 지역업체와의 공동계약(지역의무공동도급)으로 하며, 지역업체의 최소 지분율은 관계 법령과 공고에서 정한 바에 따릅니다.`;
+    const kind = /분담/.test(j) ? '분담이행방식' : '공동이행방식';
+    return `  가. 이 입찰은 ${kind}의 공동계약을 허용합니다.` + (/분담/.test(j) && worksOf(v).length > 1 ? `\n  나. 구성원은 각자 분담하는 공종(${worksOf(v).map((w) => w.license).join(', ')})의 업종을 등록하여야 하며, 공동수급협정서를 입찰참가신청 마감일까지 제출하여야 합니다.` : '\n  나. 공동수급협정서는 입찰참가신청 마감일까지 제출하여야 합니다.');
+  }
   // 비슷한 공고 전체를 뼈대로 쓴 초안: 1절(입찰에 부치는 사항)·일정·문의는 이번 값, 나머지는 실제 공고 문장
   function draftFull(v, full, kind) {
     const basic = draft(v); // 학습 없는 기본 초안(이번 값 문장)
@@ -319,6 +360,15 @@
         body = bodyOf([...sched, ...s.lines].map((x, i) => ({ ...x, mark: !x.mark || /^[가-하][.)]$/.test(x.mark) ? `${MARKS[i] || '※'}.` : x.mark })));
       }
       if (s.key === '입찰참가자격' && v.공동도급 && !have.has('공동계약') && !s.lines.some((x) => /공동/.test(x.text))) body += `\n  ${MARKS[s.lines.length] || '※'}. 공동도급: ${v.공동도급}`;
+      if (s.key === '입찰참가자격' && worksOf(v).length > 1 && !s.lines.some((x) => /분담/.test(x.text))) {
+        const k = body.split('\n').length;
+        body += `\n  ${MARKS[k] || '※'}. ${worksOf(v).map((w) => w.license + ' 등록업체').join('와 ')}가 분담이행방식으로 공동수급체를 구성하여 참가할 수 있으며, 구성원은 각자 분담하는 공종의 업종을 등록하여야 합니다.`;
+      }
+      // 공동계약 허용 여부가 이번 공고와 반대면 이번 값으로 씀
+      if (s.key === '공동계약' && v.공동도급) {
+        const allow = !/불허/.test(v.공동도급), said = /허용하지\s*않|불허|허용\s*안/.test(body) ? false : /허용/.test(body) ? true : null;
+        if (said !== null && said !== allow) body = jointBody(v);
+      }
       if (s.key === '낙찰자 결정방법' && v.낙찰하한율 && !/낙찰하한율|하한율/.test(body)) body += `\n  ※ 낙찰하한율: ${v.낙찰하한율}`;
       if (!body.trim()) continue;
       S.push({ title: title(s.head), body, learned: s.docs, check: s.lines.filter((x) => x.check).length });
@@ -368,7 +418,8 @@
   function fillSlots(key, v) {
     const region = v.지역제한 && !/전국|없음/.test(v.지역제한) ? v.지역제한 : '';
     if (/\{지역\}/.test(key) && !region) return null;
-    const lic = String(v.업종제한 || '').replace(/\s*(등록업체|등록을\s*(한|필한)\s*(자|업체)|등록\s*업체)\s*$/, '').trim();
+    const ws = worksOf(v);
+    const lic = ws.length > 1 ? licensePhrase(ws) : String(v.업종제한 || '').replace(/\s*(등록업체|등록을\s*(한|필한)\s*(자|업체)|등록\s*업체)\s*$/, '').trim();
     return key.replace(/\{지역\}/g, region).replace(/\{업종\}/g, lic || '○○업').replace(/\{율\}/g, v.낙찰하한율 || '○○%')
       .replace(/\{금액\}/g, '금 ○○원').replace(/\{날짜\}/g, '○○').replace(/\{시각\}/g, '○○:○○').replace(/\{전화\}/g, v.연락처 ? `☎ ${v.연락처}` : '☎ ○○○-○○○-○○○○');
   }
@@ -456,12 +507,13 @@
       const text = fillSlots(key, v); if (!text) return null;
       return { mark, text, common: cnt(lineKey(sec, l)) >= Math.max(2, min), check: /○○/.test(text) };
     };
-    const sections = R.doc.sections.map((s) => ({ key: s.key, head: s.head, docs: (secSeen.get(s.key) || new Set()).size, lines: s.lines.map((l) => fill(s.key, l)).filter(Boolean) }));
+    const uniq = (ls) => { const seenT = new Set(); return ls.filter((x) => x && !seenT.has(x.text) && seenT.add(x.text)); };
+    const sections = R.doc.sections.map((s) => ({ key: s.key, head: s.head, docs: (secSeen.get(s.key) || new Set()).size, lines: uniq(s.lines.map((l) => fill(s.key, l))) }));
     // 뼈대 공고에 없지만 여러 공고에 있는 절은 덧붙임(가장 많이 겹치는 공고의 것으로)
     for (const [key, set] of secSeen) {
       if (set.size < min || sections.some((s) => s.key === key)) continue;
       const b = docs[[...set][0]]; const s = b.doc.sections.find((x) => x.key === key);
-      sections.push({ key, head: s.head, docs: set.size, lines: s.lines.map((l) => fill(key, l)).filter(Boolean) });
+      sections.push({ key, head: s.head, docs: set.size, lines: uniq(s.lines.map((l) => fill(key, l))) });
     }
     return { n, base: { name: R.name, org: R.org, no: R.no }, sections };
   }
@@ -587,7 +639,7 @@
     return [...new Set([...plain.matchAll(/\{\{\s*([^{}\s]+)\s*\}\}/g)].map((m) => m[1]))];
   }
 
-  const api = { WORK_TYPES, workType, FIELDS, SECTIONS, labelOf, money, won, blank, applyRules,
+  const api = { WORK_TYPES, workType, subWorks, worksOf, separateIn, licensePhrase, licenseSentence, splitList, jointBody, FIELDS, SECTIONS, labelOf, money, won, blank, applyRules,
     BID_OPS, bidSearchUrl, bidDetailUrl, slotify, learnSentences, learnedSections, aiPrompt, parseAi, AI_SYSTEM, STATUS, STATUS_ORDER, statusOf, parseBidNo, bidByNoUrl, normalizeBid, attachmentsOf, extractClauses, regionLabel, learn, mapMethod, mapContract,
     draft, draftFull, parseNotice, learnDocument, mergeWrapped, secKey, regionSentence, templateValues, fillHwpxXml, fillHwpx, zipStore, crc32, placeholdersIn, fmtDT };
   root.JH = root.JH || {};

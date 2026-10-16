@@ -48,7 +48,9 @@
     const tries = [];
     // 공고명 검색어가 있으면 그 공고들 먼저(금액 범위 없이)
     if (keyword0) tries.push({ ntceInsttNm: base.ntceInsttNm, bidNtceNm: keyword0 });
+    const subs = N.subWorks(v).filter((x) => x.license);
     if (w && w.license) tries.push({ ...base, indstrytyNm: w.license });
+    for (const x of subs) tries.push({ ...base, indstrytyNm: x.license });
     if (keyword && keyword !== '기타') tries.push({ ...base, bidNtceNm: keyword });
     if (!tries.length) { app().toast('공종을 고르면 비슷한 공고를 찾을 수 있습니다.', 'err'); return; }
     const ranges = L.monthRanges(months);
@@ -63,7 +65,7 @@
             if (page * 100 >= r.total || !r.items.length) break;
           }
         }
-        if (bids.length) break;
+        if (bids.length && !subs.length) break; // 복합공사는 공종마다 찾아 합침
       }
       const seen = new Set();
       bids = bids.filter((b) => b.no && !seen.has(b.no + b.ord) && seen.add(b.no + b.ord)).sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 40);
@@ -76,6 +78,10 @@
         try { const r = L.parseApiBody(await S.nara(N.bidDetailUrl('getBidPblancListInfoLicenseLimit', b.no, b.ord, cfg.apiKey))); b.licenses = [...new Set(r.items.map((x) => x.lcnsLmtNm).filter(Boolean))]; } catch (_) {}
       }
       // 첨부 공고문 읽기: 가까운 공고 5건의 공고서(한글·PDF)를 받아 문장 뽑기, 원본은 데이터 폴더에 보관
+      // 복합공사면 우리 공종 면허를 더 많이 요구한 공고를 앞으로(예: 토목 + 조경 둘 다 요구한 공고)
+      const mine = N.worksOf(v).map((x) => x.license);
+      const overlap = (b) => (b.licenses || []).filter((l) => mine.some((m) => l.includes(m.replace(/업$/, '')))).length;
+      if (mine.length > 1) near.sort((a, b) => overlap(b) - overlap(a));
       const withFiles = (keyword0 ? bids : near).filter((b) => b.files && b.files.some((f) => /\.(hwpx?|pdf)$/i.test(f.name))).slice(0, 6);
       let read = 0;
       for (let i = 0; i < withFiles.length; i++) {
@@ -230,6 +236,14 @@
       const learned = (n.learned && n.learned.summary[f.key] && n.learned.summary[f.key].top.map((t) => suggestionFor(f.key, t))) || [];
       const opts = [...new Set([...(f.opts || []), ...learned])];
       input = `<input type="text" ${attrs} value="${esc(v)}" list="dl-${esc(f.key)}" autocomplete="off"><datalist id="dl-${esc(f.key)}">${opts.map((o) => `<option value="${esc(o)}">`).join('')}</datalist>`;
+    } else if (f.type === 'multi') {
+      // 복합공사: 주공종 말고 함께 들어가는 공종을 고름
+      const opts = (N.WORK_TYPES[n.v.구분] || []).map((w) => w.name).filter((x) => x !== n.v.공종 && x !== '기타');
+      const on = N.splitList(v);
+      input = `<div class="multi" id="nf-${esc(f.key)}" role="group" aria-label="${esc(f.label || f.key)}">${opts.map((o) => `<label class="mchip${on.includes(o) ? ' on' : ''}"><input type="checkbox" data-mkey="${esc(f.key)}" value="${esc(o)}"${on.includes(o) ? ' checked' : ''}>${esc(o)}</label>`).join('')}</div>`;
+      const sep = N.separateIn(n.v);
+      if (on.length && sep.length) input += `<div class="learn-hint warn">${esc(sep.join('·'))}는 법에 따라 따로 발주(분리발주)하는 것이 원칙입니다(전기공사업법 제11조, 정보통신공사업법 제25조, 소방시설공사업법 제21조). 함께 발주해도 되는 예외인지 확인하세요.</div>`;
+      else if (on.length) input += `<div class="learn-hint">업종제한을 "${esc(N.worksOf(n.v).map((w) => w.license).join(' + '))} 모두 등록 또는 분담이행 공동도급"으로, 공동도급을 분담이행으로 자동으로 바꿨습니다.</div>`;
     } else if (f.type === 'date') input = `<input type="date" ${attrs} value="${esc(v)}">`;
     else if (f.type === 'datetime') input = `<input type="datetime-local" ${attrs} value="${esc(v)}">`;
     else input = `<input type="text" ${attrs} value="${esc(v)}"${f.type === 'money' ? ' inputmode="numeric" class="num"' : ''} placeholder="${esc(f.ph || '')}">`;
@@ -240,7 +254,8 @@
       const t = s.top[0]; const sv = suggestionFor(f.key, t);
       hint = `<div class="learn-hint">비슷한 공고 ${s.n}건 중 ${t.count}건: <b>${esc(sv)}</b>${sv !== v ? ` <button type="button" class="link sm" data-apply="${esc(f.key)}" data-val="${esc(sv)}">적용</button>` : ' <span class="ok">✓</span>'}</div>`;
     }
-    return `<label class="nf${f.wide ? ' wide' : ''}">${label}${input}${hint}</label>`;
+    const tag = f.type === 'multi' ? 'div' : 'label'; // 체크 상자 여러 개는 label로 감싸지 않음
+    return `<${tag} class="nf${f.wide ? ' wide' : ''}">${label}${input}${hint}</${tag}>`;
   }
   function listItem(n) {
     const st = N.statusOf(n);
@@ -281,7 +296,7 @@
     }
     const s = n.learned;
     const st = N.statusOf(n), locked = st === 'posted';
-    const secs = N.SECTIONS.map((sec) => `<fieldset class="nsec"${locked ? ' disabled' : ''}><legend>${esc(sec)}</legend><div class="ngrid">${N.FIELDS.filter((f) => f.sec === sec && f.key !== '공고명').map((f) => field(f, n)).join('')}</div>
+    const secs = N.SECTIONS.map((sec) => `<fieldset class="nsec"${locked ? ' disabled' : ''}><legend>${esc(sec)}</legend><div class="ngrid">${N.FIELDS.filter((f) => f.sec === sec && f.key !== '공고명' && (!f.showIf || f.showIf(n.v))).map((f) => field(f, n)).join('')}</div>
       ${sec === '일정' && s && s.summary.입찰기간일수 ? `<div class="learn-hint">비슷한 공고는 입찰서 제출 기간이 보통 <b>${s.summary.입찰기간일수}일</b>입니다. <button type="button" class="link sm" data-nact="schedule">공고일 기준으로 일정 채우기</button> <span class="muted">법정 공고기간을 꼭 확인하세요.</span></div>` : ''}</fieldset>`).join('');
     const draft = sectionsOf(n), dm = modeOf(n);
     const stale = dm === 'ai' && n.vAt && n.vAt > n.ai.at;
@@ -417,6 +432,12 @@
   view().addEventListener('click', onClick);
   view().addEventListener('input', onInput);
   view().addEventListener('focusout', onBlur);
+  view().addEventListener('change', (e) => {
+    const t = e.target.closest('[data-mkey]'); if (!t) return;
+    const n = cur(); if (!n || N.statusOf(n) === 'posted') return;
+    const vals = $$(`[data-mkey="${t.dataset.mkey}"]:checked`).map((x) => x.value);
+    setVal(t.dataset.mkey, vals.join(', '), true); render();
+  });
   view().addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.id === 'g2bNo') { e.preventDefault(); const n = cur(); if (n) registerBid(n, e.target.value); } });
   $('#noticeList').addEventListener('keydown', (e) => { const it = e.target.closest('[data-nid]'); if (it && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); sel = it.dataset.nid; render(); } });
 

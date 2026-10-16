@@ -161,3 +161,25 @@ test('공고문 전체 배우기: 절 나누기 → 가장 전형적인 공고�
   assert.ok(N.draft(v).some((s) => /입찰의 무효/.test(s.title)));
   assert.match(N.templateValues(v, d)['공고문전문'], /입찰참가자격[\s\S]*계약 체결/);
 });
+
+test('복합공사(토목 + 조경): 업종제한·분담이행 공동도급 자동, 초안 공종·공동계약, 분리발주 공사 알림', () => {
+  const { noticeText } = require('../../demo/notice-text.js');
+  let v = N.applyRules({ ...N.blank({ insttNm: '용인도시공사', notice: { region: '용인시' } }), 공고명: '○○동 주거환경개선사업', 공종: '토목공사(종합)', 부공종: '조경공사', 추정가격: '850000000', 주공종금액: '600000000' }, {}, {});
+  assert.equal(v.업종제한, '「건설산업기본법」에 따른 토목공사업과 조경공사업을 모두 등록한 자 또는 토목공사업 등록업체와 조경공사업 등록업체가 분담이행방식으로 공동수급체를 구성한 자');
+  assert.equal(v.공동도급, '허용(분담이행)');
+  const d = N.draft(v, { bids: [{ name: 'A 공사', org: '용인도시공사', doc: N.parseNotice(noticeText({ name: 'A 공사' })) }] });
+  const t = d.map((x) => x.title + '\n' + x.body).join('\n');
+  assert.match(t, /공종: 주공종 토목공사\(토목공사업\), 부공종 조경공사\(조경공사업\)/);
+  assert.match(t, /주공종 추정가격: 금 600,000,000원\(부가가치세 별도\), 부공종 금 250,000,000원/);
+  assert.match(t, /토목공사업과 조경공사업 등록업체로서/);
+  assert.match(t, /분담이행방식으로 공동수급체를 구성하여 참가할 수 있으며/);
+  assert.match(d.find((x) => /공동계약/.test(x.title)).body, /분담이행방식의 공동계약을 허용합니다/, '참고 공고의 "허용하지 않습니다"를 이번 값으로 바꿈');
+  assert.doesNotMatch(t, /공동계약을 허용하지 않습니다/);
+  // 부공종을 빼면 원래대로
+  v = N.applyRules({ ...v, 부공종: '' }, {}, {});
+  assert.equal(v.업종제한, '「건설산업기본법」에 따른 토목공사업 등록업체'); assert.equal(v.공동도급, '불허');
+  // 법이 다른 공종, 분리발주 대상
+  const e = { 구분: '공사', 공종: '건축공사(종합)', 부공종: '전기공사, 조경공사' };
+  assert.equal(N.licensePhrase(N.worksOf(e)), '「건설산업기본법」에 따른 건축공사업과 조경공사업 및 「전기공사업법」에 따른 전기공사업');
+  assert.deepEqual(N.separateIn(e), ['전기공사']);
+});

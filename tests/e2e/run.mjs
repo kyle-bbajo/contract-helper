@@ -352,6 +352,16 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   assert.equal(await page.inputValue('#nf-상생결제'), '미적용');
   assert.equal(await page.inputValue('#nf-지역제한'), '용인시');
   step('자동 규칙: 전기공사 → 업종제한, 금액 → 부가세·상생결제(기준 5천만 원 미만 → 미적용), 기본 지역 용인시');
+  // 복합공사: 함께 들어가는 공종을 고르면 업종제한·공동도급이 바뀌고, 분리발주 대상이면 알림 → 빼면 원래대로
+  await page.check('[data-mkey="부공종"][value="정보통신공사"]');
+  await page.waitForSelector('#nf-부공종 ~ .learn-hint.warn:has-text("분리발주")');
+  assert.match(await page.inputValue('#nf-업종제한'), /전기공사업.*정보통신공사업.*모두 등록한 자 또는/);
+  assert.equal(await page.inputValue('#nf-공동도급'), '허용(분담이행)');
+  assert.ok(await page.$('#nf-주공종금액'), '주공종 추정가격 칸');
+  await page.uncheck('[data-mkey="부공종"][value="정보통신공사"]');
+  await page.waitForSelector('#nf-주공종금액', { state: 'detached' });
+  assert.equal(await page.inputValue('#nf-업종제한'), '「전기공사업법」에 따른 전기공사업 등록업체'); assert.equal(await page.inputValue('#nf-공동도급'), '불허');
+  step('복합공사: 함께 들어가는 공종 → 업종제한(모두 등록 또는 분담이행)·공동도급 자동, 분리발주 대상 알림, 빼면 원래대로');
 
   await page.fill('#lKeyword', '신갈오거리');
   await page.click('[data-nact="learn"]');
