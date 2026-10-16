@@ -227,6 +227,10 @@ try {
   assert.match(await page.inputValue('#mailSubj'), /「시청사 옥상 방수공사」 대금 청구 서류 보완 요청/);
   await page.screenshot({ path: join(SHOTS, '4c-보완요청-메일.png') });
   await page.click('#dlgMail .dlg-head button');
+  // 예전 버전에서 올려 날짜 정보가 없는 서류도 계약을 열면 다시 읽음(재설치 후 이어 쓰기)
+  await page.evaluate(() => { JH.app.db.docs.filter((d) => /-(tax|finish)$/.test(d.itemId || '')).forEach((d) => delete d.dates); JH.app.render(); });
+  await waitFor(() => page.evaluate(() => JH.app.db.docs.filter((d) => /-(tax|finish)$/.test(d.itemId || '')).every((d) => d.dates && (d.dates.valid || d.dates.finish))), 30000, '예전 서류 날짜 다시 읽기');
+  await page.waitForSelector('.row[data-drop-item="c-tax"] .valid.ok:has-text("10.31까지 유효")', { timeout: 10000 });
   // 잘못 읽었으면 날짜를 고침 → 다시 판정
   await page.fill('.row[data-drop-item="c-inspaid"] input[data-act="validset"]', '2026-10-30');
   await page.waitForSelector('.row[data-drop-item="c-inspaid"] .valid.ok', { timeout: 5000 });
@@ -252,6 +256,17 @@ print(json.dumps({'names': wb.sheetnames, 'head': rows[0], 'rows': rows[1:], 'de
   assert.equal(xo.rows.length, 2); assert.ok(xo.detail > 20, '서류 상세 시트');
   await page.click('.views [data-view="contracts"]');
   step('현황판 → 엑셀로 받기: 계약 현황(금액·날짜 서식, 감독·예산·빠진 서류·특이사항) + 서류 상세 시트');
+
+  // 지난 계약처럼 파일 없이 이미 받은 서류: 줄마다 [받음], 빠진 서류 한 번에 [받음]
+  await page.click('.citem:has-text("시청사 옥상 방수공사")');
+  await page.check('.row[data-drop-item="c-contract"] ~ .row[data-drop-item="c-related"] input[data-act="recv"]');
+  await page.waitForSelector('.row[data-drop-item="c-related"] .rcv-t', { timeout: 5000 });
+  page.once('dialog', (d) => d.accept());
+  await page.click('.req [data-act="recvall"]');
+  await waitFor(() => page.evaluate(() => { const c = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사'); return c.received && c.received['c-claim'] && c.received['c-related']; }), 5000, '모두 받음');
+  assert.equal(await page.$$eval('.row .missing', (e) => e.length), 0, '누락 없음');
+  await page.waitForSelector('.citem.on .st:has-text("지출 대기")', { timeout: 5000 }); // 4대보험은 앞에서 10.30으로 고쳐 유효 → 남은 미비 없음
+  step('파일 없이 [받음] 체크(줄마다·빠진 서류 한 번에) → 누락에서 빠짐');
 
   // ===== 공고문 =====
   await page.click('.brand');

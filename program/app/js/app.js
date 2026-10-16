@@ -36,10 +36,12 @@
   const today = () => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), d.getDate()); };
   const ymd = (d = new Date()) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
 
+  // 파일 없이 갖춘 것으로 보는 서류: 종이 원본(원본) + 이미 받았거나 처리한 서류(받음 — 지난 계약 등)
+  const gotMap = (c) => ({ ...(c.originals || {}), ...(c.received || {}) });
   function statusOf(c) {
     const docs = docsOf(c.key);
-    const st = L.checklistStatus(lists(c.type), docs, c.originals);
-    const anything = docs.length > 0 || Object.values(c.originals || {}).some(Boolean);
+    const st = L.checklistStatus(lists(c.type), docs, gotMap(c));
+    const anything = docs.length > 0 || Object.values(gotMap(c)).some(Boolean);
     const end = L.toDate(c.endDate);
     st.late = !!(end && end < today() && !c.paidDate);
     const v = validity(c);
@@ -505,6 +507,7 @@
       <input type="date" data-act="payplan" value="${isoOf(b && b.date)}" aria-label="지출요청일(증명서 유효기간을 이 날짜로 따짐)">
       <p class="req-how">${b ? esc(b.how) : '준공일을 알 수 없어 직접 넣어 주세요'}<br>증명서 유효기간은 이 날짜까지 남아 있어야 합니다.</p>
       ${items ? `<ul class="req-list">${items}</ul>` : '<p class="req-ok">업체에 다시 받을 서류가 없습니다.</p>'}
+      ${st.missing.length ? `<button type="button" class="link sm recvall" data-act="recvall" title="이미 처리한 지난 계약처럼 서류를 따로 넣지 않을 때">빠진 서류 ${st.missing.length}개 모두 '받음'으로 표시</button>` : ''}
       <button type="button" class="btn${n.missing.length || n.reissue.length ? ' primary' : ''} block" data-act="mail"${n.missing.length || n.reissue.length ? '' : ' disabled'}>보완 요청 메일 쓰기</button>
     </section>`;
   }
@@ -573,20 +576,22 @@
           <div class="row"><span class="mark warn">!</span><div class="rname">종류 미정 ${untyped.length}개</div><div class="rside"></div><div class="files">${untyped.map((d) => fileRow(d, list)).join('')}</div></div></section>` : ''}
         ${groups.map((g, gi) => {
           const req = g.items.filter((x) => x.required);
-          const done = req.filter((x) => docs.some((d) => d.itemId === x.id) || (c.originals || {})[x.id]).length;
+          const done = req.filter((x) => docs.some((d) => d.itemId === x.id) || gotMap(c)[x.id]).length;
           const where = [...new Set(g.items.map((x) => SRC_LABEL[x.source] || x.source))].join(', ');
           return `<section class="stage${req.length && done === req.length ? ' done' : ''}">
             <div class="stage-head"><span class="stage-no">${gi + 1}</span><h3>${esc(g.name)}</h3><span class="where">${esc(where)}</span><span class="sum num">필수 ${done}/${req.length}</span></div>
             ${g.items.map((x) => {
               const ds = docs.filter((d) => d.itemId === x.id);
-              const orig = !!(c.originals || {})[x.id];
+              const orig = !!(c.originals || {})[x.id], rcv = !!(c.received || {})[x.id];
               const canOrig = L.ORIGINAL_SOURCES.includes(x.source);
               let mark, side;
               if (ds.length) { const warn = ds.some((d) => (d.kind === 'hwp' && !d.pdfPath) || d.kind === 'other'); mark = warn ? '<span class="mark warn">!</span>' : '<span class="mark ok">✓</span>'; side = `<span class="num">${ds.length}개</span>`; }
               else if (orig) { mark = '<span class="mark orig">원</span>'; side = '<span>원본 받음</span>'; }
+              else if (rcv) { mark = '<span class="mark rcv">✓</span>'; side = '<span class="rcv-t">받음 표시</span>'; }
               else if (x.required) { mark = '<span class="mark miss">✕</span>'; side = '<span class="missing">누락</span>'; }
               else { mark = '<span class="mark opt">–</span>'; side = '<span class="optional">해당 시</span>'; }
-              const tog = canOrig ? `<label class="orig-toggle" title="종이 원본으로 받았으면 체크하세요. 인쇄본의 이 자리에 원본을 끼울 안내 페이지가 들어갑니다."><input type="checkbox" data-act="orig" data-item="${esc(x.id)}"${orig ? ' checked' : ''}> 원본</label>` : '';
+              const tog = (canOrig ? `<label class="orig-toggle" title="종이 원본으로 받았으면 체크하세요. 인쇄본의 이 자리에 원본을 끼울 안내 페이지가 들어갑니다."><input type="checkbox" data-act="orig" data-item="${esc(x.id)}"${orig ? ' checked' : ''}> 원본</label>` : '')
+                + (ds.length ? '' : `<label class="orig-toggle recv" title="파일 없이 이미 받았거나 처리한 서류면 체크하세요(지난 계약 등). 빠진 서류에서 빠지고, 인쇄 목록표에는 '받음 표시'로 나옵니다."><input type="checkbox" data-act="recv" data-item="${esc(x.id)}"${rcv ? ' checked' : ''}> 받음</label>`);
               const xv = itemView(c, x);
               const cv = (st.certs || []).find((v) => v.item.id === x.id);
               if (cv && ds.length) {
@@ -602,6 +607,20 @@
         }).join('')}
       </div>
       </div>`;
+  }
+
+  // 예전 버전에서 올린 서류(날짜를 아직 안 읽은 증명서·준공계·준공조서)는 계약을 열 때 한 번 읽어 둠 — 다시 설치해도 그대로 이어서 씀
+  const datesPending = new Set();
+  async function backfillDates(c) {
+    const need = docsOf(c.key).filter((d) => !d.dates && !d.missing && !datesPending.has(d.id) && (L.isCertItem(d.itemId) || /-(finish|inspect)$/.test(d.itemId || '')));
+    if (!need.length) return;
+    need.forEach((d) => datesPending.add(d.id));
+    for (const d of need) {
+      try { const b = await S.readBytes(d.path); const { lines } = await R.read(b, d.kind, d.mime); d.dates = L.extractDates(lines); }
+      catch (e) { console.warn('날짜 읽기 실패', d.path, e); d.dates = L.extractDates([]); }
+    }
+    await saveDb(true);
+    if (ui.sel === c.key) render();
   }
 
   // 메모 칸 높이를 내용에 맞춤
@@ -628,8 +647,8 @@
     for (const { c } of rows) {
       const docs = docsOf(c.key);
       for (const x of lists(c.type)) {
-        const ds = docs.filter((d) => d.itemId === x.id); const orig = !!(c.originals || {})[x.id];
-        detail.rows.push([c.name, c.no, x.group, itemView(c, x).name, x.required ? '필수' : '해당 시', ds.length ? '받음' : orig ? '원본 받음' : x.required ? '누락' : '', ds.map((d) => d.name).join('\n')]);
+        const ds = docs.filter((d) => d.itemId === x.id); const orig = !!(c.originals || {})[x.id], rcv = !!(c.received || {})[x.id];
+        detail.rows.push([c.name, c.no, x.group, itemView(c, x).name, x.required ? '필수' : '해당 시', ds.length ? '받음' : orig ? '원본 받음' : rcv ? '받음 표시' : x.required ? '누락' : '', ds.map((d) => d.name).join('\n')]);
       }
     }
     return [contractsSheet, detail];
@@ -716,6 +735,7 @@
     if (ui.view === 'home') { renderHome(); return; }
     if (ui.view === 'notice') return;
     renderList(); renderDetail(); fitMemo();
+    const cur = ui.view === 'contracts' && ui.sel && db.contracts[ui.sel]; if (cur && S.online) backfillDates(cur);
     if (ui.view === 'board') renderBoard();
     if (ui.view === 'inbox') renderInbox();
   }
@@ -756,6 +776,11 @@
       } else if (act === 'budget') { c.budget = t.dataset.v === 'ext' ? 'ext' : 'own'; c.updatedAt = Date.now(); render(); await saveDb(true);
         toast(c.budget === 'ext' ? '외부 예산 사업으로 바꿨습니다. 구매요구서 자리가 "일반 기안문"으로 바뀝니다.' : '우리 예산 사업으로 바꿨습니다.', 'ok');
       } else if (act === 'mail') { openMail(c);
+      } else if (act === 'recvall') {
+        const st = statusOf(c);
+        if (!confirm(`빠진 서류 ${st.missing.length}개(${st.missing.map((x) => itemView(c, x).name).join(', ')})를 '받음'으로 표시할까요? 하나씩 다시 풀 수 있습니다.`)) return;
+        c.received = c.received || {}; st.missing.forEach((x) => { c.received[x.id] = true; }); c.updatedAt = Date.now(); render(); await saveDb(true);
+        toast(`${st.missing.length}개를 '받음'으로 표시했습니다.`, 'ok');
       } else if (act === 'payauto') { delete c.payPlan; c.updatedAt = Date.now(); render(); await saveDb(true);
       } else if (act === 'budgetauto') { delete c.budget; c.updatedAt = Date.now(); render(); await saveDb(true);
       } else if (act === 'excel') { await exportExcel(t.dataset.from === 'list' ? filtered().map((x) => ({ c: x, st: statusOf(x) })) : boardRows());
@@ -766,7 +791,11 @@
   async function onChange(e) {
     const t = e.target;
     try {
-      if (t.dataset.act === 'orig') {
+      if (t.dataset.act === 'recv') {
+        const c = db.contracts[ui.sel]; c.received = c.received || {};
+        if (t.checked) c.received[t.dataset.item] = true; else delete c.received[t.dataset.item];
+        c.updatedAt = Date.now(); render(); await saveDb();
+      } else if (t.dataset.act === 'orig') {
         const c = db.contracts[ui.sel]; c.originals = c.originals || {}; c.originals[t.dataset.item] = t.checked; c.updatedAt = Date.now();
         await saveDb(); render();
       } else if (t.dataset.act === 'moveitem') {

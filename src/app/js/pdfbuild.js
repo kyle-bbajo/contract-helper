@@ -120,7 +120,7 @@
     const { PDFDocument } = root.PDFLib;
     const out = await PDFDocument.create();
     const useCover = opts.cover !== false, useHolder = opts.holder !== false;
-    const originals = c.originals || {};
+    const originals = c.originals || {}, received = c.received || {};
     const toc = [], errors = [], missing = [];
     let page = 0;
     // 표지 쪽수는 목록 길이로 미리 계산
@@ -135,7 +135,8 @@
           let added = 0;
           if (useHolder) { await addPng(out, await holder(top, '원본 서류 자리', '', '이 위치에 업체가 제출한 원본 서류를 끼워 넣으세요.')); added = 1; }
           toc.push({ ...rb, file: '원본 첨부', orig: true, status: 'ok', start: added ? coverCount + page + 1 : null, pages: added }); page += added;
-        } else { toc.push({ ...rb, status: it.required ? 'missing' : 'none' }); if (it.required) missing.push(it.name); }
+        } else if (received[it.id]) toc.push({ ...rb, file: '받음 표시(파일 없음)', status: 'ok', start: null, pages: 0 });
+        else { toc.push({ ...rb, status: it.required ? 'missing' : 'none' }); if (it.required) missing.push(it.name); }
         continue;
       }
       for (const d of ds) {

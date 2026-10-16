@@ -450,3 +450,7 @@ body[data-mod="home"] .views button.on::after { display: none; }
 .mail-form input { width: 100%; }
 @media (max-width: 900px) { .file { flex-wrap: wrap; } .vdate { order: 5; } }
 #dlgMail { width: min(760px, 94vw); }
+.mark.rcv { background: var(--ok-soft); color: var(--ok); opacity: .75; }
+.rcv-t { color: var(--ok); font-weight: 600; }
+.orig-toggle.recv input { accent-color: var(--ok); }
+.req .recvall { justify-self: start; text-align: left; }
