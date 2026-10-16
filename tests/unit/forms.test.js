@@ -54,7 +54,7 @@ test('한 줄 값: 직접 넣은 값 > 나라장터 > 기본값, 낙찰률·증�
   assert.deepEqual(rows.filter((r) => F.inPeriod(r, '2026-01-01', '2026-12-31')).map((r) => r.key), ['a', 'b', 'c', 'e']);
 });
 
-test('종합검사 엑셀: 양식과 같은 머리 3줄·병합·글꼴·숫자 서식', () => {
+test('종합감사 엑셀: 양식과 같은 머리 3줄·병합·글꼴·숫자 서식', () => {
   const rows = C.map((c) => F.rowOf(c));
   const sheet = F.inspectSheet(rows, { dept: '경영기획본부', confirmer: { pos: '재무관리처장', name: '홍길동' }, writer: { pos: '회계팀장' } });
   const dir = mkdtempSync(join(tmpdir(), 'form-')); const f = join(dir, 'i.xlsx'); writeFileSync(f, X.build({ title: 't', sheets: [sheet] }));

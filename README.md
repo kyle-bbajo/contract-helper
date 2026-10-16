@@ -26,7 +26,7 @@ exe 없이 Windows 기본 프로그램(PowerShell 5.1, Edge)만으로 동작합�
 - 엑셀로 받기: 계약 현황 + 서류 상세 두 시트(`js/xlsx.js`, 라이브러리 없이 생성)
 - 우리 예산이 아닌 사업(e나라도움 등)은 구매요구서 대신 일반 기안문으로 확인
 - 증명서(4대보험·고용산재·국세·지방세) 유효기간을 지출요청일(준공조서·준공계 + 2주)과 비교해 재발급 표시, 업체 보완 요청 메일 작성
-- 감사·검사 제출 서식: 종합검사 「계약집행 현황」 엑셀(`forms.inspectSheet`, 양식의 열 너비·글꼴·머리 3줄 재현), 행정사무감사 「수의계약 현황(1,000만원 이상)」 한글(`forms.auditHwpx` — `assets/forms/행정사무감사_수의계약현황_양식.hwpx`의 표에 줄을 복제해 채움. 양식이 바뀌면 파일을 바꾸고 `node tools/make-form-tpl.mjs`)
+- 감사·검사 제출 서식: 종합감사 「계약집행 현황」 엑셀(`forms.inspectSheet`, 양식의 열 너비·글꼴·머리 3줄 재현), 행정사무감사 「수의계약 현황(1,000만원 이상)」 한글(`forms.auditHwpx` — `assets/forms/행정사무감사_수의계약현황_양식.hwpx`의 표에 줄을 복제해 채움. 양식이 바뀌면 파일을 바꾸고 `node tools/make-form-tpl.mjs`)
 - 나라장터 세부 정보(`enrichContracts`): 계약 변경이력(`…ChgHstry`, 통합계약번호), 입찰공고(`BidPublicInfoService`, 예산), 예비가격(`ScsbidInfoService …PreparPcDetail`, 예정가격·기초금액), 낙찰(`getScsbidListSttus…`, 업체 주소), 조달업체 기본정보(`UsrInfoService02/getPrcrmntCorpBasicInfo02`, 주소). **공공데이터포털에서 같은 인증키로 낙찰정보서비스·사용자정보서비스 활용신청 필요**
 - PC 안 AI: `ai-setup.ps1`이 Ollama(사용자 폴더, 관리자 권한 없음)와 `gemma3:4b`를 설치. 화면은 `127.0.0.1:11434`로 바로 부름(`js/ai.js`). 서류 내용은 PC AI로만 보냄
 

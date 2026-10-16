@@ -293,7 +293,7 @@ print(json.dumps({'names': wb.sheetnames, 'head': rows[0], 'rows': rows[1:], 'de
   await page.click('.views [data-view="contracts"]');
   step('현황판 → 엑셀로 받기: 계약 현황(금액·날짜 서식, 감독·예산·빠진 서류·특이사항) + 서류 상세 시트');
 
-  // 감사·검사 자료: 나라장터 세부 정보(변경이력·업체 주소) 자동 + 직접 넣은 예정가격 → 종합검사 엑셀·행정사무감사 한글
+  // 감사·검사 자료: 나라장터 세부 정보(변경이력·업체 주소) 자동 + 직접 넣은 예정가격 → 종합감사 엑셀·행정사무감사 한글
   await page.click('.citem:has-text("시청사 옥상 방수공사")');
   await page.click('details.audit summary');
   // 따로 쓰지 않아도 나라장터·서류에서 자동으로 채운 값이 보임, 받은 결과 한 줄
@@ -335,7 +335,7 @@ print(json.dumps({'names': wb.sheetnames, 'head': rows[0], 'rows': rows[1:], 'de
   await page.screenshot({ path: join(SHOTS, '4d-감사서식.png') });
   await page.click('#fmMake');
   const xdir = join(data, '감사자료');
-  await waitFor(() => existsSync(xdir) && readdirSync(xdir).some((f) => f.endsWith('.xlsx')), 10000, '종합검사 엑셀');
+  await waitFor(() => existsSync(xdir) && readdirSync(xdir).some((f) => f.endsWith('.xlsx')), 10000, '종합감사 엑셀');
   const ix = join(xdir, readdirSync(xdir).find((f) => f.endsWith('.xlsx')));
   const io = JSON.parse(execFileSync('python3', ['-c', `
 import json, sys, openpyxl
@@ -366,10 +366,10 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   await page.click('[data-act="quickform"][data-fk="audit"]');
   await waitFor(() => readdirSync(xdir).filter((f) => f.endsWith('.hwpx')).length >= 2, 20000, '행정사무감사 바로 받기');
   await page.click('[data-act="quickform"][data-fk="inspect"]');
-  await waitFor(() => readdirSync(xdir).filter((f) => f.endsWith('.xlsx')).length >= 2, 20000, '종합검사 바로 받기');
-  step('현황판 [행정사무감사 서식]·[종합검사 서식] 누르면 나라장터·서류에서 채운 파일을 바로 받음');
+  await waitFor(() => readdirSync(xdir).filter((f) => f.endsWith('.xlsx')).length >= 2, 20000, '종합감사 바로 받기');
+  step('현황판 [행정사무감사 서식]·[종합감사 서식] 누르면 나라장터·서류에서 채운 파일을 바로 받음');
   await page.click('.views [data-view="contracts"]');
-  step('감독관 경유 체크(착공계·현장대리인계·예정공정표·산출내역서·견적서·노무비 지급확인제·준공계·준공검사원) + 감사·검사 자료: 나라장터 변경이력(차수마다 구분 고름)·업체 주소 자동 + 직접 넣은 값 → 종합검사 엑셀(양식 그대로) · 행정사무감사 한글(받은 양식에 채움)');
+  step('감독관 경유 체크(착공계·현장대리인계·예정공정표·산출내역서·견적서·노무비 지급확인제·준공계·준공검사원) + 감사·검사 자료: 나라장터 변경이력(차수마다 구분 고름)·업체 주소 자동 + 직접 넣은 값 → 종합감사 엑셀(양식 그대로) · 행정사무감사 한글(받은 양식에 채움)');
 
   // 지난 계약처럼 파일 없이 이미 받은 서류: 줄마다 [받음], 빠진 서류 한 번에 [받음]
   await page.click('.citem:has-text("시청사 옥상 방수공사")');

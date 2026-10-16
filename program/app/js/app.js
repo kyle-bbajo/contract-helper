@@ -1038,7 +1038,7 @@
     return `<details class="dcard memo audit" data-card="audit"${cardOpen.audit || ui.auditOpen ? ' open' : ''} data-audit="1">
       <summary><h3>감사·검사 자료</h3><span class="csum">${bad.length ? `<span class="bad-t">서류와 다름 ${esc(bad.map((k) => k.label).join('·'))}</span> · ` : ''}${uniq.length ? `<span class="ablank">빈칸 ${esc(uniq.join('·'))}</span>` : '<span class="afull">다 채움</span>'}<span class="muted"> · 나라장터 기준, 서류로 확인</span></span></summary>
       <div class="cbody">
-      <p class="memo-foot" style="margin:0 0 8px">나라장터와 올린 서류(견적서·설계내역서·사업자등록증 등)에서 자동으로 채워 종합검사(엑셀)·행정사무감사(한글) 서식에 들어갑니다. 따로 쓸 필요 없고, 틀린 것만 [직접 고치기]로 고치세요.</p>
+      <p class="memo-foot" style="margin:0 0 8px">나라장터와 올린 서류(견적서·설계내역서·사업자등록증 등)에서 자동으로 채워 종합감사(엑셀)·행정사무감사(한글) 서식에 들어갑니다. 따로 쓸 필요 없고, 틀린 것만 [직접 고치기]로 고치세요.</p>
       ${g2bLine(c)}
       ${chgTable(c, m)}
       ${checkBlock(cks)}
@@ -1169,7 +1169,7 @@
     } else {
       const sheet = JH.forms.inspectSheet(rows, { types: o.types });
       bytes = JH.xlsx.build({ title: sheet.name, sheets: [sheet] });
-      name = `종합검사_계약집행현황_${stamp}.xlsx`;
+      name = `종합감사_계약집행현황_${stamp}.xlsx`;
       preview = [{ name: sheet.name, cols: INSPECT_PREVIEW_COLS.map((h) => ({ h })), rows: rows.map((r) => [r.type, r.name, JH.forms.kfmt(r.budget), JH.forms.kfmt(r.design), JH.forms.kfmt(r.est), JH.forms.kfmt(r.award), r.rate == null ? '' : r.rate.toFixed(3), JH.forms.dShort(r.start), JH.forms.dShort(r.due), JH.forms.dShort(r.actual), (r.chg || []).map((x) => `${JH.forms.dShort(x.date)} ${JH.forms.signed(x.diff)}`).join(' '), r.method, r.vendor]) }];
     }
     const saved = await S.save('감사자료', name, bytes);
@@ -1189,7 +1189,7 @@
     $('#dlgForms').close();
     await formsDone(r);
   }
-  // 현황판 [행정사무감사 서식]·[종합검사 서식]: 지난번 고른 기간·구분(처음이면 올해 1월 1일~오늘, 전부)으로
+  // 현황판 [행정사무감사 서식]·[종합감사 서식]: 지난번 고른 기간·구분(처음이면 올해 1월 1일~오늘, 전부)으로
   // 나라장터 세부 정보 받기 → 서류에서 빈칸 채우기 → 파일까지 한 번에
   async function quickForms(kind) {
     const f = cfg.forms || {}, y = new Date().getFullYear();
@@ -1264,7 +1264,7 @@
       <div class="board-head"><h2>현황판</h2><span class="sub">${ui.officer ? `담당 ${esc(ui.officer)}` : '담당자 전체'}${ui.type ? ` · ${esc(ui.type)}` : ''}${cfg.lastFetch ? ` · 나라장터 ${esc(L.fmtDate(cfg.lastFetch.slice(0, 10)))} 기준` : ''}</span>
         <div class="right"><select id="bOfficer" aria-label="담당자">${$('#fOfficer').innerHTML}</select>
           <button class="btn" data-act="excel" title="지금 보이는 계약을 엑셀 파일로 저장하고 엽니다"${rows.length ? '' : ' disabled'}>${XLS_ICON}엑셀로 받기 <span class="num">${rows.length}건</span></button>
-          <span class="btn-group" role="group" aria-label="감사·검사 서식 받기"><button class="btn" data-act="quickform" data-fk="audit" title="행정사무감사 「수의계약 현황(1,000만원 이상)」 한글 파일 — 나라장터·서류에서 채워 바로 받기">행정사무감사 서식</button><button class="btn" data-act="quickform" data-fk="inspect" title="종합검사 「계약집행 현황(총괄)」 엑셀 — 나라장터·서류에서 채워 바로 받기">종합검사 서식</button><button class="btn ghost" data-act="forms" title="기간·구분·기준 금액·넣을 계약을 고르고 빈칸 확인">고르기</button></span></div></div>
+          <span class="btn-group" role="group" aria-label="감사·검사 서식 받기"><button class="btn" data-act="quickform" data-fk="audit" title="행정사무감사 「수의계약 현황(1,000만원 이상)」 한글 파일 — 나라장터·서류에서 채워 바로 받기">행정사무감사 서식</button><button class="btn" data-act="quickform" data-fk="inspect" title="종합감사 「계약집행 현황(총괄)」 엑셀 — 나라장터·서류에서 채워 바로 받기">종합감사 서식</button><button class="btn ghost" data-act="forms" title="기간·구분·기준 금액·넣을 계약을 고르고 빈칸 확인">고르기</button></span></div></div>
       <div class="chips">${chip('', '전체')}${chip('missing', '서류 미비')}${chip('ready', '지출 대기')}${chip('late', '준공 지남·미지출', true)}${chip('paid', '지출 완료')}</div>
       ${rows.length ? `<table class="grid"><thead><tr><th>계약</th><th>구분</th><th>준공일</th><th>서류</th><th class="r">원본</th><th>지출</th><th>상태</th></tr></thead><tbody>
         ${rows.map(({ c, st }) => `<tr data-key="${esc(c.key)}">
