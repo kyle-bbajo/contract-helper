@@ -136,3 +136,11 @@ test('인증키: 인코딩 키는 두 번 바꾸지 않음, 403 글자 응답은
   assert.match(L.g2bUrl('chg', '공사', 'R26TE1', 'ab%2Bc%2Fd%3D%3D'), /serviceKey=ab%2Bc%2Fd%3D%3D&/);
   assert.throws(() => L.parseApiText('Forbidden'), /활용신청/);
 });
+
+test('실제 준공일: 준공계가 없으면 지난 나라장터 완수(준공)일자', () => {
+  const c = { key: 'x', type: '용역', name: '건축사 감리 용역', amount: 10000000, endDate: '20261005' };
+  assert.equal(F.rowOf(c, { today: '2026-10-16' }).actual, '20261005');
+  assert.equal(F.rowOf(c, { today: '2026-10-16' }).src.actual, '나라장터 완수일자');
+  assert.equal(F.rowOf(c, { today: '2026-10-01' }).actual, '', '아직 안 지났으면 비움');
+  assert.equal(F.rowOf(c, { today: '2026-10-16', finish: '20261008' }).actual, '20261008', '준공계가 있으면 그 날짜');
+});

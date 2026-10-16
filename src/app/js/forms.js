@@ -44,7 +44,10 @@
     const est = pick('aEst', g.plnprc, '나라장터 예정가격', dv.est);
     const award = pick('aAward', g.origAmount || c.amount, g.origAmount ? '나라장터 당초 계약' : '계약금액');
     const rep = pick('aRep', c.rep || g.rep, '나라장터', dv.rep), addr = pick('aAddr', g.addr, '나라장터', dv.addr);
-    const actual = pick('aActual', x.finish, '준공계·준공조서');
+    // 실제 준공일: 준공계·준공조서 날짜, 없으면 나라장터 준공(용역은 완수)일자가 지났을 때 그 날짜
+    const due8 = String(c.endDate || '').replace(/\D/g, '').slice(0, 8);
+    const today8 = (x.today || new Date().toISOString().slice(0, 10)).replace(/\D/g, '');
+    const actual = x.finish ? pick('aActual', x.finish, '준공계·준공조서') : pick('aActual', due8 && due8 <= today8 ? due8 : '', /용역/.test(c.type || '') ? '나라장터 완수일자' : '나라장터 준공일자');
     const method = pick('aMethod', c.method, '나라장터');
     const reason = pick('aReason', L.contractReason(c.law, c.lawDtl), '나라장터 근거법률');
     const team = pick('aTeam', m.dept, '감독부서');

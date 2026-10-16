@@ -381,7 +381,7 @@
       url: x.cntrctDtlInfoUrl || x.cntrctInfoUrl || '',
       budgetAuto: ext ? 'ext' : '', budgetWhy: ext ? ext.why : '',
       method: x.cntrctCnclsMthdNm || '', law: x.baseLawNm || '', lawDtl: x.baseDtls || '',
-      rep: corp.rep || '', bizno: corp.bizno || '', ntceNo: x.ntceNo || '', untyNo: x.untyCntrctNo || '', chgDt: x.chgDt || '',
+      rep: corp.rep || '', bizno: corp.bizno || '', ntceNo: x.ntceNo || '', untyNo: x.untyCntrctNo || '', chgDt: x.chgDt || '', corpRaw: String(x.corpList || '').slice(0, 600),
     };
   }
 

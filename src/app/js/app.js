@@ -125,7 +125,7 @@
     if (!ex && !nb.length && n.name) ex = Object.values(db.contracts).find((c) => L.norm(c.name) === L.norm(n.name));
     if (ex) {
       const keep = ex.edited || {};
-      for (const k of ['type', 'name', 'vendor', 'no', 'amount', 'contractDate', 'startDate', 'endDate', 'period', 'officer', 'dept', 'org', 'url', 'method', 'law', 'lawDtl', 'rep', 'bizno', 'ntceNo', 'untyNo', 'chgDt']) {
+      for (const k of ['type', 'name', 'vendor', 'no', 'amount', 'contractDate', 'startDate', 'endDate', 'period', 'officer', 'dept', 'org', 'url', 'method', 'law', 'lawDtl', 'rep', 'bizno', 'ntceNo', 'untyNo', 'chgDt', 'corpRaw']) {
         if (!keep[k] && n[k]) ex[k] = n[k];
       }
       if (n.budgetAuto) { ex.budgetAuto = n.budgetAuto; ex.budgetWhy = n.budgetWhy || ''; }
@@ -793,7 +793,8 @@
     const parts = ['chg', 'bid', 'prepar', 'scsbid', 'corp'].map(part).filter(Boolean);
     const noNtce = st.bid === 'skip';
     const errs = [...new Set(Object.values(st).filter((v) => String(v).startsWith('err:')).map((v) => v.slice(4)))];
-    return `<p class="g2bst small">나라장터 ${esc(L.fmtDate(String(g.at).slice(0, 10)))}: ${parts.join(' · ')}${noNtce ? ' · <span class="muted">입찰공고 없는 수의계약이라 예산액·설계금액·예정가격은 서류(견적서·설계내역서·기안문)에서 읽습니다</span>' : ''}</p>${errs.length ? `<p class="g2bst bad-t small">못 받은 이유: ${esc(errs.join(' / '))}</p>` : ''}`;
+    const raw = c.corpRaw ? `<details class="g2braw"><summary>나라장터 업체 칸 원문 보기</summary><code>${esc(c.corpRaw)}</code><p class="muted small">사업자번호 ${esc(c.bizno || '없음')} · 대표자 ${esc(c.rep || '없음')}</p></details>` : '';
+    return `${raw}<p class="g2bst small">나라장터 ${esc(L.fmtDate(String(g.at).slice(0, 10)))}: ${parts.join(' · ')}${noNtce ? ' · <span class="muted">입찰공고 없는 수의계약이라 예산액·설계금액·예정가격은 서류(견적서·설계내역서·기안문)에서 읽습니다</span>' : ''}</p>${errs.length ? `<p class="g2bst bad-t small">못 받은 이유: ${esc(errs.join(' / '))}</p>` : ''}`;
   }
   // 나라장터(기준)와 서류 맞춰 보기
   function checksOf(c) {
