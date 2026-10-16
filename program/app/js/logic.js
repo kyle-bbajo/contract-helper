@@ -319,26 +319,29 @@
   // corpList: "[순번^구분^...^업체명^대표자^...],[...]" — 형식이 바뀌어도 업체명 같은 칸을 고름
   // 업체목록: 실제 응답은 [순번^주계약업체^단독^업체명^대표자^대한민국^지분율^업체명^^사업자번호] 형태, 여러 업체면 ],[ 로 이어짐
   // 주계약업체를 맨 앞으로(공동도급이면 도급업체가 먼저 올 수 있음)
+  // 업체목록 칸 하나하나: 명세는 [순번^업체구분^공동도급방식^업체명^대표자명^국적명^지분율^채권자명^담당자성명^사업자등록번호]지만
+  // 실제로는 칸이 빠지거나 순서가 다를 수 있어 '업체명'을 먼저 찾고 그 바로 뒤를 대표자로 봄
+  const CORP_STOP = /^(단독|공동|주계약|부계약|대표사|구성원|분담|주계약업체|도급업체|분담업체|부계약업체|공동수급업체|구성원업체|혼합방식|혼합|공동이행|분담이행|주계약자관리방식|대한민국|한국|내국|외국|국내|국외|[\d.,\s%*-]*|Y|N)$/;
+  const isPerson = (x, name) => !!x && x !== name && !CORP_STOP.test(x) && (/^[가-힣*○●]{2,6}$/.test(x) && /[가-힣]/.test(x) || /^[A-Za-z][A-Za-z .]{1,29}$/.test(x)) && !/(주식회사|회사|건설|산업|사무소|기술|㈜|\(주\)|공사|엔지니어링|대한민국)/.test(x);
+  function corpFields(s) {
+    return String(s || '').split(/\]\s*,?\s*\[/).map((e) => e.replace(/^\[|\]$/g, '').split('^').map((x) => x.trim())).map((f) => {
+      const ni = f.findIndex((x, i) => i >= 1 && x && /[가-힣A-Za-z]/.test(x) && !CORP_STOP.test(x) && !/^(주계약|부계약|대표|구성원)/.test(x));
+      const name = ni >= 0 ? f[ni] : '';
+      const rep = ni >= 0 ? [f[ni + 1]].find((x) => isPerson(x, name)) || '' : '';
+      const bizno = (f.find((x) => /^\d{3}-?\d{2}-?\d{5}$/.test(x)) || '').replace(/\D/g, '');
+      const role = f.slice(1, ni >= 0 ? ni : 3).find((x) => /주계약|부계약|대표|구성원|도급|분담/.test(x)) || f[1] || '';
+      return { role, name, rep, bizno };
+    }).filter((r) => r.name);
+  }
+  // corpList → 업체명들(주계약업체를 맨 앞으로)
   function parseCorpList(s) {
     if (!s) return [];
-    const STOP = /^(단독|공동|주계약|부계약|대표사|구성원|분담|주계약업체|도급업체|분담업체|부계약업체|공동수급업체|구성원업체|혼합방식|혼합|공동이행|분담이행|주계약자관리방식|대한민국|한국|내국|외국|국내|국외|[\d.,\s%]*|Y|N)$/;
-    const rows = String(s).split(/\]\s*,?\s*\[/).map((e) => e.replace(/^\[|\]$/g, '')).map((e) => {
-      const f = e.split('^').map((x) => x.trim());
-      const role = f[1] || '';
-      const name = f.slice(2).find((x) => x && /[가-힣A-Za-z]/.test(x) && !STOP.test(x)) || '';
-      return { role, name };
-    }).filter((r) => r.name);
-    rows.sort((a, b) => (/주계약|대표/.test(b.role) ? 1 : 0) - (/주계약|대표/.test(a.role) ? 1 : 0));
-    return rows.map((r) => r.name);
+    return parseCorpRows(s).map((r) => r.name);
   }
-  // 업체 한 줄을 칸으로: [순번^구분^방식^업체명^대표자^국가^지분율^업체명^^사업자번호]
+  // 업체 한 줄을 칸으로(주계약업체 먼저). 대표자명은 가려져 올 수 있음(예: 홍*동) — 그대로 받음
   function parseCorpRows(s) {
     if (!s) return [];
-    const rows = String(s).split(/\]\s*,?\s*\[/).map((e) => e.replace(/^\[|\]$/g, '').split('^').map((x) => x.trim())).map((f) => {
-      const bizno = (f.find((x) => /^\d{3}-?\d{2}-?\d{5}$/.test(x)) || '').replace(/\D/g, '');
-      // 대표자명은 가려져 올 수 있음(예: 홍*동) — 그대로 받음
-      return { role: f[1] || '', name: f[3] || '', rep: /^[가-힣A-Za-z ,·*○●]{2,30}$/.test(f[4] || '') && /[가-힣A-Za-z]/.test(f[4]) && !/대한민국|한국/.test(f[4]) ? f[4] : '', bizno };
-    }).filter((r) => r.name);
+    const rows = corpFields(s);
     rows.sort((a, b) => (/주계약|대표/.test(b.role) ? 1 : 0) - (/주계약|대표/.test(a.role) ? 1 : 0));
     return rows;
   }
@@ -381,7 +384,7 @@
       url: x.cntrctDtlInfoUrl || x.cntrctInfoUrl || '',
       budgetAuto: ext ? 'ext' : '', budgetWhy: ext ? ext.why : '',
       method: x.cntrctCnclsMthdNm || '', law: x.baseLawNm || '', lawDtl: x.baseDtls || '',
-      rep: corp.rep || '', bizno: corp.bizno || '', ntceNo: x.ntceNo || '', untyNo: x.untyCntrctNo || '', chgDt: x.chgDt || '', corpRaw: String(x.corpList || '').slice(0, 600),
+      rep: corp.rep || '', bizno: corp.bizno || '', ntceNo: x.ntceNo || '', untyNo: x.untyCntrctNo || (/^[A-Z]\d{2}[A-Z]{2}\d{10}$/.test(String(x.dcsnCntrctNo || '')) ? String(x.dcsnCntrctNo).slice(0, 13) : ''), chgDt: x.chgDt || '', corpRaw: String(x.corpList || '').slice(0, 600),
     };
   }
 

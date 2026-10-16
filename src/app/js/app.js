@@ -310,8 +310,12 @@
 
   // ---------- 나라장터 계약 목록 ----------
   // full이 아니면 지난번에 불러온 달부터만(여럿이 인증키 하나를 같이 쓰므로 조회 횟수를 아낌)
+  // 나라장터에서 받아 두는 항목이 늘면 올림 → 한 번은 기간 전체를 다시 받아 예전에 불러온 계약도 새 항목(계약방법·대표자·사업자번호·통합계약번호 등)을 채움
+  const FETCH_VER = 2;
   async function fetchContracts(full) {
     if (!cfg.apiKey || !cfg.insttNm) { toast('설정에서 인증키와 기관명을 먼저 넣어 주세요.', 'err'); JH.settings.open('nara'); return; }
+    const stale = contracts().some((c) => c.source === 'api' && !c.untyNo && !c.method && !c.corpRaw);
+    if (cfg.fetchVer !== FETCH_VER || stale) full = true;
     let months = Number(cfg.months) || 6;
     const last = cfg.lastFetch ? new Date(cfg.lastFetch) : null;
     if (!full && last && !isNaN(last)) {
@@ -336,6 +340,7 @@
       cfg.lastFetch = new Date().toISOString(); await saveCfg();
       // 나라장터가 준 그대로를 남겨 둠(어떤 항목이 오는지 확인할 때: 데이터 폴더 \진단\나라장터_계약응답.json)
       if (raw.length) S.writeJson('진단/나라장터_계약응답.json', { at: cfg.lastFetch, count: raw.length, items: raw }).catch(() => {});
+      if (full && cfg.fetchVer !== FETCH_VER) { cfg.fetchVer = FETCH_VER; saveCfg().catch(() => {}); }
       await saveDb(true);
       const moved = await rematchInbox();
       toast(`나라장터 계약 ${seen.size}건을 확인했습니다. 새 계약 ${created}건` + (moved ? `, 미분류 서류 ${moved}개를 계약으로 옮겼습니다.` : '.'), 'ok');
@@ -781,7 +786,7 @@
     if (c.source !== 'api') return '<p class="g2bst muted small">나라장터에서 불러온 계약이 아니라 서류에서만 채웁니다.</p>';
     if (!cfg.apiKey) return '<p class="g2bst warn-t small">나라장터 인증키가 없어 세부 정보를 받지 못했습니다(설정 → 나라장터 연결).</p>';
     const g = c.g2b;
-    if (!g) return `<p class="g2bst muted small">${c.untyNo || c.ntceNo || c.bizno ? '아직 세부 정보를 받지 않았습니다. [나라장터에서 다시 받기]를 누르세요.' : '나라장터 응답에 통합계약번호·공고번호·사업자번호가 없어 세부 정보를 받을 수 없습니다. [새로고침]을 한 번 더 해 보세요.'}</p>`;
+    if (!g) return `<p class="g2bst muted small">${c.untyNo || c.ntceNo || c.bizno ? '아직 세부 정보를 받지 않았습니다. [나라장터에서 다시 받기]를 누르세요.' : '예전 버전에서 불러온 계약이라 계약방법·대표자·사업자번호 등이 아직 없습니다. [새로고침]을 누르면 불러올 기간 전체를 다시 받아 채웁니다(한 번만, 몇 분 걸릴 수 있음).'}</p>`;
     const st = g.st || {};
     const part = (k) => { const v = st[k] || ''; const l = G2B_LABEL[k];
       if (v === 'ok') return `<span class="ok-t">${l} 받음</span>`;
