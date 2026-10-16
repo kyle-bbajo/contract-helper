@@ -392,6 +392,27 @@
     if (k === '업종') setVal('업종문장', t, true);
     else { const o = { ...(n.v.고른문장 || {}) }; if (t) o[k] = t; else delete o[k]; setVal('고른문장', o, true); }
   }
+  // 문장 고르기 칸을 누르면 오른쪽 초안의 같은 주제 문장으로 옮겨 가서 잠깐 표시
+  let jumpKey = '';
+  function jumpTo(key, quiet) {
+    const n = cur(); if (!n || !key) return;
+    jumpKey = key;
+    const place = N.topicPlace(sectionsOf(n), key, n.v);
+    $$('.draft .dsec.target').forEach((x) => { x.classList.remove('target'); const b = x.querySelector('.tgt'); if (b) b.remove(); });
+    const tp = topics.find((t) => t.key === key);
+    if (!place) { if (!quiet) app().toast(`문장 초안에 ${tp ? tp.label : ''} 문장이 없습니다. 고르면 알맞은 절 끝에 들어갑니다.`); return; }
+    const box = $$('.draft .dsec')[place.si]; if (!box) return;
+    box.classList.add('target');
+    const head = box.querySelector('.dsec-head b'); if (head) head.insertAdjacentHTML('afterend', `<span class="lbadge tgt">${esc(tp ? tp.label : '')} ${place.li + 1}번째 줄</span>`);
+    const ta = box.querySelector('textarea.dbody');
+    const lineY = ta ? ta.offsetTop + place.li * 23 : box.offsetTop;
+    const pane = $('.draft');
+    if (pane && pane.scrollHeight > pane.clientHeight + 4 && getComputedStyle(pane).position === 'sticky') {
+      const top = box.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop + (lineY - box.offsetTop) - 80;
+      pane.scrollTo({ top: Math.max(0, top), behavior: quiet ? 'auto' : 'smooth' });
+    } else if (!quiet) box.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (!quiet) { box.classList.remove('flash'); void box.offsetWidth; box.classList.add('flash'); }
+  }
   function pickPanel(n) {
     topics = N.topicVariants(lv(n), store.notices, n.v, n.id);
     if (!topics.length) return `<fieldset class="nsec picks"><legend>공고마다 다른 문장 고르기</legend><p class="muted small">위 [비슷한 공고에서 배우기]로 공고를 찾고 공고문을 읽으면, 업종·지역·공동도급·하도급·입찰보증금·낙찰자 결정처럼 공고마다 다르게 쓴 문장이 여기에 모입니다. 그중 골라 고쳐 쓰면 문장 초안과 한글 파일에 들어갑니다.</p></fieldset>`;
@@ -400,7 +421,7 @@
       const cur0 = norm(tp.current);
       const on = tp.variants.findIndex((e) => norm(e.shown) === cur0);
       const many = tp.variants.length > 1;
-      return `<div class="pick${tp.current ? ' set' : ''}"><div class="pick-h"><b>${esc(tp.label)}</b>${many ? `<span class="lbadge warn">공고마다 다름 · ${tp.variants.length}가지</span>` : ''}<span class="muted small">${tp.docs ? `공고문 ${tp.docs}건에 있음` : ''}</span></div>
+      return `<div class="pick${tp.current ? ' set' : ''}" data-topic="${ti}" title="누르면 오른쪽 초안의 이 문장 자리로 갑니다"><div class="pick-h"><b>${esc(tp.label)}</b>${many ? `<span class="lbadge warn">공고마다 다름 · ${tp.variants.length}가지</span>` : ''}<span class="muted small">${tp.docs ? `공고문 ${tp.docs}건에 있음` : ''}</span></div>
         <ul>
           <li><label><input type="radio" name="pk-${ti}" data-pick="${ti}" value="-1"${tp.current ? '' : ' checked'}><span>${tp.key === '업종' ? '양식 문장 그대로(업종 이름만 이번 공종으로)' : '양식·초안 문장 그대로'}</span></label></li>
           ${tp.variants.map((e, i) => `<li class="${e.match ? 'match' : ''}"><label><input type="radio" name="pk-${ti}" data-pick="${ti}" value="${i}"${i === on ? ' checked' : ''}><span class="pv-t">${esc(e.shown)}</span></label>
@@ -431,6 +452,10 @@
   }
   function render() {
     if (!$('#view-notice').classList.contains('on')) return;
+    renderMain();
+    if (jumpKey) jumpTo(jumpKey, true);
+  }
+  function renderMain() {
     checkAi();
     if (!sel && store.notices.length) sel = store.notices[0].id;
     renderList();
@@ -521,8 +546,10 @@
     const a = e.target.closest('[data-nact]');
     const ap = e.target.closest('[data-apply]'), ra = e.target.closest('[data-reauto]'), cp = e.target.closest('[data-copy]');
     const it = e.target.closest('[data-nid]');
-    if (it) { sel = it.dataset.nid; render(); return; }
+    if (it) { sel = it.dataset.nid; jumpKey = ''; render(); return; }
     const n = cur();
+    const pc = e.target.closest('.pick[data-topic]');
+    if (pc && !e.target.closest('textarea')) { const tp = topics[+pc.dataset.topic]; if (tp) setTimeout(() => jumpTo(tp.key), 0); if (!e.target.closest('input')) return; }
     const dr = e.target.closest('[data-dreset]');
     if (dr && n) { const d = baseSections(n)[+dr.dataset.dreset]; if (d && n.edits) { delete n.edits[editKey(n, d)]; n.updatedAt = Date.now(); save(true); render(); } return; }
     if (ap) { setVal(ap.dataset.apply, ap.dataset.val, true); render(); return; }

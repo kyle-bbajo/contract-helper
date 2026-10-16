@@ -593,6 +593,22 @@
       return { key: o.key, label: o.label, docs: o.docs, variants: vs.slice(0, 12), current: pickOf(v || {}, o.key) };
     }).filter((o) => o.variants.length || o.current);
   }
+  // 초안에서 주제 문장이 있는 자리: { si: 절 번호, li: 줄 번호 } (고른 문장이 있으면 그 문장 줄)
+  function topicPlace(S, key, v) {
+    const tp = TOPICS.find((x) => x.key === key); if (!tp) return null;
+    const pk = String(pickOf(v || {}, key)).replace(/\s+/g, ' ').trim().slice(0, 40);
+    let first = null;
+    for (let si = 0; si < (S || []).length; si++) {
+      if (/제목/.test(S[si].title)) continue;
+      const ls = String(S[si].body || '').split('\n');
+      for (let li = 0; li < ls.length; li++) {
+        const t = topicText(ls[li]);
+        if (pk && t.replace(/\s+/g, ' ').includes(pk)) return { si, li };
+        if (!first && topicOk(tp, t)) first = { si, li };
+      }
+    }
+    return first;
+  }
   // 문장 초안에 고른 문장 넣기: 같은 주제 첫 줄을 바꾸고, 없으면 알맞은 절 끝에 붙임
   function applyPicks(S, v) {
     const picks = TOPICS.map((tp) => [tp, pickOf(v, tp.key)]).filter(([, t]) => t);
@@ -1139,7 +1155,7 @@
 
   const api = { SECTION_LABEL, leafParagraphs, spliceRuns, fillNoticeXml, fillNoticeHwpx, noticeKind, WORK_TYPES, workType, subWorks, worksOf, separateIn, licensePhrase, licenseSentence, splitList, jointBody, FIELDS, SECTIONS, labelOf, money, won, blank, applyRules,
     BID_OPS, bidSearchUrl, bidDetailUrl, slotify, learnSentences, learnedSections, aiPrompt, parseAi, AI_SYSTEM, STATUS, STATUS_ORDER, statusOf, parseBidNo, bidByNoUrl, normalizeBid, attachmentsOf, extractClauses, regionLabel, learn, mapMethod, mapContract,
-    localize, ourContacts, licenseExamples, isLicLine, licClause, TOPICS, topicVariants, applyPicks, pickOf, draft, draftFull, parseNotice, learnDocument, mergeWrapped, secKey, regionSentence, templateValues, fillHwpxXml, fillHwpx, zipStore, crc32, placeholdersIn, fmtDT };
+    localize, ourContacts, licenseExamples, isLicLine, licClause, TOPICS, topicVariants, topicPlace, applyPicks, pickOf, draft, draftFull, parseNotice, learnDocument, mergeWrapped, secKey, regionSentence, templateValues, fillHwpxXml, fillHwpx, zipStore, crc32, placeholdersIn, fmtDT };
   root.JH = root.JH || {};
   root.JH.notice = Object.assign(root.JH.notice || {}, { logic: api });
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

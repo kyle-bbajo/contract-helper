@@ -595,3 +595,10 @@ body.resizing { cursor: col-resize; user-select: none; }
 .lbadge.ok { background: var(--ok-soft); color: var(--ok); }
 .btn-group { display: inline-flex; gap: 6px; flex-wrap: wrap; }
 .g2bst { margin: 0 0 6px; line-height: 1.6; }
+/* 문장 고르기 → 초안의 같은 자리 표시 */
+.pick[data-topic] { cursor: pointer; }
+.draft .dsec.target { box-shadow: inset 3px 0 0 var(--ink-2); padding-left: 8px; }
+.lbadge.tgt { background: var(--ink-soft); color: var(--ink); }
+@keyframes dsecflash { 0% { background: var(--amber-soft); } 100% { background: transparent; } }
+.draft .dsec.flash { animation: dsecflash 1.6s ease-out; }
+@media (prefers-reduced-motion: reduce) { .draft .dsec.flash { animation: none; } }

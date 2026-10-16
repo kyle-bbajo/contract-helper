@@ -321,3 +321,10 @@ test('배운 초안의 설계서 열람장소·문의 줄은 이번 공고 부�
   assert.ok(N.WORK_TYPES.용역.length >= 30 && new Set(N.WORK_TYPES.용역.map((w) => w.g)).size >= 4, '용역 공종 묶음별');
   assert.equal(N.licenseSentence([N.workType('용역', '생활폐기물 수집·운반')]), '「폐기물관리법」에 따른 폐기물수집·운반업(생활폐기물) 허가업체');
 });
+
+test('문장 고르기 → 초안 자리 찾기', () => {
+  const S = [{ title: '제목', body: 'X 공고' }, { title: '1. 입찰에 부치는 사항', body: '  가. 공사명: X' }, { title: '2. 입찰참가자격', body: '  가. 「전기공사업법」에 따른 전기공사업 등록업체\n  나. 공고일 전일부터 용인시에 본점 소재지를 둔 자' }];
+  assert.deepEqual(N.topicPlace(S, '업종', {}), { si: 2, li: 0 });
+  assert.deepEqual(N.topicPlace(S, '지역', {}), { si: 2, li: 1 });
+  assert.equal(N.topicPlace(S, '하도급', {}), null);
+});

@@ -453,6 +453,10 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   assert.ok(pickUp >= 0, '업종 문장 고르기');
   const upCard = (await page.$$('.pick'))[pickUp];
   assert.match(await upCard.textContent(), /전기공사업/);
+  // 칸을 누르면 오른쪽 초안의 같은 주제 문장 자리로 옮겨 가 표시
+  await page.locator('.pick').nth(pickUp).locator('.pick-h').click();
+  await page.waitForSelector('.draft .dsec.target .lbadge.tgt:has-text("참가자격 업종")');
+  assert.match(await page.textContent('.draft .dsec.target .dsec-head b'), /입찰참가자격/);
   await page.locator('.pick').nth(pickUp).locator('input[type=radio]').nth(1).click();
   await page.waitForSelector('.pick.set textarea');
   assert.match(await page.inputValue('.pick.set textarea'), /전기공사업/);
