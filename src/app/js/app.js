@@ -147,41 +147,64 @@
     return c.folder;
   }
   // 같은 계약이 차수(-00, -01)마다 따로 생긴 것을 하나로 합침: 서류·메모·원본/받음 표시를 옮기고 최신 차수 값을 남김
-  function mergeSameContracts() {
-    const groups = new Map();
-    for (const c of Object.values(db.contracts)) {
-      const b = [c.untyNo, ...(c.nums || []), c.no].map(L.baseNo).find((x) => x && x.length >= 10);
-      if (!b) continue;
-      (groups.get(b) || groups.set(b, []).get(b)).push(c);
+  // 한 계약이 번호 때문에 묶이는 열쇠들: 통합계약번호·계약번호들·차수별 번호·나라장터 변경이력에 나온 차수 번호
+  const mergeKeys = (c) => [...new Set([c.untyNo, c.no, ...(c.nums || []), ...Object.values(c.ords || {}).map((o) => o.no), ...(((c.g2b || {}).chgRows) || []).map((r) => r.no)]
+    .map(L.baseNo).filter((x) => x && x.length >= 10))];
+  // 여러 계약을 하나로: 서류·메모·원본/받음/경유 표시·차수별 값을 옮기고, 금액·준공일은 최신 차수 기준. prefer가 있으면 그 계약을 남김
+  function mergeContracts(cs, prefer) {
+    const ordC = (c) => Math.max(c.ord == null ? -1 : c.ord, ...(c.nums || []).map((x) => L.ordOf(x) == null ? -1 : L.ordOf(x)), ...Object.keys(c.ords || {}).map(Number));
+    cs = [...new Set(cs)].filter(Boolean); if (cs.length < 2) return 0;
+    cs.sort((a, b) => (b === prefer) - (a === prefer) || docsOf(b.key).length - docsOf(a.key).length || ordC(b) - ordC(a));
+    const keepC = cs[0], newest = [...cs].sort((a, b) => ordC(b) - ordC(a))[0];
+    const ords = {};
+    for (const c of cs) {
+      Object.assign(ords, c.ords || {});
+      const o = ordC(c); if (o < 0) continue;
+      const no = (c.nums || []).find((x) => L.ordOf(x) === o) || c.no || '';
+      ords[o] = ords[o] || L.ordSnap({ ...c, ord: o, no });
     }
+    keepC.ords = ords;
     let merged = 0;
-    for (const cs of groups.values()) {
-      if (cs.length < 2) continue;
-      const ordC = (c) => Math.max(c.ord == null ? -1 : c.ord, ...(c.nums || []).map((x) => L.ordOf(x) == null ? -1 : L.ordOf(x)));
-      cs.sort((a, b) => docsOf(b.key).length - docsOf(a.key).length || ordC(b) - ordC(a));
-      const keepC = cs[0], newest = [...cs].sort((a, b) => ordC(b) - ordC(a))[0];
-      const ords = {};
-      for (const c of cs) {
-        Object.assign(ords, c.ords || {});
-        const o = ordC(c); if (o < 0) continue;
-        const no = (c.nums || []).find((x) => L.ordOf(x) === o) || c.no || '';
-        ords[o] = ords[o] || L.ordSnap({ ...c, ord: o, no });
-      }
-      keepC.ords = ords;
-      for (const o of cs.slice(1)) {
-        db.docs.forEach((d) => { if (d.key === o.key) d.key = keepC.key; });
-        keepC.nums = [...new Set([...(keepC.nums || []), ...(o.nums || [])])];
-        for (const f of ['originals', 'received', 'edited', 'via']) keepC[f] = { ...(o[f] || {}), ...(keepC[f] || {}) };
-        const ck = { ...((o.memo || {}).chgKind || {}), ...((keepC.memo || {}).chgKind || {}) };
-        keepC.memo = { ...(o.memo || {}), ...(keepC.memo || {}) }; if (Object.keys(ck).length) keepC.memo.chgKind = ck;
-        for (const f of ['paidDate', 'payMemo', 'payPlan', 'folder', 'g2b', 'docVals']) if (!keepC[f] && o[f]) keepC[f] = o[f];
-        delete db.contracts[o.key]; merged++;
-      }
-      if (newest !== keepC) for (const k of ['no', 'amount', 'endDate', 'period', 'chgDt']) if (newest[k] && !(keepC.edited || {})[k]) keepC[k] = newest[k];
-      keepC.ord = ordC(newest) >= 0 ? ordC(newest) : keepC.ord;
+    for (const o of cs.slice(1)) {
+      db.docs.forEach((d) => { if (d.key === o.key) d.key = keepC.key; });
+      keepC.nums = [...new Set([...(keepC.nums || []), ...(o.nums || [])])];
+      for (const f of ['originals', 'received', 'edited', 'via']) keepC[f] = { ...(o[f] || {}), ...(keepC[f] || {}) };
+      const ck = { ...((o.memo || {}).chgKind || {}), ...((keepC.memo || {}).chgKind || {}) };
+      keepC.memo = { ...(o.memo || {}), ...(keepC.memo || {}) }; if (Object.keys(ck).length) keepC.memo.chgKind = ck;
+      for (const f of ['paidDate', 'payMemo', 'payPlan', 'folder', 'docVals', 'untyNo', 'ntceNo', 'bizno', 'rep', 'method', 'law', 'lawDtl', 'url', 'corpRaw']) if (!keepC[f] && o[f]) keepC[f] = o[f];
+      // 나라장터 세부 정보는 변경이력(차수 표)이 더 긴 쪽을 남김
+      if (!keepC.g2b || ((o.g2b || {}).chgRows || []).length > ((keepC.g2b || {}).chgRows || []).length) { if (o.g2b) keepC.g2b = o.g2b; }
+      if (ui.sel === o.key) ui.sel = keepC.key;
+      delete db.contracts[o.key]; merged++;
     }
+    if (newest !== keepC) for (const k of ['no', 'amount', 'endDate', 'period', 'chgDt']) if (newest[k] && !(keepC.edited || {})[k]) keepC[k] = newest[k];
+    keepC.ord = ordC(newest) >= 0 ? ordC(newest) : keepC.ord;
+    keepC.updatedAt = Date.now();
+    return merged;
+  }
+  // 같은 계약이 차수(-00, -01)마다 따로 생긴 것을 하나로 합침 — 번호 열쇠가 하나라도 겹치면 같은 계약으로 봄(묶음끼리도 이어 붙임)
+  function mergeSameContracts() {
+    const byKey = new Map(), parent = new Map();
+    const find = (k) => { while (parent.get(k) !== k) { parent.set(k, parent.get(parent.get(k))); k = parent.get(k); } return k; };
+    const union = (a, b) => { a = find(a); b = find(b); if (a !== b) parent.set(a, b); };
+    for (const c of Object.values(db.contracts)) {
+      parent.set(c.key, c.key);
+      for (const b of mergeKeys(c)) { if (byKey.has(b)) union(c.key, byKey.get(b)); else byKey.set(b, c.key); }
+    }
+    const groups = new Map();
+    for (const c of Object.values(db.contracts)) { const r = find(c.key); (groups.get(r) || groups.set(r, []).get(r)).push(c); }
+    let merged = 0;
+    for (const cs of groups.values()) if (cs.length >= 2) merged += mergeContracts(cs);
     if (merged) { saveDb(true); setTimeout(() => toast(`차수(-00, -01)만 다른 같은 계약 ${merged}건을 하나로 합쳤습니다.`, 'ok'), 500); }
     return merged;
+  }
+  // 같은 이름·같은 업체인데 번호가 달라 따로 보이는 계약(직접 고를 때 후보로)
+  function mergeCandidates(c) {
+    const nm = L.norm(c.name || ''), vd = L.vendorCore(c.vendor || '');
+    return contracts().filter((o) => o.key !== c.key).map((o) => {
+      const sameName = nm && L.norm(o.name || '') === nm, sameVendor = vd && L.vendorCore(o.vendor || '') === vd;
+      return { c: o, score: (sameName ? 2 : 0) + (sameVendor ? 1 : 0), why: sameName && sameVendor ? '이름·업체 같음' : sameName ? '이름 같음' : sameVendor ? '업체 같음' : '' };
+    }).sort((a, b) => b.score - a.score || (b.c.updatedAt || 0) - (a.c.updatedAt || 0));
   }
   function upsertContract(n) {
     // 계약번호가 하나라도 같으면 같은 계약
@@ -727,6 +750,7 @@
             <span class="spacer"></span>
             <button class="btn" data-act="pay">${c.paidDate ? '지출 정보 수정' : '지출 처리'}</button>
             <button class="btn ghost" data-act="edit">계약 수정</button>
+            <button class="btn ghost" data-act="mergepick" title="차수(-00, -01)나 번호가 달라 둘로 보이는 같은 계약을 하나로 합칩니다">같은 계약 합치기</button>
           </div>
         </div>
         ${sealSvg(st, c)}
@@ -1316,6 +1340,7 @@
       else if (act === 'folder') await S.open(folderOf(c));
       else if (act === 'pay') openPay(c);
       else if (act === 'edit') openContract(c);
+      else if (act === 'mergepick') openMerge(c);
       else if (act === 'view') { const d = docById(t.dataset.doc); if (S.view) await S.view(d.pdfPath || d.path); else window.open(S.fileUrl(d.pdfPath || d.path), '_blank'); }
       else if (act === 'del') { const d = docById(t.dataset.doc); if (confirm(`"${d.name}"을 목록에서 뺄까요? 파일은 데이터 폴더의 _삭제됨으로 옮겨집니다.`)) { await removeDoc(d); render(); } }
       else if (act === 'hwp') {
@@ -1416,6 +1441,22 @@
 
   // 계약 직접 추가·수정
   let editing = null;
+  // 같은 계약 합치기(직접 고름): 이름·업체가 같은 계약을 앞에 보여 줌
+  function openMerge(c) {
+    const cands = mergeCandidates(c);
+    if (!cands.length) { toast('합칠 다른 계약이 없습니다.'); return; }
+    const sel = $('#mgPick');
+    sel.innerHTML = '<option value="">합칠 계약 고르기</option>' + cands.map(({ c: o, why }) => `<option value="${esc(o.key)}">${esc(o.name)}${o.vendor ? ` · ${esc(o.vendor)}` : ''}${o.no ? ` · ${esc(o.no)}` : ''}${why ? ` — ${why}` : ''}</option>`).join('');
+    const top = cands[0]; if (top.score) sel.value = top.c.key;
+    $('#mgThis').textContent = `${c.name}${c.no ? ` (${c.no})` : ''}`;
+    $('#mgGo').onclick = async () => {
+      const o = db.contracts[sel.value]; if (!o) { toast('합칠 계약을 골라 주세요.', 'err'); return; }
+      const n = withIndex(() => mergeContracts([c, o], c));
+      $('#dlgMerge').close();
+      if (n) { await saveDb(true); render(); toast(`"${o.name}"을(를) 이 계약으로 합쳤습니다. 서류·메모·받음 표시도 옮겼고, 금액·준공일은 최신 차수 기준입니다.`, 'ok'); }
+    };
+    $('#dlgMerge').showModal();
+  }
   function openContract(c) {
     editing = c || null;
     $('#ctTitle').textContent = c ? '계약 수정' : '계약 직접 추가';

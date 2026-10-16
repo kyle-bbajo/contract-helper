@@ -364,6 +364,18 @@
   </div>
 </dialog>
 
+<dialog id="dlgMerge" class="dlg narrow" aria-labelledby="mgTitle">
+  <form method="dialog" class="dlg-head">
+    <h2 id="mgTitle">같은 계약 합치기</h2>
+    <button class="btn icon" value="close" aria-label="닫기">✕</button>
+  </form>
+  <div class="dlg-body">
+    <p class="help">차수(-00, -01)나 번호가 달라 둘로 보이는 같은 계약을 <b id="mgThis"></b>(으)로 합칩니다. 고른 계약의 서류·메모·받음 표시가 이쪽으로 옮겨지고, 금액·준공일은 최신 차수 값이 남습니다. 이름이나 업체가 같은 계약이 맨 위에 옵니다.</p>
+    <div class="form"><label>합칠 계약<select id="mgPick"></select></label></div>
+    <div class="dlg-actions"><button type="button" class="btn primary" id="mgGo">하나로 합치기</button></div>
+  </div>
+</dialog>
+
 <script src="vendor/cfb.min.js"></script>
 <script src="js/logic.js"></script>
 <script src="js/xlsx.js"></script>

@@ -164,6 +164,10 @@ try {
     const ledger = JSON.parse(readFileSync(join(data, '서류대장.json'), 'utf8')), texts = JSON.parse(readFileSync(join(data, '서류본문.json'), 'utf8'));
     assert.ok(!ledger.docs.some((d) => 'text' in d) && Object.keys(texts).length >= 5, '서류대장에는 본문 없음, 본문은 따로');
     ledger.docs.forEach((d) => { if (texts[d.id]) d.text = texts[d.id]; });
+    // 1-3) 예전 버전이 차수(-01)를 다른 계약으로 만들어 둔 상태(서류 하나 딸림) → 켤 때 하나로 합쳐지는지
+    const a = Object.values(ledger.contracts).find((x) => x.name === '시청사 옥상 방수공사');
+    ledger.contracts['r26bk0123456701'] = { ...a, key: 'r26bk0123456701', nums: ['R26BK0123456701'], no: 'R26BK0123456701', ord: 1, amount: 48000000, endDate: '2026-10-10', period: '2026-06-01 ~ 2026-10-10(1차 변경)', originals: {}, received: { 'c-photo': true }, edited: {}, memo: { note: '차수 계약의 메모' }, g2b: null, ords: null };
+    ledger.docs.push({ id: 'dup-doc', key: 'r26bk0123456701', itemId: 'c-nounpaid', path: '계약/없는폴더/미체불확약서.pdf', name: '미체불확약서.pdf', kind: 'pdf', size: 1, addedAt: new Date().toISOString(), title: '노무비 미체불 확약서', missing: true });
     writeFileSync(join(data, '서류대장.json'), JSON.stringify(ledger, null, 1)); rmSync(join(data, '서류본문.json'));
   }
   // 2) 데이터 폴더를 바탕화면 → 문서\보관\ 으로 통째로 옮기기
@@ -173,18 +177,32 @@ try {
   await startServer();
   await page.goto(base);
   await waitFor(() => page.$('.toast:has-text("데이터 폴더가 옮겨진 것을 찾았습니다")'), 30000, '데이터 폴더 다시 찾기');
-  await waitFor(() => page.evaluate(() => JH.app.db.docs.length === 12), 60000, '직접 넣은 파일 읽기');
+  await waitFor(() => page.evaluate(() => JH.app.db.docs.length === 13), 60000, '직접 넣은 파일 읽기');
   const st = await page.evaluate(() => {
     const c = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사');
     const ds = JH.app.db.docs.filter((d) => d.key === c.key);
-    return { folder: c.folder, missing: JH.app.db.docs.filter((d) => d.missing).length, extra: ds.find((d) => d.name === '지방세_직접넣음.pdf'), n: ds.length };
+    return { folder: c.folder, missing: JH.app.db.docs.filter((d) => d.missing && d.id !== 'dup-doc').length, extra: ds.find((d) => d.name === '지방세_직접넣음.pdf'), n: ds.length };
   });
   assert.equal(st.folder, '계약/방수공사(이름 바꿈)'); assert.equal(st.missing, 0);
   assert.ok(await page.evaluate(() => JH.app.db.docs.filter((d) => d.text && d.text.length > 50).length >= 5), '예전 형식 서류대장의 본문도 그대로');
+  // 차수만 다른 계약 자동 합침: 서류·받음·메모가 옮겨 오고 금액·준공일은 최신 차수
+  const mg = await page.evaluate(() => { const c = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사'); return { n: Object.values(JH.app.db.contracts).filter((x) => x.name === '시청사 옥상 방수공사').length, dup: !!JH.app.db.contracts.r26bk0123456701, doc: (JH.app.db.docs.find((d) => d.id === 'dup-doc') || {}).key === c.key, photo: !!(c.received || {})['c-photo'], note: (c.memo || {}).note, amount: c.amount, end: c.endDate, nums: c.nums, period: c.period }; });
+  assert.equal(mg.n, 1); assert.ok(!mg.dup); assert.ok(mg.doc, '딸린 서류가 옮겨 옴'); assert.ok(mg.photo, '받음 표시 옮겨 옴'); assert.equal(mg.note, '차수 계약의 메모');
+  assert.equal(mg.amount, 48000000); assert.match(mg.end, /2026-?10-?10/); assert.ok(mg.nums.includes('R26BK0123456701')); assert.equal(mg.period, '2026-06-01 ~ 2026-10-10(1차 변경)', '최신 차수 값');
+  // 번호가 달라 안 합쳐진 계약은 [같은 계약 합치기]로 직접
+  await page.evaluate(() => { JH.app.db.contracts.manual1 = { key: 'manual1', source: 'manual', type: '공사', name: '시청사 옥상 방수공사', vendor: '(주)다해토건', nums: [], no: '', amount: 1, originals: {}, received: { 'c-laborlist': true }, edited: {}, memo: {}, updatedAt: Date.now() }; JH.app.setView('contracts'); });
+  await page.click('.citem:has-text("시청사 옥상 방수공사") >> nth=0');
+  await page.click('[data-act="mergepick"]');
+  await page.waitForSelector('#dlgMerge[open]');
+  assert.match(await page.$eval('#mgPick option:checked', (o) => o.textContent), /시청사 옥상 방수공사.*이름·업체 같음/, '이름·업체 같은 계약이 미리 골라짐');
+  await page.click('#mgGo');
+  await waitFor(() => page.$('.toast:has-text("이 계약으로 합쳤습니다")'), 10000, '직접 합치기');
+  assert.equal(await page.evaluate(() => Object.values(JH.app.db.contracts).filter((x) => x.name === '시청사 옥상 방수공사').length), 1);
+  assert.ok(await page.evaluate(() => Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사').received['c-laborlist']), '직접 합친 계약의 받음 표시');
   await waitFor(() => existsSync(join(data, '서류본문.json')) && !JSON.parse(readFileSync(join(data, '서류대장.json'), 'utf8')).docs.some((d) => 'text' in d), 20000, '본문을 따로 떼어 저장');
   assert.ok(st.extra && st.extra.itemId === 'c-ltax', '직접 넣은 지방세 서류 분류');
   assert.equal(JSON.parse(readFileSync(join(PROG, 'local.json'), 'utf8')).dataDir, moved);
-  step('데이터 폴더를 통째로 옮겨도 표식으로 찾음 + 계약 폴더 이름 변경 추적 + 직접 넣은 파일 분류');
+  step('데이터 폴더를 통째로 옮겨도 표식으로 찾음 + 계약 폴더 이름 변경 추적 + 직접 넣은 파일 분류 + 예전 서류대장 형식 읽기 + 차수만 다른 계약 자동 합침·[같은 계약 합치기]');
 
   // ===== 계약 화면: 맨 위 [업로드], 서류 줄마다 [+ 추가]로 직접 넣기 =====
   await page.click('.views [data-view="contracts"]');
