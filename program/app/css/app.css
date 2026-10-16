@@ -624,3 +624,4 @@ body.resizing { cursor: col-resize; user-select: none; }
 .g2braw { font-size: 12px; margin: 0 0 6px; }
 .g2braw summary { cursor: pointer; color: var(--muted); }
 .g2braw code { display: block; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--rule-soft); padding: 6px 8px; border-radius: 6px; margin-top: 4px; }
+.file.inner { opacity: .85; } .file.inner .ft { background: var(--ink-soft); color: var(--ink); }

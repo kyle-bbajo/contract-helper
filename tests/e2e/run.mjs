@@ -151,8 +151,8 @@ try {
   await waitFor(() => page.$('.toast:has-text("PDF로 저장했습니다")'), 60000, 'PDF 저장');
   const folderA = readdirSync(join(data, '계약')).find((d) => d.includes('시청사'));
   const pdf = await PDFDocument.load(readFileSync(join(data, '계약', folderA, '인쇄본', readdirSync(join(data, '계약', folderA, '인쇄본'))[0])));
-  assert.equal(pdf.getPageCount(), 9);
-  step('원본 체크 + 한 번에 PDF 9쪽(표지·원본 자리·한글 자리)');
+  assert.equal(pdf.getPageCount(), 10, '표지 2쪽(서류 목록이 늘어 목록표가 2쪽)·서류·원본 자리·한글 자리');
+  step('원본 체크 + 한 번에 PDF 10쪽(표지·원본 자리·한글 자리)');
 
   // ===== 폴더를 사람이 옮긴 경우 =====
   await stopServer();

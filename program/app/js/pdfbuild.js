@@ -130,13 +130,20 @@
       const ds = docs.filter((d) => d.itemId === it.id);
       const top = `${it.group} · ${it.name}`;
       const rb = { iid: it.id, item: it.name, stage: it.group };
+      const inBundle = !ds.length ? docs.find((d) => (d.also || []).includes(it.id)) : null;
+      if (inBundle) { toc.push({ ...rb, file: `「${inBundle.name}」 안${inBundle.pagesOf && inBundle.pagesOf[it.id] ? ` (${inBundle.pagesOf[it.id].join('·')}쪽)` : ''}`, status: 'ok', start: null, pages: 0 }); continue; }
       if (!ds.length) {
         if (originals[it.id]) {
           let added = 0;
           if (useHolder) { await addPng(out, await holder(top, '원본 서류 자리', '', '이 위치에 업체가 제출한 원본 서류를 끼워 넣으세요.')); added = 1; }
           toc.push({ ...rb, file: '원본 첨부', orig: true, status: 'ok', start: added ? coverCount + page + 1 : null, pages: added }); page += added;
         } else if (received[it.id]) toc.push({ ...rb, file: '받음 표시(파일 없음)', status: 'ok', start: null, pages: 0 });
-        else { toc.push({ ...rb, status: it.required ? 'missing' : 'none' }); if (it.required) missing.push(it.name); }
+        else {
+          // 둘 중 하나면 되는 서류(하자보수보증서 ↔ 지급각서): 다른 쪽이 있으면 빠진 것으로 보지 않음
+          const altOk = it.alt && (docs.some((d) => d.itemId === it.alt || (d.also || []).includes(it.alt)) || originals[it.alt] || received[it.alt]);
+          const miss = it.required && !altOk;
+          toc.push({ ...rb, status: miss ? 'missing' : 'none', ...(altOk ? { file: '다른 서류로 대신함' } : {}) }); if (miss) missing.push(it.name);
+        }
         continue;
       }
       for (const d of ds) {

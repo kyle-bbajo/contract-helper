@@ -8,7 +8,8 @@ const cls = (name, title, type = '공사') => L.classifyItem(lists[type], name, 
 
 test('파일명으로 서류 종류 분류(가장 긴 단어 우선)', () => {
   assert.equal(cls('계약서.pdf'), 'c-contract');
-  assert.equal(cls('견적서_산출내역.pdf'), 'c-estimate');
+  assert.equal(cls('견적서_산출내역.pdf'), 'c-calc');
+  assert.deepEqual(L.itemsInName(L.defaultChecklists().공사, '견적서_산출내역.pdf'), ['c-estimate', 'c-calc'], '파일 이름에 서류가 둘이면 둘 다(하나는 함께 든 서류로)');
   assert.equal(cls('지방세 납세증명서.pdf'), 'c-ltax');
   assert.equal(cls('세금계산서.pdf'), 'c-invoice');
   assert.equal(cls('하자보수이행보증금지급각서.pdf'), 'c-defect');
@@ -118,4 +119,37 @@ test('업체목록: 실제 나라장터 응답 형식(이름 위치·공동도�
     corpList: '[1^주계약업체^단독^크렉스^박학순^대한민국^100^크렉스^^7800300048]', totCntrctAmt: '4160000', wbgnDate: '2026-08-30', ttalScmpltDate: '2026-09-05',
     cntrctInsttOfclNm: '이창구', cntrctInsttChrgDeptNm: '회계팀', baseDtls: '추정가격 2천만원 이하 물품 또는 용역', payDivNm: '' }, '용역');
   assert.deepEqual([n.vendor, n.amount, n.startDate, n.endDate, n.officer, n.dept, n.budgetAuto], ['크렉스', 4160000, '2026-08-30', '2026-09-05', '이창구', '회계팀', '']);
+});
+
+test('서류 목록: 대금청구에 완납증명서·지역개발채권, 착공계 손해배상공제·노무비 개인정보 동의서, 하자보수보증서 ↔ 지급각서', () => {
+  const d = L.defaultChecklists();
+  const g = (t, id) => d[t].find((x) => x.id === id);
+  assert.equal(g('공사', 'c-inspaid').group, '대금청구'); assert.equal(g('공사', 'c-emppaid').group, '대금청구');
+  assert.equal(g('용역', 's-inspaid').group, '대금청구');
+  assert.ok(g('공사', 'c-bond') && g('용역', 's-bond') && g('물품', 'g-bond'));
+  assert.equal(g('공사', 'c-dmgins').group, '착공계'); assert.ok(g('공사', 'c-laborpriv') && g('용역', 's-laborpriv'));
+  assert.equal(g('공사', 'c-roster').required, true, '착공계는 가입자명부 필수');
+  // 둘 중 하나: 보증서만 있어도 지급각서는 빠진 것으로 보지 않음
+  const st = L.checklistStatus(d.공사, [{ itemId: 'c-defectbond' }], {});
+  assert.ok(!st.missing.some((x) => x.id === 'c-defect') && !st.missing.some((x) => x.id === 'c-defectbond'));
+  // 여러 양식이 든 파일: 쪽마다 제목으로
+  const pages = L.classifyPages(d.공사, ['착 공 계 공사명: 시청사 방수공사', '현장대리인계', '예정공정표', '4대 사회보험 가입증명서 사업장명 (주)다해', '노무비 개인정보 수집·이용·제공 동의서', '제 3 조 (계약의 이행) 계약상대자는 이 계약서에서 정한 바에 따라 성실히 이행하여야 하며 착공']);
+  assert.deepEqual(pages['c-start'], [1, 2, 3]); assert.deepEqual(pages['c-insjoin'], [4]); assert.deepEqual(pages['c-laborpriv'], [5]);
+  assert.ok(!(pages['c-start'] || []).includes(6), '쪽 앞부분에 없는 말은 안 셈');
+  const st2 = L.checklistStatus(d.공사, [{ itemId: 'c-start', also: ['c-insjoin', 'c-laborpriv'] }], {});
+  assert.ok(!st2.missing.some((x) => ['c-start', 'c-insjoin', 'c-laborpriv'].includes(x.id)));
+});
+
+test('계약 관련서류 세분화, 법인등기·인감증명서 계약일 기준 3개월 이내', () => {
+  const d = L.defaultChecklists();
+  const ids = d.공사.filter((x) => x.group === '계약').map((x) => x.id);
+  assert.deepEqual(ids, ['c-contract', 'c-pledge', 'c-bizreg', 'c-corpreg', 'c-seal', 'c-useseal', 'c-license', 'c-licbook', 'c-estimate', 'c-calc', 'c-bank', 'c-related']);
+  assert.ok(!d.공사.some((x) => x.group === '대금청구' && x.id === 'c-bank'), '통장사본은 계약 서류로');
+  assert.equal(L.classifyItem(d.공사, '사업자등록증 사본.pdf', ''), 'c-bizreg');
+  assert.equal(L.classifyItem(d.공사, '건설업등록증.pdf', ''), 'c-license');
+  assert.equal(L.classifyItem(d.공사, '법인인감증명서.pdf', ''), 'c-seal');
+  assert.equal(L.classifyItem(d.공사, '산출내역서.xlsx', ''), 'c-calc');
+  assert.equal(L.classifyItem(d.공사, '견적서.pdf', ''), 'c-estimate');
+  assert.equal(L.issuedTooEarly('20260301', '20260610'), true);
+  assert.equal(L.issuedTooEarly('20260401', '20260610'), false);
 });

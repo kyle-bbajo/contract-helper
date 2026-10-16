@@ -34,6 +34,7 @@
     required: opt.required !== false,
     source: opt.source || '업체',
     note: opt.note || '',
+    ...(opt.alt ? { alt: opt.alt } : {}), // 둘 중 하나만 있으면 되는 서류(예: 하자보수보증서 ↔ 하자보수 이행보증금 지급각서)
   });
 
   function defaultChecklists() {
@@ -42,51 +43,74 @@
     const head = (k) => [
       it(g1, '구매요구서 또는 기안문', '구매요구,구매요청,계약의뢰,계약요청,일반기안,기안문', { source: '문서함', note: '설계내역서·시방서 등 포함. 우리 예산이 아닌 사업(e나라도움 등)은 일반 기안문', id: k + '-req' }),
       it(g2, '계약서', '계약서,계약문서,계약체결', { source: '나라장터', id: k + '-contract' }),
-      it(g2, '견적서·설계내역서', '견적,설계내역,내역서,산출내역', { source: '나라장터', id: k + '-estimate' }),
-      it(g2, '계약 관련서류', '관련서류,관련문서,이행각서,서약서,청렴계약,수의계약,등기부,인감,사업자등록,면허', { source: '나라장터', note: '이행각서·서약서·등기부등본·사업자등록증 등', id: k + '-related' }),
+      // 계약 관련서류(세분화)
+      it(g2, '계약이행 통합 서약서', '통합서약서,계약이행통합,이행통합서약,통합 서약서', { source: '나라장터', id: k + '-pledge' }),
+      it(g2, '사업자등록증 사본', '사업자등록증,사업자등록', { source: '나라장터', id: k + '-bizreg' }),
+      it(g2, '법인등기사항증명서', '법인등기,등기사항증명,등기사항전부,등기부등본', { source: '나라장터', note: '계약일 기준 3개월 이내 발급분 · 개인사업자는 해당 없음', id: k + '-corpreg' }),
+      it(g2, '인감증명서', '인감증명,법인인감,개인인감', { source: '나라장터', note: '법인인감(개인사업자는 개인인감) · 계약일 기준 3개월 이내 발급분', id: k + '-seal' }),
+      it(g2, '사용인감계', '사용인감', { source: '나라장터', required: false, note: '사용인감도장 사용 시', id: k + '-useseal' }),
+      it(g2, '면허 등록증 사본', '면허등록증,건설업등록증,공사업등록증,업등록증,면허증,등록증사본', { source: '나라장터', required: k !== 'g', note: k === 'g' ? '해당 시' : '해당 면허', id: k + '-license' }),
+      it(g2, '면허 등록수첩 사본', '등록수첩,면허수첩', { source: '나라장터', required: false, note: '해당 면허', id: k + '-licbook' }),
+      it(g2, '견적서(계약금액)', '견적서,견적', { source: '나라장터', note: '계약금액으로 작성', id: k + '-estimate' }),
+      it(g2, '산출내역서', '산출내역,설계내역,내역서', { source: '나라장터', id: k + '-calc' }),
+      it(g2, '통장사본', '통장', { source: '나라장터', id: k + '-bank' }),
+      it(g2, '그 밖의 계약 서류', '관련서류,관련문서,이행각서,서약서,청렴계약,수의계약각서,배제사유,확약서', { source: '나라장터', required: false, note: '각서·서약서·확약서 등', id: k + '-related' }),
     ];
-    const tail = (k) => [
+    // 대금청구: 4대보험·고용산재 완납증명서와 지역개발채권도 여기서 받음(업체가 청구 때 냄)
+    const tail = (k, mid = []) => [
       it(g5, '준공조서', '준공조서,검사조서,검수조서,준공검사조서', { source: '문서함', id: k + '-inspect' }),
       it(g6, '대금청구서', '청구서,대금청구,대가청구,청구', { source: '메일', id: k + '-claim' }),
-      it(g6, '통장사본', '통장', { source: '메일', id: k + '-bank' }),
       it(g6, '국세 납세증명서', '국세,납세증명', { source: '메일', id: k + '-tax' }),
       it(g6, '지방세 납세증명서', '지방세,지방세납세,지방세완납', { source: '메일', id: k + '-ltax' }),
+      ...mid,
+      it(g6, '지역개발채권 매입필증', '지역개발채권,지역개발공채,채권매입,매입필증,도시철도채권', { source: '메일', id: k + '-bond' }),
       it(g6, '세금계산서', '세금계산서,계산서', { source: '메일', id: k + '-invoice' }),
       it(g7, '지출결의서', '지출결의,지출품의', { source: '문서함', id: k + '-pay' }),
     ];
+    const LABOR_PRIV = '노무비개인정보,개인정보수집,개인정보 수집,개인정보제공,개인정보 제공,개인정보이용';
     const 공사 = [
       ...head('c'),
       it('착공계', '착공계·현장대리인계·예정공정표', '착공,현장대리인계,예정공정', { id: 'c-start' }),
       it('착공계', '현장대리인 재직증명서·자격증', '재직증명,자격증', { required: false, note: '해당 시', id: 'c-agent' }),
       it('착공계', '노무비 지급확인제', '노무비지급확인,지급확인제', { id: 'c-laborconfirm' }),
-      it('착공계', '4대 사회보험 가입자명부', '가입자명부', { required: false, note: '상용근로자 해당 시', id: 'c-roster' }),
+      it('착공계', '노무비 개인정보 수집·이용·제공 동의서', LABOR_PRIV, { id: 'c-laborpriv' }),
+      it('착공계', '4대 사회보험 가입자명부', '가입자명부', { id: 'c-roster' }),
       it('착공계', '4대 사회보험 가입증명서', '사회보험가입증명,보험가입증명서,가입증명서', { id: 'c-insjoin' }),
       it('착공계', '고용·산재 가입증명원', '고용산재가입,가입증명원,고용보험가입,산재보험가입', { note: '공사명·공사기간·계약금액 필수', id: 'c-empjoin' }),
+      it('착공계', '손해배상공제(보험) 증권', '손해배상공제,손해배상보험,손해배상책임,배상책임보험,공제증권', { id: 'c-dmgins' }),
       it('준공계', '준공계·준공검사원', '준공계,준공검사원,준공신고', { id: 'c-finish' }),
       it('준공계', '준공사진대지', '사진대지,준공사진', { id: 'c-photo' }),
-      it('준공계', '4대 사회보험 완납증명서', '사회보험완납,사회보험료완납,4대보험완납,보험료완납', { id: 'c-inspaid' }),
       it('준공계', '노무비 미체불 확약서', '미체불', { required: false, note: '일용근로자 해당 시', id: 'c-nounpaid' }),
       it('준공계', '노무비 지급 내역서', '노무비지급내역,지급내역서', { required: false, note: '일용근로자 해당 시', id: 'c-laborlist' }),
-      it('준공계', '고용·산재 완납증명서', '고용산재완납,고용보험료완납,산재보험료완납', { note: '공사명 기재 필수', id: 'c-emppaid' }),
-      it('준공계', '하자보수 이행보증금 지급각서', '하자보수,하자이행,지급각서', { id: 'c-defect' }),
-      ...tail('c'),
+      it('준공계', '하자보수보증서(하자이행보증증권)', '하자보수보증서,하자보증서,하자이행보증,하자보수보증금,하자보증증권', { note: '또는 지급각서', alt: 'c-defect', id: 'c-defectbond' }),
+      it('준공계', '하자보수 이행보증금 지급각서', '하자보수이행보증금지급각서,하자지급각서,지급각서', { note: '또는 하자보수보증서', alt: 'c-defectbond', id: 'c-defect' }),
+      ...tail('c', [
+        it(g6, '4대 사회보험 완납증명서', '사회보험완납,사회보험료완납,4대보험완납,보험료완납', { source: '메일', id: 'c-inspaid' }),
+        it(g6, '고용·산재 완납증명서', '고용산재완납,고용보험료완납,산재보험료완납', { source: '메일', note: '공사명 기재 필수', id: 'c-emppaid' }),
+      ]),
     ];
     const 용역 = [
       ...head('s'),
-      it('착수계', '착수계·현장대리인계·예정공정표', '착수,현장대리인계,예정공정', { id: 's-start' }),
+      it('착수계', '착수계(착공계)·현장대리인계·예정공정표', '착수,착공,현장대리인계,예정공정', { id: 's-start' }),
       it('착수계', '현장대리인 재직증명서·자격증', '재직증명,자격증', { required: false, note: '해당 시', id: 's-agent' }),
       it('착수계', '보안각서·보안서약서', '보안각서,보안서약', { required: false, note: '해당 용역', id: 's-security' }),
       it('착수계', '4대 사회보험 가입증명서', '사회보험가입증명,보험가입증명서,가입증명서', { id: 's-insjoin' }),
+      it('착수계', '4대 사회보험 가입자명부', '가입자명부', { required: false, note: '착공계로 낼 때·상용근로자', id: 's-roster' }),
       it('착수계', '고용·산재 가입증명원', '고용산재가입,가입증명원,고용보험가입,산재보험가입', { required: false, note: '단순노무용역', id: 's-empjoin' }),
       it('착수계', '노무비 지급확인제', '노무비지급확인,지급확인제', { required: false, note: '단순노무용역', id: 's-laborconfirm' }),
+      it('착수계', '노무비 개인정보 수집·이용·제공 동의서', LABOR_PRIV, { id: 's-laborpriv' }),
+      it('착수계', '손해배상공제(보험) 증권', '손해배상공제,손해배상보험,손해배상책임,배상책임보험,공제증권', { required: false, note: '착공계로 낼 때', id: 's-dmgins' }),
       it('준공계', '준공계·준공검사원', '준공계,준공검사원,준공신고,완료계', { id: 's-finish' }),
       it('준공계', '준공사진대지', '사진대지,준공사진', { id: 's-photo' }),
       it('준공계', '작업결과물', '결과물,결과보고,최종보고', { required: false, note: '해당 시', id: 's-result' }),
-      it('준공계', '4대 사회보험 완납증명서', '사회보험완납,사회보험료완납,4대보험완납,보험료완납', { id: 's-inspaid' }),
-      it('준공계', '하자보수 이행보증금 지급각서', '하자보수,하자이행,지급각서', { id: 's-defect' }),
+      it('준공계', '하자보수보증서(하자이행보증증권)', '하자보수보증서,하자보증서,하자이행보증,하자보수보증금,하자보증증권', { note: '또는 지급각서', alt: 's-defect', id: 's-defectbond' }),
+      it('준공계', '하자보수 이행보증금 지급각서', '하자보수이행보증금지급각서,하자지급각서,지급각서', { note: '또는 하자보수보증서', alt: 's-defectbond', id: 's-defect' }),
       it('준공계', '노무비 미체불 확약서', '미체불', { required: false, note: '단순노무용역', id: 's-nounpaid' }),
       it('준공계', '용역근로자 노무비 지급 내역서', '노무비지급내역,지급내역서', { required: false, note: '단순노무용역', id: 's-laborlist' }),
-      ...tail('s'),
+      ...tail('s', [
+        it(g6, '4대 사회보험 완납증명서', '사회보험완납,사회보험료완납,4대보험완납,보험료완납', { source: '메일', id: 's-inspaid' }),
+        it(g6, '고용·산재 완납증명서', '고용산재완납,고용보험료완납,산재보험료완납', { source: '메일', required: false, note: '해당 시(용역명 기재)', id: 's-emppaid' }),
+      ]),
     ];
     const 물품 = [
       ...head('g'),
@@ -95,6 +119,7 @@
       it('납품', '하자보수 이행보증금 지급각서', '하자보수,하자이행,지급각서', { required: false, note: '해당 시', id: 'g-defect' }),
       ...tail('g'),
     ];
+    물품.find((x) => x.id === 'g-bond').required = false; 물품.find((x) => x.id === 'g-bond').note = '해당 시';
     return { 공사, 용역, 물품 };
   }
   const STAGES = ['구매요구', '계약', '착공계', '착수계', '납품', '준공계', '준공조서', '대금청구', '지출결의'];
@@ -115,6 +140,40 @@
       else if (p < bp || (p === bp && nk.length > bl)) { best = item.id; bp = p; bl = nk.length; }
     }
     return best;
+  }
+  // 파일 이름에 서류 이름이 여럿(예: 견적서_산출내역.pdf, 사업자등록증·통장사본.pdf) → 이름에 나온 순서대로 서류 id
+  function itemsInName(list, fileName) {
+    const hay = norm(stem(fileName)); const hits = [];
+    for (const item of list) {
+      let pos = -1, len = 0;
+      for (const k of item.keywords) { const nk = norm(k); if (nk.length < 2) continue; const p = hay.indexOf(nk); if (p >= 0 && (pos < 0 || p < pos || (p === pos && nk.length > len))) { pos = p; len = nk.length; } }
+      if (pos >= 0) hits.push({ id: item.id, pos, len });
+    }
+    // 같은 자리에 겹친 짧은 단어(예: '등록증' 속 '사업자등록증')는 긴 쪽만
+    const keep = hits.filter((h) => !hits.some((o) => o !== h && o.pos <= h.pos && o.pos + o.len >= h.pos + h.len && o.len > h.len));
+    return keep.sort((a, b) => a.pos - b.pos).map((h) => h.id);
+  }
+  // 한 파일에 여러 양식(예: 착공계 묶음 PDF): 쪽마다 앞부분(제목 자리)에서 서류 이름을 찾음 → { 서류 id: [쪽 번호] }
+  function classifyPages(list, pageHeads, head = 40) {
+    const out = {};
+    (pageHeads || []).forEach((h, i) => {
+      const hay = norm(h); if (!hay) return;
+      let best = null, bp = 1e9, bl = 0;
+      for (const item of list) for (const k of item.keywords) {
+        const nk = norm(k); if (nk.length < 2) continue;
+        const p = hay.indexOf(nk); if (p < 0 || p > head) continue;
+        if (p < bp || (p === bp && nk.length > bl)) { best = item.id; bp = p; bl = nk.length; }
+      }
+      if (best) (out[best] = out[best] || []).push(i + 1);
+    });
+    return out;
+  }
+  // 한글처럼 쪽을 모를 때: 짧은 제목 줄(서류 이름만 있는 줄)에서 찾음
+  function classifyTitleLines(list, lines) {
+    const heads = (lines || []).filter((l) => { const t = String(l).replace(/\s+/g, ''); return t.length >= 3 && t.length <= 30; });
+    const pages = classifyPages(list, heads, 4);
+    for (const k of Object.keys(pages)) pages[k] = [];
+    return pages;
   }
   // 계약서 제목으로 공사/용역 추정
   function guessType(title) {
@@ -184,6 +243,16 @@
       if (s > bs) { best = c; bs = s; tie = false; } else if (s > 0 && s === bs) tie = true;
     }
     return bs > 0 && !tie ? best : null;
+  }
+  // 가장 높은 점수의 계약들(동점 포함) — 통장사본처럼 업체 이름만 있는 서류는 같은 업체 계약이 여럿이면 동점
+  function matchCandidates(contracts, hay) {
+    let bs = 0, top = [];
+    for (const c of contracts) {
+      if (c.archived) continue;
+      const s = contractScore(c, hay);
+      if (s > bs) { bs = s; top = [c]; } else if (s > 0 && s === bs) top.push(c);
+    }
+    return { score: bs, top };
   }
   const contractKey = (c) => baseNo((c.nums || [])[0]) || ('n:' + norm(c.name)) || ('x:' + uid());
 
@@ -420,11 +489,14 @@
   }
 
   // ---------- 상태 계산 ----------
+  // 서류가 이 칸에 들어 있나: 그 칸으로 분류됐거나, 여러 양식이 든 파일 안에 그 양식이 있음(d.also)
+  const holds = (d, id) => d.itemId === id || (d.also || []).includes(id);
+  const hasItem = (docs, physical, id) => (docs || []).some((d) => holds(d, id)) || !!(physical && physical[id]);
   function checklistStatus(list, docs, physical) {
     let reqTotal = 0, reqDone = 0; const missing = [], conv = [];
     for (const item of list) {
       const ds = docs.filter((d) => d.itemId === item.id);
-      const got = ds.length > 0 || !!(physical && physical[item.id]);
+      const got = hasItem(docs, physical, item.id) || !!(item.alt && hasItem(docs, physical, item.alt));
       if (item.required) { reqTotal++; if (got) reqDone++; else missing.push(item); }
       ds.forEach((d) => { if ((d.kind === 'hwp' && !d.pdfFile) || d.kind === 'other') conv.push(d); });
     }
@@ -513,11 +585,11 @@
     const fin = pickF(/-finish$/, 'finish') || pickF(/-inspect$/, 'inspect');
     if (fin && c.endDate) { const due = String(c.endDate).replace(/\D/g, '').slice(0, 8); const late = fin.v > due; out.push({ key: 'finish', label: '실제 준공일', nara: `준공기한 ${f8(due)}`, doc: f8(fin.v), from: src(fin.d), ok: late ? false : null, note: late ? '준공기한이 지나 준공 — 기간연장 등록 또는 지체상금을 확인하세요' : '준공기한 안에 준공' }); }
     // 업체·대표자·주소
-    const vd = pickF(/-contract$|-related$|-estimate$/, 'vendor');
+    const vd = pickF(/-contract$|-related$|-estimate$|-bizreg$|-corpreg$/, 'vendor');
     if (vd && c.vendor) { const same = vendorCore(vd.v) === vendorCore(c.vendor) || vendorCore(vd.v).includes(vendorCore(c.vendor)) || vendorCore(c.vendor).includes(vendorCore(vd.v)); out.push({ key: 'vendor', label: '업체', nara: c.vendor, doc: vd.v, from: src(vd.d), ok: same, note: same ? '' : '나라장터 업체와 다릅니다' }); }
-    const rp = pickF(/-related$|-contract$|-estimate$/, 'rep'), naraRep = c.rep || g.rep;
+    const rp = pickF(/-bizreg$|-corpreg$|-related$|-contract$|-estimate$/, 'rep'), naraRep = c.rep || g.rep;
     if (rp && naraRep) out.push({ key: 'rep', label: '대표자', nara: naraRep, doc: rp.v, from: src(rp.d), ok: norm(rp.v) === norm(naraRep), note: norm(rp.v) === norm(naraRep) ? '' : '나라장터 대표자와 다릅니다(대표자 변경 여부 확인)' });
-    const ad = pickF(/-related$|-contract$|-estimate$/, 'addr');
+    const ad = pickF(/-bizreg$|-corpreg$|-related$|-contract$|-estimate$/, 'addr');
     if (ad && g.addr) { const a = norm(ad.v).slice(0, 12), b = norm(g.addr).slice(0, 12); const same = a === b || norm(g.addr).includes(a) || norm(ad.v).includes(b); out.push({ key: 'addr', label: '업체 주소', nara: g.addr, doc: ad.v, from: src(ad.d), ok: same, note: same ? '' : '나라장터 주소와 다릅니다(본점 이전 여부 확인)' }); }
     // 예정가격·기초금액·예산액(나라장터에 있을 때만)
     for (const [k, nk, label] of [['est', 'plnprc', '예정가격'], ['design', 'bssamt', '기초금액·설계금액'], ['budget', 'budget', '예산액']]) {
@@ -525,6 +597,15 @@
       out.push({ key: k, label, nara: won(g[nk]), doc: won(dv.v), from: src(dv.d), ok: dv.v === g[nk], note: dv.v === g[nk] ? '' : '나라장터 값과 다릅니다' });
     }
     return out;
+  }
+  // 계약일 기준 3개월 이내 발급분이어야 하는 서류(법인등기사항증명서·인감증명서): 발급일이 계약일보다 3개월 넘게 앞서면 알림
+  const isRecentItem = (id) => /-(corpreg|seal)$/.test(String(id || ''));
+  function issuedTooEarly(issue, contractDate) {
+    const a = String(issue || '').replace(/\D/g, '').slice(0, 8), b = String(contractDate || '').replace(/\D/g, '').slice(0, 8);
+    if (a.length < 8 || b.length < 8) return null;
+    const lim = new Date(+b.slice(0, 4), +b.slice(4, 6) - 1 - 3, +b.slice(6, 8));
+    const d = new Date(+a.slice(0, 4), +a.slice(4, 6) - 1, +a.slice(6, 8));
+    return d < lim;
   }
   // 유효기간을 따지는 증명서: 4대 사회보험·고용산재 완납증명서, 국세·지방세 납세증명서
   const isCertItem = (id) => /-(inspaid|emppaid|tax|ltax)$/.test(String(id || ''));
@@ -560,7 +641,7 @@
     classifyItem, guessType, findMeta, vendorCore, baseNo, contractScore, matchContract, contractKey,
     API_BASE, API_OPS, TYPES, apiUrl, keyParam, monthRanges, parseApiText, parseApiBody, parseCorpList, parseCorpRows, normalizeApiItem, detectExtFinance,
     G2B, g2bUrl, scanAuditFields, summarizeChanges, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
-    checklistStatus, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail,
+    itemsInName, isRecentItem, issuedTooEarly, matchCandidates, checklistStatus, holds, hasItem, classifyPages, classifyTitleLines, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail,
   };
   root.JH = root.JH || {};
   root.JH.logic = api;

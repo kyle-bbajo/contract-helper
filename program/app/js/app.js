@@ -31,6 +31,7 @@
   const cardOpen = (() => { try { return JSON.parse(localStorage.getItem('jh.cards') || '{}') || {}; } catch (_) { return {}; } })();
   const ui = { view: 'home', sel: null, q: '', officer: '', officerTouched: false, type: '', state: '', board: '', sort: (() => { try { return localStorage.getItem('jh.sort') || 'end-desc'; } catch (_) { return 'end-desc'; } })() };
 
+  const CHECKLIST_VER = 3;
   const lists = (type) => (db.checklists && db.checklists[type]) || defaults[type] || defaults.공사;
   const contracts = () => Object.values(db.contracts).filter((c) => !c.archived);
   const docsOf = (key) => db.docs.filter((d) => d.key === key);
@@ -74,7 +75,8 @@
     const basis = payBasis(c), docs = docsOf(c.key), out = [];
     for (const x of lists(c.type)) {
       if (!L.isCertItem(x.id)) continue;
-      const ds = docs.filter((d) => d.itemId === x.id); if (!ds.length) continue;
+      const ds = docs.filter((d) => d.itemId === x.id);
+      if (!ds.length) { const inn = docs.find((d) => (d.also || []).includes(x.id)); if (inn) out.push({ item: x, valid: inn.validOverride || '', status: inn.validOverride ? (basis && inn.validOverride < basis.date ? 'short' : 'ok') : 'unknown', doc: inn }); continue; }
       // 같은 서류가 여러 개면 가장 오래 유효한 것으로 판단
       const vs = ds.map((d) => ({ d, valid: d.validOverride || (d.dates && d.dates.valid) || '' }));
       const best = vs.filter((v) => v.valid).sort((a, b) => (a.valid < b.valid ? 1 : -1))[0];
@@ -142,6 +144,21 @@
   }
 
   // ---------- 업로드 ----------
+  // 서류 → 계약: 번호·계약명·업체로 점수를 매기고, 동점(예: 통장사본처럼 업체 이름만 있는데 그 업체 계약이 여럿)이면
+  //  ① 함께 올린 다른 서류가 한 계약으로 갔으면 그 계약 ② 아직 지출 안 했고 준공이 지난 계약이 하나면 그 계약 ③ 아니면 미분류
+  let batchKeys = new Set();
+  function pickContract(hay, r) {
+    const { top } = L.matchCandidates(contracts(), hay);
+    if (top.length === 1) return top[0];
+    if (!top.length) return null;
+    const inBatch = top.filter((c) => batchKeys.has(c.key));
+    if (inBatch.length === 1) return inBatch[0];
+    const due = top.filter((c) => !c.paidDate && L.toDate(c.endDate) && L.toDate(c.endDate) <= today());
+    if (due.length === 1) return due[0];
+    const open = top.filter((c) => !c.paidDate);
+    if (open.length === 1) return open[0];
+    return null;
+  }
   async function ingest(fileList, forceKey, forceItem) {
     const files = [...fileList].filter((f) => f && f.name && !f.name.startsWith('.') && !/^(thumbs\.db|desktop\.ini)$/i.test(f.name));
     if (!files.length) return;
@@ -178,12 +195,31 @@
         if (c) r.key = c.key;
       }
       // 3) 나머지 서류는 내용으로 계약 찾기 → 서류 종류 → 저장
-      const byContract = {}, auditLines = {}; let inbox = 0;
+      // 먼저 확실히 한 계약으로 가는 서류를 모아 두고(같이 올린 묶음), 애매한 서류는 그 묶음 계약 쪽으로
+      batchKeys = new Set(recs.map((r) => r.key || (() => { const m = L.matchCandidates(contracts(), L.norm(L.stem(r.name)) + '|' + r.text); return m.top.length === 1 ? m.top[0].key : null; })()).filter(Boolean));
+      const byContract = {}, auditLines = {}; let inbox = 0, multiForm = 0;
       for (let i = 0; i < recs.length; i++) {
         const r = recs[i];
         progress(`정리하는 중 ${i + 1}/${recs.length}`, i / recs.length);
-        let c = forced || (r.key && db.contracts[r.key]) || L.matchContract(contracts(), L.norm(L.stem(r.name)) + '|' + r.text);
-        const itemId = c ? (forced && forceItem ? forceItem : L.classifyItem(lists(c.type), r.name, r.title)) : null;
+        let c = forced || (r.key && db.contracts[r.key]) || pickContract(L.norm(L.stem(r.name)) + '|' + r.text, r);
+        let itemId = c ? (forced && forceItem ? forceItem : L.classifyItem(lists(c.type), r.name, r.title)) : null;
+        // 한 파일에 여러 양식(착공계 묶음 등): 쪽마다 서류 이름을 찾아 함께 든 서류로 표시
+        let also = [], pagesOf = null;
+        if (c) {
+          try {
+            progress(`여러 양식이 든 파일인지 보는 중 ${i + 1}/${recs.length}`, i / recs.length);
+            const heads = await R.pageHeads(r.bytes, r.kind);
+            pagesOf = heads ? L.classifyPages(lists(c.type), heads) : r.kind === 'hwp' ? L.classifyTitleLines(lists(c.type), r.lines) : null;
+          } catch (e) { console.warn('쪽별 서류 찾기 실패', e); }
+          // 파일 이름에 서류가 여럿이면(견적서_산출내역.pdf) 그것도 함께 든 서류로
+          const named = forced && forceItem ? [] : L.itemsInName(lists(c.type), r.name);
+          if (named.length > 1) { pagesOf = pagesOf || {}; for (const id of named) if (!pagesOf[id]) pagesOf[id] = []; }
+          if (pagesOf) {
+            const ids = Object.keys(pagesOf);
+            if (!itemId && ids.length) itemId = ids.sort((a, b) => ((pagesOf[a][0] || 999) - (pagesOf[b][0] || 999)))[0];
+            also = ids.filter((id) => id !== itemId);
+          }
+        }
         const item = c && itemId ? lists(c.type).find((x) => x.id === itemId) : null;
         const dir = c ? folderOf(c) : INBOX;
         const fname = item ? `${L.safeName(item.name, 30)}_${r.name}` : r.name;
@@ -191,9 +227,11 @@
         db.docs.push({
           id: r.id, key: c ? c.key : null, itemId: item ? item.id : null, path: saved.path, name: r.name, kind: r.kind,
           size: r.size, mime: r.mime, addedAt: new Date().toISOString(), ocr: r.ocr, meta: r.meta, text: r.text, title: r.title, dates: r.dates, manual: !!forced, facts: L.docFacts(r.lines),
+          ...(also.length ? { also, pagesOf } : {}),
         });
         if (c) { byContract[c.key] = (byContract[c.key] || 0) + 1; c.updatedAt = Date.now(); } else inbox++;
-        if (c && item && AUDIT_DOC.test(item.id)) (auditLines[c.key] = auditLines[c.key] || []).push(r.lines);
+        if (c && item && (AUDIT_DOC.test(item.id) || also.some((id) => AUDIT_DOC.test(id)))) (auditLines[c.key] = auditLines[c.key] || []).push(r.lines);
+        if (also.length) multiForm++;
       }
       // 3-1) 견적서·설계내역서·사업자등록증 등에서 감사·검사 칸(예정가격·설계금액·주소·대표자)을 바로 채움(비어 있을 때만)
       let auditFilled = 0;
@@ -205,6 +243,7 @@
       let msg = `${recs.length}개 정리했습니다` + (parts.length ? ` — ${parts.join(', ')}` : '') + '.';
       if (newContracts) msg += ` 계약서에서 새 계약 ${newContracts}건을 만들었습니다.`;
       if (auditFilled) msg += ` 서류에서 감사·검사 칸 ${auditFilled}개를 채웠습니다.`;
+      if (multiForm) msg += ` 여러 양식이 든 파일 ${multiForm}개는 안에 든 서류마다 표시했습니다.`;
       if (skipped) msg += ` 이미 있는 파일 ${skipped}개는 건너뛰었습니다.`;
       if (R.ocrBroken) msg += ' 스캔본 글자 인식을 시작하지 못해 일부는 미분류로 갔습니다.';
       toast(msg, inbox ? '' : 'ok', inbox ? { label: '미분류 보기', run: () => setView('inbox') } : null);
@@ -625,16 +664,20 @@
           <div class="row"><span class="mark warn">!</span><div class="rname">종류 미정 ${untyped.length}개</div><div class="rside"></div><div class="files">${untyped.map((d) => fileRow(d, list)).join('')}</div></div></section>` : ''}
         ${groups.map((g, gi) => {
           const req = g.items.filter((x) => x.required);
-          const done = req.filter((x) => docs.some((d) => d.itemId === x.id) || gotMap(c)[x.id]).length;
+          const done = req.filter((x) => L.hasItem(docs, gotMap(c), x.id) || (x.alt && L.hasItem(docs, gotMap(c), x.alt))).length;
           const where = [...new Set(g.items.map((x) => SRC_LABEL[x.source] || x.source))].join(', ');
           return `<section class="stage${req.length && done === req.length ? ' done' : ''}">
             <div class="stage-head"><span class="stage-no">${gi + 1}</span><h3>${esc(g.name)}</h3><span class="where">${esc(where)}</span><span class="sum num">필수 ${done}/${req.length}</span></div>
             ${g.items.map((x) => {
               const ds = docs.filter((d) => d.itemId === x.id);
+              const inner = docs.filter((d) => d.itemId !== x.id && (d.also || []).includes(x.id));
               const orig = !!(c.originals || {})[x.id], rcv = !!(c.received || {})[x.id];
               const canOrig = L.ORIGINAL_SOURCES.includes(x.source);
+              const altItem = x.alt && L.hasItem(docs, gotMap(c), x.alt) ? list.find((y) => y.id === x.alt) : null;
               let mark, side;
-              if (ds.length) { const warn = ds.some((d) => (d.kind === 'hwp' && !d.pdfPath) || d.kind === 'other'); mark = warn ? '<span class="mark warn">!</span>' : '<span class="mark ok">✓</span>'; side = `<span class="num">${ds.length}개</span>`; }
+              if (!ds.length && inner.length) { mark = '<span class="mark ok">✓</span>'; side = '<span class="muted">묶음 파일 안</span>'; }
+              else if (!ds.length && !orig && !rcv && altItem) { mark = '<span class="mark opt">–</span>'; side = `<span class="optional">대신 ${esc(itemView(c, altItem).name)} 있음</span>`; }
+              else if (ds.length) { const warn = ds.some((d) => (d.kind === 'hwp' && !d.pdfPath) || d.kind === 'other'); mark = warn ? '<span class="mark warn">!</span>' : '<span class="mark ok">✓</span>'; side = `<span class="num">${ds.length}개</span>`; }
               else if (orig) { mark = '<span class="mark orig">원</span>'; side = '<span>원본 받음</span>'; }
               else if (rcv) { mark = '<span class="mark rcv">✓</span>'; side = '<span class="rcv-t">받음 표시</span>'; }
               else if (x.required) { mark = '<span class="mark miss">✕</span>'; side = '<span class="missing">누락</span>'; }
@@ -642,6 +685,13 @@
               const tog = (canOrig ? `<label class="orig-toggle" title="종이 원본으로 받았으면 체크하세요. 인쇄본의 이 자리에 원본을 끼울 안내 페이지가 들어갑니다."><input type="checkbox" data-act="orig" data-item="${esc(x.id)}"${orig ? ' checked' : ''}> 원본</label>` : '')
                 + (ds.length ? '' : `<label class="orig-toggle recv" title="파일 없이 이미 받았거나 처리한 서류면 체크하세요(지난 계약 등). 빠진 서류에서 빠지고, 인쇄 목록표에는 '받음 표시'로 나옵니다."><input type="checkbox" data-act="recv" data-item="${esc(x.id)}"${rcv ? ' checked' : ''}> 받음</label>`);
               const xv = itemView(c, x);
+              // 법인등기사항증명서·인감증명서: 계약일 기준 3개월 이내 발급분인지
+              if (ds.length && L.isRecentItem(x.id)) {
+                const iss = ds.map((d) => (d.dates && (d.dates.issue || d.dates.last)) || '').filter(Boolean).sort().pop();
+                const early = L.issuedTooEarly(iss, c.contractDate);
+                if (early === true) { mark = '<span class="mark miss">!</span>'; side = `<span class="valid bad" title="계약일 ${esc(L.fmtDate(c.contractDate))} 기준 3개월 이내 발급분이어야 합니다">${esc(L.fmtDate(iss))} 발급 · 3개월 넘음</span>`; }
+                else if (early === false) side = `<span class="valid ok">${esc(L.fmtDate(iss))} 발급 · 3개월 이내</span>`;
+              }
               const cv = (st.certs || []).find((v) => v.item.id === x.id);
               if (cv && ds.length) {
                 if (cv.status === 'short') { mark = '<span class="mark miss">!</span>'; side = `<span class="valid bad" title="지출요청일 ${esc(L.fmtDate(st.basis.date))}보다 먼저 끝남">${esc(L.fmtDate(cv.valid).slice(5))}까지 · 재발급</span>`; }
@@ -650,7 +700,7 @@
               }
               const add = `<button class="add-item" data-act="additem" data-item="${esc(x.id)}" title="${esc(xv.name)}(으)로 바로 넣기">+ 추가</button>`;
               return `<div class="row" data-drop-item="${esc(x.id)}">${mark}<div class="rname">${esc(xv.name)}${xv.note ? `<span class="note">${esc(xv.note)}</span>` : ''}</div>
-                <div class="rside">${tog}${side}${add}</div>${ds.length ? `<div class="files">${ds.map((d) => fileRow(d, list)).join('')}</div>` : ''}</div>`;
+                <div class="rside">${tog}${side}${add}</div>${ds.length || inner.length ? `<div class="files">${ds.map((d) => fileRow(d, list)).join('')}${inner.map((d) => `<div class="file inner"><span class="ft">묶음</span><span class="fn" title="${esc(d.name)}">${esc(d.name)}</span><span class="muted small">${(d.pagesOf && d.pagesOf[x.id] && d.pagesOf[x.id].length) ? esc(d.pagesOf[x.id].join('·')) + '쪽' : '이 파일 안'}</span><button class="link sm" data-act="view" data-doc="${d.id}">보기</button></div>`).join('')}</div>` : ''}</div>`;
             }).join('')}
           </section>`;
         }).join('')}
@@ -697,7 +747,7 @@
     for (const { c } of rows) {
       const docs = docsOf(c.key);
       for (const x of lists(c.type)) {
-        const ds = docs.filter((d) => d.itemId === x.id); const orig = !!(c.originals || {})[x.id], rcv = !!(c.received || {})[x.id];
+        const ds = docs.filter((d) => L.holds(d, x.id)); const orig = !!(c.originals || {})[x.id], rcv = !!(c.received || {})[x.id];
         detail.rows.push([c.name, c.no, x.group, itemView(c, x).name, x.required ? '필수' : '해당 시', ds.length ? '받음' : orig ? '원본 받음' : rcv ? '받음 표시' : x.required ? '누락' : '', ds.map((d) => d.name).join('\n')]);
       }
     }
@@ -853,7 +903,7 @@
   }
 
   // 서류 글자 → 감사 칸(정규식으로 먼저, 남은 칸은 PC 안 AI)
-  const AUDIT_DOC = /-(estimate|related|req|contract|start|finish|inspect)$/;
+  const AUDIT_DOC = /-(estimate|calc|related|bizreg|corpreg|seal|req|contract|start|finish|inspect)$/;
   const AUDIT_AI_SYSTEM = '너는 공공기관 계약 서류에서 값을 찾아 JSON으로만 답한다. 서류에 적혀 있지 않은 값은 null로 둔다. 추측하거나 계산하지 않는다. 금액은 원 단위 정수(쉼표 없이)로 쓴다.';
   const AUDIT_MAP = { budget: 'aBudget', design: 'aDesign', est: 'aEst', addr: 'aAddr', rep: 'aRep' };
   // 서류 글자(줄 묶음 여러 개)에서 글자 규칙으로 찾은 값을 빈 감사 칸에만 넣음. 넣은 칸 수를 돌려줌(저장은 부른 쪽에서)
@@ -1411,6 +1461,14 @@
       cfg = mergeCfg((await S.readJson(CFG_PATH)) || {});
       const saved = await S.readJson(DB_PATH);
       if (saved && saved.contracts) { db = { ...db, ...saved }; await S.writeJson('서류대장.백업.json', saved); }
+      // 서류 목록이 바뀌면(2: 대금청구에 완납증명서·지역개발채권, 착공계 손해배상공제·노무비 개인정보 동의서, 준공계 하자보수보증서)
+      // 저장해 둔 목록에 새 기본 목록을 넣고, 직접 추가한 서류는 그대로 둠
+      if (db.checklists && db.checklistsVer !== CHECKLIST_VER) {
+        const fresh = {};
+        const OLD_DEFAULT = /^[csg]-(req|contract|estimate|related|start|agent|laborconfirm|roster|insjoin|empjoin|finish|photo|inspaid|nounpaid|laborlist|emppaid|defect|security|result|spec|inspect|claim|bank|tax|ltax|invoice|pay)$/;
+        for (const t of Object.keys(defaults)) { const ids = new Set(defaults[t].map((x) => x.id)); fresh[t] = [...defaults[t], ...((db.checklists[t] || []).filter((x) => !ids.has(x.id) && !OLD_DEFAULT.test(x.id)))]; }
+        db.checklists = fresh; db.checklistsVer = CHECKLIST_VER; saveDb(true);
+      } else if (!db.checklists) db.checklistsVer = CHECKLIST_VER;
       JH.settings.setInfo(info);
       if (info.relocated) toast(`데이터 폴더가 옮겨진 것을 찾았습니다: ${info.dataDir}`, 'ok');
       if (info.lost) banner(`예전 데이터 폴더(${esc(info.oldDir)})를 찾지 못해 임시로 새 폴더를 쓰고 있습니다. <button class="link" id="bannerFind">옮긴 폴더 고르기</button>`, true);

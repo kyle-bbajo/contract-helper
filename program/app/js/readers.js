@@ -110,5 +110,41 @@
     if (kind === 'hwp') return JH.hwp.fullLines(root.CFB, bytes);
     return [];
   }
-  root.JH.readers = { read, fullLines, pdfLines, hwpLines, ocrLines, get ocrBroken() { return ocrBroken; } };
+  // 쪽마다 앞부분 글자(여러 양식이 든 파일에서 쪽별 서류 이름 찾기). 글자 PDF는 40쪽까지, 스캔 PDF는 8쪽까지 위쪽만 글자 인식
+  async function pageHeads(bytes, kind) {
+    if (kind !== 'pdf' || !root.pdfjsLib) return null;
+    const doc = await root.pdfjsLib.getDocument({ data: bytes.slice(), ...PDFJS_OPTS }).promise;
+    const heads = [];
+    try {
+      const n = Math.min(40, doc.numPages);
+      if (n < 2) return null;
+      let scanned = 0;
+      for (let p = 1; p <= n; p++) {
+        const page = await doc.getPage(p);
+        const tc = await page.getTextContent();
+        const rows = [];
+        for (const it of tc.items) { if (!it.str || !it.str.trim()) continue; const y = it.transform[5]; let r = rows.find((q) => Math.abs(q.y - y) < 4); if (!r) rows.push(r = { y, s: [] }); r.s.push({ x: it.transform[4], t: it.str }); }
+        rows.sort((a, b) => b.y - a.y);
+        let head = rows.slice(0, 8).map((r) => r.s.sort((a, b) => a.x - b.x).map((x) => x.t).join(' ')).join(' ');
+        if (JH.logic.norm(head).length < 4 && scanned < 8 && !ocrBroken && root.Tesseract) {
+          // 스캔본: 쪽 위쪽 30%만 그려 글자 인식
+          scanned++;
+          try {
+            const v1 = page.getViewport({ scale: 1 }); const vp = page.getViewport({ scale: Math.min(2, 1600 / Math.max(v1.width, v1.height)) });
+            const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+            const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+            await page.render({ canvasContext: g, viewport: vp }).promise;
+            const top = document.createElement('canvas'); top.width = c.width; top.height = Math.ceil(c.height * 0.3);
+            top.getContext('2d').drawImage(c, 0, 0);
+            const w = await getOcr();
+            const { data } = await withTimeout(w.recognize(top), 60000, '글자 인식');
+            head = String(data.text || '').replace(/\s+/g, ' ').trim();
+          } catch (e) { console.warn('쪽 글자 인식 실패', p, e); }
+        }
+        heads.push(head);
+      }
+    } finally { doc.destroy(); }
+    return heads;
+  }
+  root.JH.readers = { read, fullLines, pdfLines, hwpLines, ocrLines, pageHeads, get ocrBroken() { return ocrBroken; } };
 })(window);
