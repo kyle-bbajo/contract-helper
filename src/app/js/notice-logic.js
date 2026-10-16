@@ -31,11 +31,19 @@
       { name: '기타', license: '', law: '' },
     ],
     용역: [
-      { name: '시설물 유지관리', license: '', law: '' },
-      { name: '청소·경비 등 단순노무', license: '', law: '' },
-      { name: '설계·감리 등 기술용역', license: '', law: '' },
-      { name: '학술·연구', license: '', law: '' },
-      { name: '정보화(SW)', license: '소프트웨어사업자', law: '소프트웨어 진흥법' },
+      { name: '폐기물 수집·운반·처리', license: '', law: '폐기물관리법', q: '폐기물' },
+      { name: '시설물 유지관리', license: '', law: '', q: '유지관리' },
+      { name: '청소·경비 등 단순노무', license: '', law: '', q: '청소' },
+      { name: '소독·방역', license: '', law: '감염병의 예방 및 관리에 관한 법률', q: '방역' },
+      { name: '승강기 유지관리', license: '승강기유지관리업', law: '승강기 안전관리법', q: '승강기' },
+      { name: '소방시설 점검·관리', license: '소방시설관리업', law: '소방시설 설치 및 관리에 관한 법률', q: '소방시설' },
+      { name: '안전진단·점검', license: '', law: '시설물의 안전 및 유지관리에 관한 특별법', q: '안전점검' },
+      { name: '수목·조경 관리', license: '', law: '', q: '수목' },
+      { name: '측량', license: '측량업', law: '공간정보의 구축 및 관리 등에 관한 법률', q: '측량' },
+      { name: '설계·감리 등 기술용역', license: '', law: '', q: '설계' },
+      { name: '학술·연구', license: '', law: '', q: '연구' },
+      { name: '정보화(SW)', license: '소프트웨어사업자', law: '소프트웨어 진흥법', q: '시스템' },
+      { name: '행사·홍보', license: '', law: '', q: '행사' },
       { name: '기타', license: '', law: '' },
     ],
   };
@@ -176,14 +184,14 @@
     if (q.priceMax) p.set('presmptPrceEnd', String(Math.round(q.priceMax)));
     return `${BID_BASE}/${BID_OPS[kind] || BID_OPS.공사}?serviceKey=${encodeURIComponent(String(apiKey || '').trim())}&${p.toString()}`;
   }
-  // 공고문 진행 상태: 작성 중 → 작성 완료(한글 양식 만듦·직접 표시) → 나라장터 등록(사람이 나라장터에서 등록한 뒤 받은 입찰공고번호를 넣어 연결 — 등록 API는 없음)
+  // 공고문 진행 상태: 작성 중 → 작성 완료(한글 파일 만듦·직접 표시). 나라장터 등록은 사람이 직접 하므로 따로 묶지 않음
   const STATUS = {
     draft: { label: '작성 중', cls: 'late' },
     done: { label: '작성 완료', cls: 'ready' },
-    posted: { label: '나라장터 등록', cls: 'paid' },
   };
-  const STATUS_ORDER = ['draft', 'done', 'posted'];
-  const statusOf = (n) => (n && STATUS[n.status] ? n.status : n && n.lastFile ? 'done' : 'draft');
+  const STATUS_ORDER = ['draft', 'done'];
+  // 예전 '나라장터 등록'(posted)은 작성 완료로 봄
+  const statusOf = (n) => (n && n.status === 'posted' ? 'done' : n && STATUS[n.status] ? n.status : n && n.lastFile ? 'done' : 'draft');
   // 나라장터 입찰공고번호: "R26BK01234567-000", "R26BK01234567 000", "20261012345-00" 등
   function parseBidNo(s) {
     const m = String(s || '').toUpperCase().replace(/\s+/g, ' ').trim().match(/^([A-Z0-9]{8,15})(?:[- ]?(\d{2,3}))?$/);
@@ -307,7 +315,8 @@
     if (!r || /전국|없음/.test(r)) return '';
     return `입찰공고일 전일부터 입찰일(낙찰자는 계약체결일)까지 법인등기부상 본점 소재지(개인사업자는 사업자등록증상 소재지)가 ${r}에 있는 자`;
   }
-  function draft(v, learned) {
+  const draft = (v, learned) => applyPicks(draft0(v, learned), v);
+  function draft0(v, learned) {
     const kind = v.구분 === '용역' ? '용역' : '공사';
     const full = learned ? learnDocument(learned.bids, v) : null;
     if (full && full.sections.length >= 3) return draftFull(v, full, kind);
@@ -324,7 +333,7 @@
       v.기초금액 ? `  기초금액: 금 ${won(money(v.기초금액))}원` : null,
       `  입찰방법: 전자입찰, ${v.계약방법 || ''}${v.낙찰자결정방법 ? `, ${v.낙찰자결정방법}` : ''}`,
     ].filter(Boolean).join('\n') });
-    const q = [v.업종제한, regionSentence(v.지역제한), '관계 법령에 따른 경쟁입찰 참가자격을 갖추고 국가종합전자조달시스템(나라장터)에 입찰참가자격을 등록한 자'].filter(Boolean);
+    const q = [v.업종문장 || v.업종제한, regionSentence(v.지역제한), '관계 법령에 따른 경쟁입찰 참가자격을 갖추고 국가종합전자조달시스템(나라장터)에 입찰참가자격을 등록한 자'].filter(Boolean);
     if (ls && ls.입찰참가자격.length >= 2) {
       // 비슷한 공고들이 공통으로 쓴 참가자격 문장(이번 업종·지역으로 바꿈)
       S.push({ title: '2. 입찰참가자격', learned: ls.n, body: ls.입찰참가자격.map((x, i) => `  ${'가나다라마바사아'[i]}. ${x.text}`).join('\n') +
@@ -370,7 +379,7 @@
   }
   // 비슷한 공고 전체를 뼈대로 쓴 초안: 1절(입찰에 부치는 사항)·일정·문의는 이번 값, 나머지는 실제 공고 문장
   function draftFull(v, full, kind) {
-    const basic = draft(v); // 학습 없는 기본 초안(이번 값 문장)
+    const basic = draft0(v); // 학습 없는 기본 초안(이번 값 문장)
     const sec = (re) => basic.find((x) => re.test(x.title));
     const S = [sec(/제목/)];
     let no = 0;
@@ -421,7 +430,36 @@
       .replace(RE_DATE, '{날짜}').replace(RE_TIME, '{시각}').replace(/\s+/g, ' ').trim();
   }
   const CLAUSE_LINES = (text) => String(text || '').split(/\n+/).map((l) => l.replace(BULLET, '').replace(/\s+/g, ' ').trim()).filter((l) => l.length >= 10 && l.length <= 400);
-  function learnSentences(bids) {
+  // 다른 기관 공고의 문장을 우리 것으로: 그 기관 이름 → 우리 기관명, "○○시 관내/에 본점" → 우리 지역, 그 기관 홈페이지 → ○○
+  const escRe = (x) => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  function orgNames(b) {
+    const out = new Set();
+    for (const o of [b && b.org, b && b.demand]) {
+      const t = String(o || '').trim(); if (!t) continue;
+      out.add(t);
+      const parts = t.split(/\s+/); if (parts.length > 1) out.add(parts[parts.length - 1]);
+      (t.match(/[가-힣]{1,6}(?:특별자치시|광역시|특별시|시|군|구)(?=\s|$)/g) || []).forEach((c) => out.add(c));
+    }
+    return [...out].filter((x) => x.length >= 2 && !/^(시|군|구|도)$/.test(x)).sort((a, c) => c.length - a.length);
+  }
+  function localize(text, b, v) {
+    const me = (v && v.기관명) || '';
+    const region = v && v.지역제한 && !/전국|없음/.test(v.지역제한) ? v.지역제한 : '';
+    const names = orgNames(b).filter((nm) => !(me && (nm === me || me.includes(nm) || nm.includes(me))));
+    if (!names.length) return String(text);
+    let x = String(text);
+    const re = new RegExp('(' + names.map(escRe).join('|') + ')(청장|구청장|장|군수|청)?(은|는|이|가|을|를|과|와)?', 'g');
+    // 받침에 맞춘 조사(용인도시공사는 / 용인시는)
+    const jong = (w) => { const c = String(w).charCodeAt(String(w).length - 1) - 0xac00; return c >= 0 && c <= 11171 && c % 28 !== 0; };
+    const josa = (w, j) => (!j ? '' : ({ 은: ['은', '는'], 는: ['은', '는'], 이: ['이', '가'], 가: ['이', '가'], 을: ['을', '를'], 를: ['을', '를'], 과: ['과', '와'], 와: ['과', '와'] }[j] || [j, j])[jong(w) ? 0 : 1]);
+    x = x.replace(re, (m, nm, suf, j, off, all) => {
+      const after = all.slice(off + m.length, off + m.length + 14);
+      const w = /(시|군|구|도)$/.test(nm) && !suf && !j && /^\s*(관내|내에|내\s|에\s*(본점|주된|소재|있는|위치)|소재|지역)/.test(after) ? region || '○○' : me || '○○';
+      return w + josa(w, j);
+    });
+    return x.replace(/(https?:\/\/)?www\.[a-z0-9.-]+\.(go|or|co|re)\.kr(\/[^\s)」]*)?/gi, (u) => (/g2b|law\.go|ftc\.go|mois\.go|pps\.go|kca\.go/.test(u) ? u : '○○'));
+  }
+  function learnSentences(bids, v) {
     const by = {}; let n = 0;
     for (const b of bids || []) {
       if (!b.clauses || !b.clauses.length) continue;
@@ -429,7 +467,7 @@
       for (const c of b.clauses) {
         const seen = new Set();
         CLAUSE_LINES(c.text).forEach((line, i) => {
-          const key = slotify(line); if (seen.has(key)) return; seen.add(key);
+          const key = slotify(v ? localize(line, b, v) : line); if (seen.has(key)) return; seen.add(key);
           const t = (by[c.title] = by[c.title] || {});
           const e = (t[key] = t[key] || { key, count: 0, pos: 0, samples: [] });
           e.count++; e.pos += i; if (e.samples.length < 2) e.samples.push(line);
@@ -452,12 +490,106 @@
   // 배운 문장 초안: 절 제목별로 공통 문장(공고 3건 이상이면 2건 이상이 쓴 것)
   function learnedSections(learned, v) {
     if (!learned || !learned.bids) return null;
-    const L = learnSentences(learned.bids);
+    const L = learnSentences(learned.bids, v);
     if (!L.n) return null;
     const min = L.n >= 3 ? 2 : 1;
     const pick = (title, max) => (L.by[title] || []).filter((e) => e.count >= min).slice(0, max)
       .sort((a, b) => a.pos - b.pos).map((e) => ({ text: fillSlots(e.key, v), count: e.count })).filter((x) => x.text);
     return { n: L.n, 입찰참가자격: pick('입찰참가자격', 8), 낙찰자결정: pick('낙찰자 결정', 2), 입찰보증금: pick('입찰보증금', 1), 공동도급: pick('공동도급', 1) };
+  }
+
+  // ---------- 참가자격 업종 문장 예시(비슷한 공고·지난 공고문) ----------
+  const RE_LIC_LINE = /\[[^\]]{2,30}업|[가-힣·]{0,12}(공사|시설|설비|관리|운반|처리|재활용|측량|엔지니어링|소독|정보통신|전기|조경|건설|수집|대행|제조|감리|설계|진단|경비|청소|방역)업(?!자)/;
+  // loose: 지역 조건과 한 문장인 것도(예시 보기용)
+  const isLicLine = (t, loose) => RE_LIC_LINE.test(t) && /(등록|면허|허가|신고|보유|갖춘|갖추)/.test(t) && !/하도급|공동수급체\s*구성원\s*중|부정당/.test(t) && (loose || !/소재지|영업소/.test(t)) && t.length >= 15 && t.length <= 500;
+  // "…을 등록한 업체이어야 합니다." → "…을 등록하고" (지역 조건과 한 문장인 양식에 끼워 넣을 때)
+  const licClause = (s) => { const t = String(s).trim(); const r = t.replace(/\s*(등록|보유)\s*(한|된)\s*(업체|자)\s*(이어야|여야|이여야|로서|일\s*것)?\s*(합니다|함)?\s*\.?\s*$/, ' $1하고'); return r !== t ? r : t.replace(/\.\s*$/, ''); };
+  // 공고마다 달라 담당자가 골라야 하는 문장(주제). test는 앞 번호를 뗀 문장으로 판단
+  const TOPICS = [
+    { key: '업종', label: '참가자격 업종', sec: /자격/, test: (t) => isLicLine(t, true) },
+    { key: '지역', label: '지역 제한(본점 소재지)', sec: /자격/, test: (t) => /본점\s*(의\s*)?소재지|본점\s*\(|주된\s*영업소|소재지가|에\s*소재하는|관내로/.test(t) && !RE_LIC_LINE.test(t) && !/공동\s*수급체|공동\s*이행/.test(t) },
+    { key: '공동도급', label: '공동도급(공동수급)', sec: /공동|자격/, test: (t) => /공동\s*(수급|도급|계약|이행|참여)|분담\s*이행/.test(t) && !/협정서\s*제출\s*기간|부정당/.test(t) },
+    { key: '하도급', label: '하도급', sec: /계약|기타/, test: (t) => /하도급\s*(을|를|은|는)?\s*(불허|허용|금지|제한)|하도급\s*(가능\s*)?여부/.test(t) && !/공동\s*수급/.test(t) },
+    { key: '보증금', label: '입찰보증금', sec: /보증금|기타/, test: (t) => /입찰\s*보증금/.test(t) && !/귀속|세입/.test(t) },
+    { key: '낙찰', label: '낙찰자 결정', sec: /낙찰/, test: (t) => /낙찰자\s*결정은|낙찰자로\s*결정|계약상대자를\s*결정/.test(t) && !/동일\s*가격|유의서/.test(t) },
+    { key: '현장설명', label: '현장설명', sec: /기타|부치는/, test: (t) => /현장\s*설명/.test(t) },
+    { key: '상생결제', label: '상생결제', sec: /계약|기타|방식/, test: (t) => /상생\s*결제\s*(시스템)?\s*(을\s*)?(이용|적용)?\s*(대상|공사)/.test(t) && t.length < 160 },
+    { key: '노무비', label: '노무비 구분관리', sec: /계약|기타|방식/, test: (t) => /노무비\s*구분\s*관리/.test(t) },
+    { key: '하자', label: '하자담보책임기간', sec: /계약|기타/, test: (t) => /하자\s*담보\s*책임/.test(t) },
+  ];
+
+  const topicText = (t) => bulletOf(String(t).replace(/\s+/g, ' ').trim()).body.trim();
+  const topicOk = (tp, t) => t.length >= 12 && t.length <= 500 && tp.test(t);
+  // 지금 고른 문장: 업종은 v.업종문장, 나머지는 v.고른문장[주제]
+  const pickOf = (v, k) => (k === '업종' ? v.업종문장 : (v.고른문장 || {})[k]) || '';
+  // 주제마다 비슷한 공고(고른 것)·지난 공고문이 쓴 문장. 같은 문장(값 자리 빼고)은 하나로, 쓴 공고를 모두 붙임
+  function topicVariants(learned, notices, v, selfId) {
+    const out = TOPICS.map((tp) => ({ ...tp, test: undefined, sec: undefined, variants: new Map(), docs: 0 }));
+    const add = (i, raw, src, b) => {
+      const t = b ? localize(topicText(raw), b, v || {}) : topicText(raw), tp = TOPICS[i]; if (!topicOk(tp, t)) return;
+      const k = slotify(t).replace(/\s+/g, '');
+      const shown = tp.key === '업종' ? t : fillSlots(slotify(t), v) || t;
+      const e = out[i].variants.get(k) || out[i].variants.set(k, { text: t, shown, srcs: [] }).get(k);
+      if (!e.srcs.some((x) => x.name === src.name)) e.srcs.push(src);
+    };
+    for (const b of (learned && learned.bids) || []) {
+      const src = { name: b.name, org: b.org, price: b.price, date: (b.date || '').slice(0, 10), url: b.url, kind: 'bid' };
+      const lines = (b.doc && b.doc.sections && b.doc.sections.length) ? b.doc.sections.flatMap((x) => x.lines) : (b.clauses || []).flatMap((c) => c.text.split(/\n/));
+      if (!lines.length) continue;
+      TOPICS.forEach((tp, i) => { const before = out[i].variants.size; let hit = false; lines.forEach((l) => { const t = topicText(l); if (topicOk(tp, t)) { hit = true; add(i, l, src, b); } }); if (hit) out[i].docs++; void before; });
+    }
+    for (const n of notices || []) {
+      if (n.id === selfId || !n.v) continue;
+      const src = { name: n.v.공고명 || '제목 없는 공고문', date: new Date(n.updatedAt || 0).toISOString().slice(0, 10), kind: 'mine' };
+      TOPICS.forEach((tp, i) => { const t = pickOf(n.v, tp.key); if (t) add(i, t, src); });
+    }
+    const want = worksOf(v || {}).map((w) => w.license).filter(Boolean);
+    return out.map((o) => {
+      const vs = [...o.variants.values()].map((e) => ({ ...e, match: o.key === '업종' && want.some((w) => e.text.includes(w)) }));
+      const score = (e) => (e.match ? 1000 : 0) + (e.srcs.some((x) => x.kind === 'mine') ? 500 : 0) + e.srcs.length * 10;
+      vs.sort((a, b) => score(b) - score(a));
+      return { key: o.key, label: o.label, docs: o.docs, variants: vs.slice(0, 12), current: pickOf(v || {}, o.key) };
+    }).filter((o) => o.variants.length || o.current);
+  }
+  // 문장 초안에 고른 문장 넣기: 같은 주제 첫 줄을 바꾸고, 없으면 알맞은 절 끝에 붙임
+  function applyPicks(S, v) {
+    const picks = TOPICS.map((tp) => [tp, pickOf(v, tp.key)]).filter(([, t]) => t);
+    if (!picks.length) return S;
+    const out = S.map((x) => ({ ...x }));
+    for (const [tp, text] of picks) {
+      let done = false;
+      for (const sc of out) {
+        if (/제목/.test(sc.title)) continue;
+        const ls = sc.body.split('\n');
+        const i = ls.findIndex((l) => topicOk(tp, topicText(l)));
+        if (i >= 0) { const m = ls[i].match(/^(\s*)(.*)$/); const b0 = bulletOf(m[2]); ls[i] = m[1] + (b0.mark ? b0.mark + ' ' : '') + text; sc.body = ls.join('\n'); sc.picked = true; done = true; break; }
+      }
+      if (!done) { const sc = out.find((x) => tp.sec.test(x.title)) || out[out.length - 1]; sc.body += `\n  - ${text}`; sc.picked = true; }
+    }
+    return out;
+  }
+  function licenseExamples(learned, notices, v, selfId) {
+    const map = new Map();
+    const add = (text, src) => {
+      const t = bulletOf(String(text).replace(/\s+/g, ' ').trim()).body.trim(); if (!isLicLine(t, true)) return;
+      const k = t.replace(/\s+/g, '').replace(/\(\d{4}\)/g, '');
+      const e = map.get(k) || map.set(k, { text: t, srcs: [] }).get(k);
+      if (!e.srcs.some((x) => x.name === src.name)) e.srcs.push(src);
+    };
+    for (const b of (learned && learned.bids) || []) {
+      const src = { name: b.name, org: b.org, price: b.price, date: (b.date || '').slice(0, 10), url: b.url, kind: 'bid' };
+      const secs = (b.doc && b.doc.sections) || [];
+      for (const sc of secs) if (sc.key === '입찰참가자격' || /자격/.test(sc.head)) sc.lines.forEach((l) => add(l, src));
+      if (!secs.length) for (const c of b.clauses || []) if (c.title === '입찰참가자격') c.text.split(/\n/).forEach((l) => add(l, src));
+    }
+    for (const n of notices || []) {
+      if (n.id === selfId || !n.v) continue;
+      const t = n.v.업종문장 || '';
+      if (t) add(t, { name: n.v.공고명 || '제목 없는 공고문', date: new Date(n.updatedAt || 0).toISOString().slice(0, 10), kind: 'mine' });
+    }
+    const want = worksOf(v || {}).map((w) => w.license);
+    const score = (e) => (want.some((w) => e.text.includes(w)) ? 1000 : 0) + (e.srcs.some((x) => x.kind === 'mine') ? 500 : 0) + e.srcs.length * 10;
+    return [...map.values()].sort((a, b) => score(b) - score(a)).slice(0, 30).map((e) => ({ ...e, match: want.some((w) => e.text.includes(w)) }));
   }
 
   // ---------- 공고문 전체 배우기 ----------
@@ -520,15 +652,14 @@
     // 다른 공고와 겹치는 문장이 가장 많은 공고가 뼈대
     const score = docs.map((b) => b.doc.sections.reduce((a, s) => a + s.lines.reduce((x, l) => x + cnt(lineKey(s.key, l)) - 1, 0), 0) + b.doc.sections.length * 0.1);
     const R = docs[score.indexOf(Math.max(...score))];
-    const swap = (t) => {
+    const swap = (t, b) => {
       let x = String(t);
-      if (R.name && v.공고명) x = x.split(R.name).join(v.공고명);
-      if (R.org && v.기관명 && R.org !== v.기관명) x = x.split(R.org).join(v.기관명);
-      return x;
+      if (b.name && v.공고명) x = x.split(b.name).join(v.공고명);
+      return localize(x, b, v);
     };
-    const fill = (sec, l) => {
+    const fill = (sec, l, b = R) => {
       const { mark, body } = bulletOf(l);
-      const key = slotify(swap(body));
+      const key = slotify(swap(body, b));
       if (sec === '입찰서 제출·개찰' && /\{날짜\}|\{시각\}/.test(key)) return null; // 일정은 이번 값으로 따로 씀
       const text = fillSlots(key, v); if (!text) return null;
       return { mark, text, common: cnt(lineKey(sec, l)) >= Math.max(2, min), check: /○○/.test(text) };
@@ -539,7 +670,7 @@
     for (const [key, set] of secSeen) {
       if (set.size < min || sections.some((s) => s.key === key)) continue;
       const b = docs[[...set][0]]; const s = b.doc.sections.find((x) => x.key === key);
-      sections.push({ key, head: s.head, docs: set.size, lines: uniq(s.lines.map((l) => fill(key, l))) });
+      sections.push({ key, head: s.head, docs: set.size, lines: uniq(s.lines.map((l) => fill(key, l, b))) });
     }
     return { n, base: { name: R.name, org: R.org, no: R.no }, sections };
   }
@@ -837,7 +968,7 @@
     }
     const names = [...oldNames].filter((x) => x && x.length >= 4 && v.공고명 && x !== v.공고명).sort((a, b) => b.length - a.length);
     const numIn = (h, n) => h[0].replace(/[\d,]{3,}/, n ? won(n) : BLANK_MONEY);
-    const licWords = new Set(), licCode = {}; let inQual = false;
+    const licWords = new Set(), licCode = {}; let inQual = false, licDone = false;
     for (const p of paras) {
       const t0 = ptext(p);
       for (const nm of names) if (subAll(p, new RegExp(nm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), v.공고명)) done.add('공고명');
@@ -858,6 +989,17 @@
       if (lic && subAll(p, new RegExp(RE_LICENSE.source, 'g'), lic, /등록|면허|업종/)) done.add('업종제한');
       // 큰 제목으로 참가자격 절인지 따짐(업종 문장 점검은 그 절 안에서만)
       const hd = t0.match(/^\s*\d{1,2}\s*\.\s*(\S.{0,30})$/); if (hd) inQual = /참가\s*자격|견적\s*참가/.test(hd[1]);
+      if (v.업종문장 && inQual && !licDone && isLicLine(t0.trim(), true) && /소재지|영업소/.test(t0)) {
+        // 업종과 지역이 한 문장인 양식: "…자격을 갖추고, (업종) 등록하고, (지역)…" 의 업종 부분만 바꿈
+        const t1 = ptext(p), m = t1.match(/(갖추고\s*,?\s*)(.+?(등록|보유)\s*하고\s*,?\s*)/);
+        if (m) { const at0 = m.index + m[1].length; spliceRuns(p.texts, at0, at0 + m[2].length, licClause(v.업종문장) + ', '); licDone = true; done.add('업종제한'); notes.add('참가자격 업종 문장(지역 조건과 한 문장 — 이어지는지 확인)'); continue; }
+      }
+      if (v.업종문장 && inQual && !licDone && isLicLine(t0.trim())) {
+        const t1 = ptext(p), lead = (t1.match(/^\s*/) || [''])[0], b0 = bulletOf(t1.slice(lead.length));
+        const at0 = lead.length + (b0.mark ? t1.slice(lead.length).indexOf(b0.body) : 0);
+        spliceRuns(p.texts, at0, t1.replace(/\s+$/, '').length, String(v.업종문장).trim());
+        licDone = true; done.add('업종제한'); continue;
+      }
       const codes = [...t0.matchAll(/\[\s*([가-힣·]{2,20}업)\s*\((\d{4})\)\s*\]/g)];
       codes.forEach((h) => { licWords.add(h[1]); licCode[h[1]] = h[2]; });
       if (ws.length && codes.length) {
@@ -887,9 +1029,21 @@
         done.add('공고일'); if (!v.공고일) notes.add('공고일(오늘 날짜로 넣음)');
       }
     }
+    // 담당자가 고른 문장(업종 말고): 양식에서 같은 주제의 첫 문단 본문을 통째로 바꿈(앞 번호·들여쓰기는 그대로)
+    const usedP = new Set();
+    for (const tp of TOPICS) {
+      if (tp.key === '업종') continue;
+      const text = pickOf(v, tp.key); if (!text) continue;
+      const p = paras.find((q) => !usedP.has(q) && topicOk(tp, topicText(ptext(q))));
+      if (!p) { notes.add(`고른 ${tp.label} 문장을 넣을 자리를 양식에서 못 찾음 — 한글에서 직접 넣으세요`); continue; }
+      const t1 = ptext(p), lead = (t1.match(/^\s*/) || [''])[0], b0 = bulletOf(t1.slice(lead.length));
+      const at0 = lead.length + (b0.mark ? t1.slice(lead.length).indexOf(b0.body) : 0);
+      spliceRuns(p.texts, at0, t1.replace(/\s+$/, '').length, String(text).trim());
+      usedP.add(p); done.add('고른 문장');
+    }
     // 양식의 참가자격 업종이 이번 공종과 다르면 알림
     const mine = ws.map((w) => w.license);
-    if (mine.length && licWords.size && !mine.every((x) => licWords.has(x))) notes.add(`참가자격 업종 문장(양식: ${[...licWords].join('·')} → 이번: ${mine.join('·')})`);
+    if (!licDone && mine.length && licWords.size && !mine.every((x) => licWords.has(x))) notes.add(`참가자격 업종 문장(양식: ${[...licWords].join('·')} → 이번: ${mine.join('·')})`);
     // 바뀐 조각만 XML에 다시 씀(뒤에서부터)
     const edits = [];
     for (const p of paras) p.texts.forEach((t, i) => { if (t !== p.orig[i]) edits.push({ s: p.runs[i].s, e: p.runs[i].e, t }); });
@@ -942,7 +1096,7 @@
 
   const api = { SECTION_LABEL, leafParagraphs, spliceRuns, fillNoticeXml, fillNoticeHwpx, noticeKind, WORK_TYPES, workType, subWorks, worksOf, separateIn, licensePhrase, licenseSentence, splitList, jointBody, FIELDS, SECTIONS, labelOf, money, won, blank, applyRules,
     BID_OPS, bidSearchUrl, bidDetailUrl, slotify, learnSentences, learnedSections, aiPrompt, parseAi, AI_SYSTEM, STATUS, STATUS_ORDER, statusOf, parseBidNo, bidByNoUrl, normalizeBid, attachmentsOf, extractClauses, regionLabel, learn, mapMethod, mapContract,
-    draft, draftFull, parseNotice, learnDocument, mergeWrapped, secKey, regionSentence, templateValues, fillHwpxXml, fillHwpx, zipStore, crc32, placeholdersIn, fmtDT };
+    localize, licenseExamples, isLicLine, licClause, TOPICS, topicVariants, applyPicks, pickOf, draft, draftFull, parseNotice, learnDocument, mergeWrapped, secKey, regionSentence, templateValues, fillHwpxXml, fillHwpx, zipStore, crc32, placeholdersIn, fmtDT };
   root.JH = root.JH || {};
   root.JH.notice = Object.assign(root.JH.notice || {}, { logic: api });
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

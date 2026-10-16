@@ -967,7 +967,7 @@
       : '<li class="muted">아직 계약이 없습니다. 서류를 넣거나 나라장터에서 불러오세요.</li>';
     const ns = JH.notice && JH.notice.stats ? JH.notice.stats() : { count: 0 };
     $('#homeNotice').innerHTML = ns.count
-      ? `<li><b class="num">${ns.draft}</b>작성 중</li><li><b class="num">${ns.done}</b>작성 완료</li><li><b class="num">${ns.posted}</b>나라장터 등록</li>${ns.recent ? `<li class="recent">최근: ${esc(ns.recent)}</li>` : ''}`
+      ? `<li><b class="num">${ns.draft}</b>작성 중</li><li><b class="num">${ns.done}</b>작성 완료</li>${ns.recent ? `<li class="recent">최근: ${esc(ns.recent)}</li>` : ''}`
       : '<li class="muted">아직 작성한 공고문이 없습니다.</li>';
   }
 
@@ -1173,6 +1173,35 @@
   $('#fOfficer').addEventListener('change', (e) => { ui.officer = e.target.value; ui.officerTouched = true; ui.sel = null; render(); });
   $('#fType').addEventListener('change', (e) => { ui.type = e.target.value; ui.sel = null; render(); });
   $('#fSort').value = ui.sort;
+  // 목록 너비 조절: 경계를 끌면 목록이 넓어지고(긴 이름이 더 보임), 이 PC에 기억. 두 번 누르거나 Home 키로 원래대로
+  (function splitters() {
+    const DEF = { contracts: 360, notice: 300 };
+    const keyOf = (k) => 'jh.listW.' + k;
+    const apply = (view, k, w) => {
+      if (w) view.style.setProperty('--list-w', w + 'px'); else view.style.removeProperty('--list-w');
+      view.classList.toggle('wide-list', (w || DEF[k]) >= 440);
+    };
+    const clamp = (view, w) => Math.round(Math.max(240, Math.min(w, view.clientWidth * 0.7 || w)));
+    document.querySelectorAll('.splitter[data-split]').forEach((sp) => {
+      const k = sp.dataset.split, view = sp.closest('.view');
+      let saved = 0; try { saved = +localStorage.getItem(keyOf(k)) || 0; } catch (_) { /* 기억 못 해도 됨 */ }
+      apply(view, k, saved);
+      const store = (w) => { try { if (w) localStorage.setItem(keyOf(k), String(w)); else localStorage.removeItem(keyOf(k)); } catch (_) { /* 기억 못 해도 됨 */ } };
+      sp.addEventListener('pointerdown', (e) => {
+        e.preventDefault(); sp.setPointerCapture(e.pointerId); sp.classList.add('drag'); document.body.classList.add('resizing');
+        const left = view.getBoundingClientRect().left;
+        const move = (ev) => apply(view, k, clamp(view, ev.clientX - left));
+        const up = () => { sp.releasePointerCapture(e.pointerId); sp.classList.remove('drag'); document.body.classList.remove('resizing'); sp.removeEventListener('pointermove', move); store(parseInt(view.style.getPropertyValue('--list-w'), 10) || 0); };
+        sp.addEventListener('pointermove', move); sp.addEventListener('pointerup', up, { once: true }); sp.addEventListener('pointercancel', up, { once: true });
+      });
+      sp.addEventListener('dblclick', () => { apply(view, k, 0); store(0); });
+      sp.addEventListener('keydown', (e) => {
+        const curW = parseInt(view.style.getPropertyValue('--list-w'), 10) || DEF[k];
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); const w = clamp(view, curW + (e.key === 'ArrowRight' ? 40 : -40)); apply(view, k, w); store(w); }
+        else if (e.key === 'Home') { e.preventDefault(); apply(view, k, 0); store(0); }
+      });
+    });
+  })();
   $('#fSort').addEventListener('change', (e) => { ui.sort = e.target.value; try { localStorage.setItem('jh.sort', ui.sort); } catch (_) { /* 저장 못 해도 이번엔 적용 */ } renderList(); });
   $('#fState').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { ui.state = b.dataset.state; ui.sel = null; render(); } });
   $('#btnAdd').onclick = () => { pickTarget = null; $('#fileIn').click(); };

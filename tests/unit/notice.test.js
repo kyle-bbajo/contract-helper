@@ -105,7 +105,7 @@ print(json.dumps({'first':n[0].filename,'stored':n[0].compress_type==0,'names':[
 test('공고문 진행 상태와 나라장터 입찰공고번호 읽기', () => {
   assert.equal(N.statusOf({}), 'draft');
   assert.equal(N.statusOf({ lastFile: '공고문/작성/a.hwpx' }), 'done'); // 상태가 없던 예전 공고문
-  assert.equal(N.statusOf({ status: 'posted' }), 'posted');
+  assert.equal(N.statusOf({ status: 'posted' }), 'done', '예전 나라장터 등록은 작성 완료로');
   assert.deepEqual(N.parseBidNo(' r26bk01234567-000 '), { no: 'R26BK01234567', ord: '000' });
   assert.deepEqual(N.parseBidNo('R26BK01234567 1'), null);
   assert.deepEqual(N.parseBidNo('R26BK01234567 01'), { no: 'R26BK01234567', ord: '001' });
@@ -239,4 +239,75 @@ test('프로그램에 든 회사 기본 양식(입찰공고·견적공고): 이�
   }
   const urgent = N.fillNoticeHwpx(CFB, new Uint8Array(readFileSync(join(__dirname, '../../src/app/tpl/notice-bid.hwpx'))), { ...v, 계약방법: '제한경쟁', 긴급공고: '예' }, []);
   assert.match(text(urgent.bytes), /입찰공고\(긴급\)/);
+});
+
+test('참가자격 업종 문장: 다른 공고·지난 공고문 문장 모으기(이번 업종 먼저), 골라 쓰면 한글 양식 업종 문장을 바꿈', () => {
+  const { readFileSync } = require('node:fs');
+  const text = (bytes) => { const z = CFB.read(bytes, { type: 'array' }); return Buffer.from(z.FileIndex[z.FullPaths.findIndex((p) => /section0/.test(p))].content).toString().replace(/<\/hp:p>/g, '\n').replace(/<[^>]+>/g, ''); };
+  const doc = (lines) => N.parseNotice(['1. 입찰에 부치는 사항', '가. 공사명 : X', '2. 입찰참가자격', ...lines, '3. 입찰보증금', '가. 입찰금액의 5% 이상']);
+  const bids = [
+    { name: '가 공원 조경공사', price: 80000000, doc: doc(['가. 「건설산업기본법」에 따른 조경공사업을 등록한 업체', '나. 공고일 전일부터 용인시에 본점 소재지를 둔 업체']) },
+    { name: '나 도로 개설공사', price: 300000000, doc: doc(['가. 건설산업기본법령에 따른 종합공사업 중 [토목공사업(0001)] 면허를 등록한 업체이어야 합니다.', '나. 하도급 업체는 전문공사업 등록 필수']) },
+    { name: '다 도로 정비공사', doc: doc(['가. 건설산업기본법령에 따른 종합공사업 중 [토목공사업(0001)] 면허를 등록한 업체이어야 합니다.']) },
+  ];
+  const mine = [{ id: 'm1', updatedAt: Date.now(), v: { 공고명: '지난 소공원 공사', 업종문장: '[조경공사업] 및 [조경식재공사업]을 모두 등록한 업체' } }];
+  const ex = N.licenseExamples({ bids }, mine, { 구분: '공사', 공종: '토목공사(종합)' }, 'self');
+  assert.equal(ex[0].text, '건설산업기본법령에 따른 종합공사업 중 [토목공사업(0001)] 면허를 등록한 업체이어야 합니다.');
+  assert.deepEqual(ex[0].srcs.map((x) => x.name), ['나 도로 개설공사', '다 도로 정비공사'], '같은 문장은 한 번, 쓴 공고를 모두');
+  assert.ok(ex[0].match);
+  assert.ok(ex.some((e) => e.srcs[0].kind === 'mine'), '지난 공고문 문장도');
+  assert.ok(!ex.some((e) => /하도급/.test(e.text)), '하도급 문장은 빼기');
+  // 골라 쓰기 → 견적공고(업종 문장이 따로)·입찰공고(지역과 한 문장) 모두 반영
+  const base = N.blank({ insttNm: '용인도시공사', notice: { region: '용인시' } });
+  const pick = '「건설산업기본법」에 따른 [토목공사업(0001)]과 [조경공사업(0006)]을 모두 등록한 업체이어야 합니다.';
+  for (const [f, m] of [['notice-est', '수의계약(2인 이상 견적)'], ['notice-bid', '제한경쟁']]) {
+    const v = N.applyRules({ ...base, 공고명: 'X', 공종: '토목공사(종합)', 계약방법: m, 업종문장: pick }, {}, {});
+    const t = text(N.fillNoticeHwpx(CFB, new Uint8Array(readFileSync(join(__dirname, '../../src/app/tpl', f + '.hwpx'))), v, []).bytes);
+    if (f === 'notice-est') assert.match(t, /1\) 「건설산업기본법」에 따른 \[토목공사업\(0001\)\]과 \[조경공사업\(0006\)\]을 모두 등록한 업체이어야 합니다\./);
+    else assert.match(t, /갖추고, 「건설산업기본법」에 따른 \[토목공사업\(0001\)\]과 \[조경공사업\(0006\)\]을 모두 등록하고, 입찰공고일 전일부터 용인시 내에 주된 영업소/);
+    assert.doesNotMatch(t, /소방시설공사업법에 의한/);
+  }
+  assert.equal(N.licClause('「전기공사업법」에 따른 전기공사업을 등록한 업체'), '「전기공사업법」에 따른 전기공사업을 등록하고');
+});
+
+test('공고마다 다른 문장 고르기: 주제별 문장 모으기, 고르면 초안·한글 양식 같은 자리에 들어감', () => {
+  const { readFileSync } = require('node:fs');
+  const text = (bytes) => { const z = CFB.read(bytes, { type: 'array' }); return Buffer.from(z.FileIndex[z.FullPaths.findIndex((p) => /section0/.test(p))].content).toString().replace(/<\/hp:p>/g, '\n').replace(/<[^>]+>/g, ''); };
+  const doc = (q, j) => N.parseNotice(['1. 입찰에 부치는 사항', '가. 용역명 : X', '2. 입찰참가자격', ...q, '3. 공동계약', j, '4. 기타', '가. 기타 사항은 관계 법령에 따릅니다.']);
+  const bids = [
+    { name: '가시 폐기물 처리 용역', org: '가시', doc: doc(['가. 「폐기물관리법」에 따른 폐기물 수집·운반업 허가를 받은 업체', '나. 공고일 전일부터 경기도에 본점 소재지를 둔 업체'], '가. 공동도급은 허용하지 않습니다.') },
+    { name: '나시 생활폐기물 용역', org: '나시', doc: doc(['가. 「폐기물관리법」에 따른 폐기물 수집·운반업(생활폐기물) 허가를 받은 업체'], '가. 공동이행방식에 의한 공동도급을 허용합니다.') },
+  ];
+  const v = N.applyRules({ ...N.blank({}), 구분: '용역', 공종: '폐기물 수집·운반·처리', 지역제한: '용인시' }, {}, {});
+  const ts = N.topicVariants({ bids }, [], v, 'x');
+  const up = ts.find((t) => t.key === '업종'), jt = ts.find((t) => t.key === '공동도급'), rg = ts.find((t) => t.key === '지역');
+  assert.equal(up.variants.length, 2, '업종 문장 2가지(다른 기관 공고)');
+  assert.match(up.variants[0].text, /폐기물 수집·운반업/);
+  assert.equal(jt.variants.length, 2);
+  assert.match(rg.variants[0].shown, /용인시/, '지역 문장은 이번 지역으로 바꿔 보여 줌');
+  assert.ok(N.WORK_TYPES.용역.some((w) => w.name === '폐기물 수집·운반·처리'));
+  // 고른 문장 → 초안
+  const v2 = { ...v, 업종문장: up.variants[1].text, 고른문장: { 공동도급: jt.variants[1].shown } };
+  const body = N.draft(v2).map((x) => x.body).join('\n');
+  assert.match(body, /생활폐기물\) 허가를 받은 업체/);
+  assert.match(body, /공동이행방식에 의한 공동도급을 허용합니다/);
+  // 고른 문장 → 한글 양식(견적공고의 "본 계약은 공동수급 및 하도급을 불허합니다." 자리)
+  const vh = N.applyRules({ ...N.blank({}), 구분: '공사', 공종: '토목공사(종합)', 계약방법: '수의계약(2인 이상 견적)', 고른문장: { 공동도급: '본 계약은 공동수급을 허용(분담이행)하고 하도급은 불허합니다.' } }, {}, {});
+  const t = text(N.fillNoticeHwpx(CFB, new Uint8Array(readFileSync(join(__dirname, '../../src/app/tpl/notice-est.hwpx'))), vh, []).bytes);
+  assert.match(t, /라\. 본 계약은 공동수급을 허용\(분담이행\)하고 하도급은 불허합니다\./);
+  assert.doesNotMatch(t, /공동수급 및 하도급을 불허/);
+});
+
+test('다른 기관 공고 문장은 우리 것으로: 기관명·관내 지역·홈페이지', () => {
+  const v = { 기관명: '용인도시공사', 지역제한: '용인시', 공고명: '이번 공고' };
+  const b = { org: '전북특별자치도 익산시', name: '익산시 생활폐기물 수집운반 용역' };
+  assert.equal(N.localize('익산시장은 입찰참가자격을 확인합니다.', b, v), '용인도시공사는 입찰참가자격을 확인합니다.');
+  assert.equal(N.localize('공고일 전일부터 익산시 관내에 본점 소재지를 둔 업체', b, v), '공고일 전일부터 용인시 관내에 본점 소재지를 둔 업체');
+  assert.equal(N.localize('익산시 홈페이지(www.iksan.go.kr) 참조, 나라장터(www.g2b.go.kr)', b, v), '용인도시공사 홈페이지(○○) 참조, 나라장터(www.g2b.go.kr)');
+  assert.equal(N.localize('용인도시공사 홈페이지(www.yuc.co.kr)', { org: '용인도시공사' }, v), '용인도시공사 홈페이지(www.yuc.co.kr)', '우리 공고는 그대로');
+  // 전체 초안(다른 기관 공고가 뼈대)에서도
+  const doc = N.parseNotice(['1. 입찰에 부치는 사항', '가. 용역명 : 익산시 생활폐기물 수집운반 용역', '2. 입찰참가자격', '가. 공고일 전일부터 익산시 관내에 본점 소재지를 둔 업체', '3. 계약 체결', '가. 낙찰자는 익산시청 회계과에서 계약을 체결합니다.', '4. 기타', '가. 기타 사항은 익산시 계약 규정에 따릅니다.']);
+  const body = N.draft({ ...N.blank({}), ...v, 구분: '용역' }, { bids: [{ ...b, doc }] }).map((x) => x.body).join('\n');
+  assert.doesNotMatch(body, /익산/);
+  assert.match(body, /용인도시공사 회계과에서 계약을 체결/);
 });

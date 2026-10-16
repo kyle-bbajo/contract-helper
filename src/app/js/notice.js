@@ -37,14 +37,16 @@
   }
 
   // ---------- 유사 공고에서 배우기 ----------
-  async function learnSimilar(scope, months, keyword0) {
+  async function learnSimilar(scope, months, keyword0, org0) {
     const n = cur(), cfg = app().cfg;
     if (!cfg.apiKey) { app().toast('설정에서 나라장터 인증키를 먼저 넣어 주세요.', 'err'); JH.settings.open('nara'); return; }
     const v = n.v, kind = v.구분 === '용역' ? '용역' : '공사';
     const w = N.workType(kind, v.공종);
     const p = N.money(v.추정가격);
-    const base = { ntceInsttNm: scope === 'mine' ? cfg.insttNm : '', priceMin: p ? p * 0.3 : 0, priceMax: p ? p * 3 : 0 };
-    const keyword = (v.공종 || '').replace(/\(.*\)|공사$|·.*/g, '').trim();
+    const org = scope === 'mine' ? cfg.insttNm : scope === 'org' ? String(org0 || '').trim() : '';
+    if (scope === 'org' && !org) { app().toast('찾을 기관 이름을 넣어 주세요. 예: 성남도시개발공사', 'err'); const i = $('#lOrg'); if (i) i.focus(); return; }
+    const base = { ntceInsttNm: org, priceMin: p ? p * 0.3 : 0, priceMax: p ? p * 3 : 0 };
+    const keyword = (w && w.q) || (v.공종 || '').replace(/\(.*\)|공사$|·.*/g, '').trim();
     const tries = [];
     // 공고명 검색어가 있으면 그 공고들 먼저(금액 범위 없이)
     if (keyword0) tries.push({ ntceInsttNm: base.ntceInsttNm, bidNtceNm: keyword0 });
@@ -85,24 +87,47 @@
       const withFiles = (keyword0 ? bids : near).filter((b) => b.files && b.files.some((f) => /\.(hwpx?|pdf)$/i.test(f.name))).slice(0, 6);
       let read = 0;
       for (let i = 0; i < withFiles.length; i++) {
-        const b = withFiles[i];
         app().progress(`첨부 공고문 읽는 중 ${i + 1}/${withFiles.length}`, i / withFiles.length);
-        const f = b.files.find((x) => /\.(hwpx?|pdf)$/i.test(x.name));
-        try {
-          const bytes = await S.fetchFile(f.url);
-          const kind = L.kindOf(f.name);
-          const lines = await JH.readers.fullLines(bytes, kind);
-          b.clauses = N.extractClauses(lines);
-          b.doc = N.parseNotice(lines); // 공고문 전체를 절 단위로(전체 초안에 씀)
-          const saved = await S.save('공고문/참고', `${b.no}_${L.safeName(f.name, 80)}`, bytes);
-          b.savedPath = saved.path; b.savedName = f.name; read++;
-        } catch (e) { console.warn('첨부 읽기 실패', b.no, e); b.fileError = e.message; }
+        if (await readDoc(withFiles[i])) read++;
       }
-      n.learned = { at: new Date().toISOString(), scope, months, keyword: keyword0 || '', total: bids.length, summary: N.learn(bids), bids, read };
+      n.learned = { at: new Date().toISOString(), scope, org: scope === 'org' ? org : '', months, keyword: keyword0 || '', total: bids.length, summary: N.learn(bids), bids, read };
       n.updatedAt = Date.now(); save(true);
-      app().toast(bids.length ? `비슷한 공고 ${bids.length}건에서 조건을 모았습니다.` + (withFiles.length ? ` 첨부 공고문 ${read}/${withFiles.length}건을 읽었습니다.` : '') : '비슷한 공고를 찾지 못했습니다. 범위를 전국이나 1년으로 넓혀 보세요.', bids.length ? 'ok' : '');
+      if (bids.length) app().toast(`비슷한 공고 ${bids.length}건에서 조건을 모았습니다.` + (withFiles.length ? ` 첨부 공고문 ${read}/${withFiles.length}건을 읽었습니다.` : '') + ' [찾은 공고]에서 참고할 공고만 고를 수 있습니다.', 'ok');
+      else if (scope !== 'all') app().toast(`${org}의 비슷한 공고가 없습니다. 다른 기관(전국) 공고에서 찾아 볼까요?`, '', { label: '전국에서 찾기', run: () => learnSimilar('all', months, keyword0) });
+      else app().toast('비슷한 공고를 찾지 못했습니다. 기간을 1년으로 넓히거나 공고명 검색어(예: 폐기물)를 넣어 보세요.');
     } catch (e) { console.error(e); app().toast(e.message, 'err'); }
     finally { app().progress(null); render(); }
+  }
+  // 공고 하나의 첨부 공고문(한글·PDF)을 받아 절 단위로 읽고 원본은 데이터 폴더에 보관
+  async function readDoc(b) {
+    const f = (b.files || []).find((x) => /\.(hwpx?|pdf)$/i.test(x.name)); if (!f) return false;
+    try {
+      const bytes = await S.fetchFile(f.url);
+      const lines = await JH.readers.fullLines(bytes, L.kindOf(f.name));
+      b.clauses = N.extractClauses(lines);
+      b.doc = N.parseNotice(lines); // 공고문 전체를 절 단위로(전체 초안에 씀)
+      const saved = await S.save('공고문/참고', `${b.no}_${L.safeName(f.name, 80)}`, bytes);
+      b.savedPath = saved.path; b.savedName = f.name; delete b.fileError; return true;
+    } catch (e) { console.warn('첨부 읽기 실패', b.no, e); b.fileError = e.message; return false; }
+  }
+  // 찾은 공고 중 참고할 것만 고름(빼면 추천·배운 문장·업종 문장에서 빠짐)
+  const openBids = new Set(); // 찾은 공고 목록을 펼쳐 둔 공고문(고르는 중엔 계속 펼침)
+  const used = (s) => (s && s.bids ? s.bids.filter((b) => b.use !== false) : []);
+  const lv = (n) => (n.learned ? { ...n.learned, bids: used(n.learned) } : null);
+  const isRead = (b) => !!((b.doc && b.doc.sections && b.doc.sections.length) || (b.clauses && b.clauses.length));
+  const hasFile = (b) => (b.files || []).some((f) => /\.(hwpx?|pdf)$/i.test(f.name));
+  function setUse(n, pred) {
+    n.learned.bids.forEach((b, i) => { const u = pred(b, i); if (u != null) b.use = u; });
+    n.learned.summary = N.learn(used(n.learned)); n.updatedAt = Date.now(); save(true); render();
+  }
+  async function readPicked(n) {
+    const todo = used(n.learned).filter((b) => !isRead(b) && hasFile(b)).slice(0, 10);
+    if (!todo.length) { app().toast('고른 공고 중 아직 안 읽은 첨부 공고문이 없습니다.'); return; }
+    let ok = 0;
+    try { for (let i = 0; i < todo.length; i++) { app().progress(`고른 공고의 공고문 읽는 중 ${i + 1}/${todo.length}`, i / todo.length); if (await readDoc(todo[i])) ok++; } }
+    finally { app().progress(null); }
+    n.learned.read = n.learned.bids.filter(isRead).length; n.updatedAt = Date.now(); save(true); render();
+    app().toast(`공고문 ${ok}/${todo.length}건을 읽었습니다.`, ok ? 'ok' : 'err');
   }
   // 배운 값 → 화면 값
   function suggestionFor(key, top) {
@@ -128,18 +153,18 @@
   }
 
   // ---------- 문장 초안: 배운 문장(기본값) · 기본 문장 · AI ----------
-  const refBids = (s) => (s && s.bids ? s.bids.filter((b) => (b.doc && b.doc.sections && b.doc.sections.length) || (b.clauses && b.clauses.length)) : []);
-  const hasLearned = (n) => !!(n.learned && n.learned.bids && n.learned.bids.some((b) => (b.clauses && b.clauses.length) || (b.doc && b.doc.sections && b.doc.sections.length)));
+  const refBids = (s) => used(s).filter(isRead);
+  const hasLearned = (n) => used(n.learned).some(isRead);
   const modeOf = (n) => (n.dmode === 'ai' && n.ai ? 'ai' : n.dmode === 'basic' || !hasLearned(n) ? 'basic' : 'learned');
   function sectionsOf(n) {
     const m = modeOf(n);
     if (m === 'ai') return n.ai.sections;
-    return m === 'basic' ? N.draft(n.v) : N.draft(n.v, n.learned);
+    return m === 'basic' ? N.draft(n.v) : N.draft(n.v, lv(n));
   }
   // AI: PC 안 AI(설치 때 함께 깔림)가 기본, 설정에 키를 넣으면 Gemini·Claude (JH.ai)
   let aiWho = null; // 지금 쓸 수 있는 AI('local'|'gemini'|'claude'|null) — 화면을 그릴 때 확인해 바뀌면 다시 그림
   const checkAi = () => root.JH.ai.pick(false).then((p) => { if (p !== aiWho) { aiWho = p; render(); } }).catch(() => {});
-  const aiQuestion = (n) => `${N.AI_SYSTEM}\n\n${N.aiPrompt(n.v, n.learned, hasLearned(n) ? N.draft(n.v, n.learned) : N.draft(n.v))}`;
+  const aiQuestion = (n) => `${N.AI_SYSTEM}\n\n${N.aiPrompt(n.v, lv(n), hasLearned(n) ? N.draft(n.v, lv(n)) : N.draft(n.v))}`;
   function pasteAiAnswer(n) {
     const d = $('#dlgAiPaste'); $('#aiPasteText').value = ''; $('#aiPasteErr').textContent = ''; d.showModal(); $('#aiPasteText').focus();
     $('#aiPasteGo').onclick = () => {
@@ -152,8 +177,8 @@
     if (!who) { app().toast('AI가 아직 준비되지 않았습니다. [AI 질문 복사]로 업무용 AI·Gemini 등 아무 AI 채팅에 붙여 넣고, 답을 [답 붙여넣기]로 넣으면 됩니다.', 'err', { label: '질문 복사', run: () => copy(aiQuestion(n)) }); return; }
     app().progress(`${root.JH.ai.label(who)}가 비슷한 공고 문장을 보고 다시 쓰는 중${who === 'local' ? ' (PC AI는 1~2분 걸립니다)' : ''}`, .4);
     try {
-      const base = hasLearned(n) ? N.draft(n.v, n.learned) : N.draft(n.v);
-      const r = await root.JH.ai.ask({ system: N.AI_SYSTEM, prompt: N.aiPrompt(n.v, n.learned, base), json: true });
+      const base = hasLearned(n) ? N.draft(n.v, lv(n)) : N.draft(n.v);
+      const r = await root.JH.ai.ask({ system: N.AI_SYSTEM, prompt: N.aiPrompt(n.v, lv(n), base), json: true });
       n.ai = { at: Date.now(), model: r.model, by: r.by, sections: N.parseAi(r.text) };
       n.dmode = 'ai'; n.updatedAt = Date.now(); save(true);
       app().toast('AI 초안을 만들었습니다. 내용을 꼭 확인한 뒤 쓰세요.', 'ok');
@@ -163,32 +188,6 @@
 
   // ---------- 진행 상태 ----------
   function setStatus(n, st) { n.status = st; n.updatedAt = Date.now(); save(true); render(); }
-  // 나라장터 입찰공고번호를 넣으면 '나라장터 등록'으로 넘기고, 나라장터에서 실제 공고를 찾아 공고명·개찰일시를 받아 둠
-  async function registerBid(n, text) {
-    const p = N.parseBidNo(text);
-    if (!p) { app().toast('나라장터 입찰공고번호를 확인해 주세요. 예: R26BK01234567-000', 'err'); const i = $('#g2bNo'); if (i) i.focus(); return; }
-    n.g2b = { no: p.no, ord: p.ord, at: new Date().toISOString(), checked: false };
-    n.status = 'posted'; n.updatedAt = Date.now(); save(true); render();
-    await checkBid(n);
-  }
-  async function checkBid(n) {
-    const cfg = app().cfg, g = n.g2b; if (!g) return;
-    if (!cfg.apiKey) { app().toast('나라장터 등록으로 옮겼습니다. 인증키가 없어 나라장터 확인은 건너뛰었습니다.'); return; }
-    app().progress('나라장터에서 공고 확인 중', .5);
-    try {
-      const kind = n.v.구분 === '용역' ? '용역' : '공사';
-      const found = L.parseApiBody(await S.nara(N.bidByNoUrl(kind, g.no, cfg.apiKey))).items.map(N.normalizeBid).filter((b) => b.no === g.no);
-      const b = found.find((x) => x.ord === g.ord) || found.sort((a, c) => (a.ord < c.ord ? 1 : -1))[0];
-      if (b) {
-        Object.assign(g, { ord: b.ord, name: b.name, org: b.org, date: b.date, close: b.close, open: b.open, url: b.url, checked: true, checkedAt: new Date().toISOString() });
-        app().toast(`나라장터에서 확인했습니다: ${b.name}` + (b.open ? ` · 개찰 ${b.open.replace('T', ' ')}` : ''), 'ok');
-      } else {
-        g.checked = false; g.checkedAt = new Date().toISOString();
-        app().toast('나라장터 등록으로 옮겼습니다. 다만 나라장터에서 이 번호를 아직 찾지 못했습니다(등록 직후엔 조회에 늦게 나올 수 있음). 번호를 확인하거나 나중에 [다시 확인]을 누르세요.');
-      }
-    } catch (e) { console.error(e); app().toast('나라장터 확인 실패: ' + e.message, 'err'); }
-    finally { n.updatedAt = Date.now(); save(true); app().progress(null); render(); }
-  }
 
   // ---------- 한글 양식 ----------
   async function templates() {
@@ -357,6 +356,7 @@
       else if (on.length) input += `<div class="learn-hint">업종제한을 "${esc(N.worksOf(n.v).map((w) => w.license).join(' + '))} 모두 등록 또는 분담이행 공동도급"으로, 공동도급을 분담이행으로 자동으로 바꿨습니다.</div>`;
     } else if (f.type === 'date') input = `<input type="date" ${attrs} value="${esc(v)}">`;
     else if (f.type === 'datetime') input = `<input type="datetime-local" ${attrs} value="${esc(v)}">`;
+    else if (f.type === 'textarea') input = `<textarea ${attrs} rows="2" placeholder="${esc(f.ph || '')}">${esc(v)}</textarea>`;
     else input = `<input type="text" ${attrs} value="${esc(v)}"${f.type === 'money' ? ' inputmode="numeric" class="num"' : f.key === '공고명' && !v ? ' class="need"' : ''} placeholder="${esc(f.ph || '')}">`;
     // 유사 공고에서 배운 추천
     let hint = '';
@@ -368,11 +368,41 @@
     const tag = f.type === 'multi' ? 'div' : 'label'; // 체크 상자 여러 개는 label로 감싸지 않음
     return `<${tag} class="nf${f.wide ? ' wide' : ''}">${label}${input}${hint}</${tag}>`;
   }
+  // ---------- 공고마다 다른 문장 고르기(업종·지역·공동도급·하도급·보증금·낙찰자 결정 등) ----------
+  let topics = [];
+  function setPick(k, text) {
+    const n = cur(); if (!n) return;
+    const t = String(text || '').trim();
+    if (k === '업종') setVal('업종문장', t, true);
+    else { const o = { ...(n.v.고른문장 || {}) }; if (t) o[k] = t; else delete o[k]; setVal('고른문장', o, true); }
+  }
+  function pickPanel(n) {
+    topics = N.topicVariants(lv(n), store.notices, n.v, n.id);
+    if (!topics.length) return `<fieldset class="nsec picks"><legend>공고마다 다른 문장 고르기</legend><p class="muted small">위 [비슷한 공고에서 배우기]로 공고를 찾고 공고문을 읽으면, 업종·지역·공동도급·하도급·입찰보증금·낙찰자 결정처럼 공고마다 다르게 쓴 문장이 여기에 모입니다. 그중 골라 고쳐 쓰면 문장 초안과 한글 파일에 들어갑니다.</p></fieldset>`;
+    const norm = (x) => String(x || '').replace(/\s+/g, '');
+    const card = (tp, ti) => {
+      const cur0 = norm(tp.current);
+      const on = tp.variants.findIndex((e) => norm(e.shown) === cur0);
+      const many = tp.variants.length > 1;
+      return `<div class="pick${tp.current ? ' set' : ''}"><div class="pick-h"><b>${esc(tp.label)}</b>${many ? `<span class="lbadge warn">공고마다 다름 · ${tp.variants.length}가지</span>` : ''}<span class="muted small">${tp.docs ? `공고문 ${tp.docs}건에 있음` : ''}</span></div>
+        <ul>
+          <li><label><input type="radio" name="pk-${ti}" data-pick="${ti}" value="-1"${tp.current ? '' : ' checked'}><span>${tp.key === '업종' ? '양식 문장 그대로(업종 이름만 이번 공종으로)' : '양식·초안 문장 그대로'}</span></label></li>
+          ${tp.variants.map((e, i) => `<li class="${e.match ? 'match' : ''}"><label><input type="radio" name="pk-${ti}" data-pick="${ti}" value="${i}"${i === on ? ' checked' : ''}><span class="pv-t">${esc(e.shown)}</span></label>
+            <div class="pv-s muted small">${e.srcs.slice(0, 3).map((x) => `${x.kind === 'mine' ? '내 공고문: ' : ''}${esc(x.name)}${x.org ? ` (${esc(x.org)})` : ''}${x.price ? ` · ${esc(N.won(x.price))}원` : ''}`).join(' / ')}${e.srcs.length > 3 ? ` 외 ${e.srcs.length - 3}건` : ''}</div></li>`).join('')}
+          ${tp.current && on < 0 ? `<li><label><input type="radio" name="pk-${ti}" data-pick="${ti}" value="own" checked><span>직접 고친 문장</span></label></li>` : ''}
+        </ul>
+        ${tp.current ? `<textarea data-picktext="${ti}" rows="3" aria-label="${esc(tp.label)} 문장 고치기">${esc(tp.current)}</textarea>` : ''}</div>`;
+    };
+    const order = topics.map((t, i) => [t, i]).sort((a, b) => (b[0].variants.length > 1) - (a[0].variants.length > 1));
+    return `<fieldset class="nsec picks"><legend>공고마다 다른 문장 고르기</legend>
+      <p class="muted small">고른 공고들(위 [찾은 공고])의 공고문에서 모았습니다. 하나를 고르고 아래 칸에서 고치면 문장 초안과 한글 파일의 같은 자리에 들어갑니다. 고르지 않으면 양식 문장을 씁니다.</p>
+      <div class="picks-list">${order.map(([t, i]) => card(t, i)).join('')}</div></fieldset>`;
+  }
   function listItem(n) {
     const st = N.statusOf(n);
     return `<div class="citem${n.id === sel ? ' on' : ''}" role="listitem" tabindex="0" data-nid="${n.id}">
       <div class="nm">${esc(n.v.공고명 || '제목 없는 공고문')}</div><div class="st"><span class="pill ${N.STATUS[st].cls}">${esc(N.STATUS[st].label)}</span></div>
-      <div class="meta"><span>${esc(n.v.공종 || n.v.구분)}</span>${st === 'posted' && n.g2b ? `<span class="num">${esc(n.g2b.no)}</span>` : `${n.v.추정가격 ? `<span class="num">${esc(n.v.추정가격)}원</span>` : ''}<span>${esc(L.fmtDate(new Date(n.updatedAt).toISOString()))}</span>`}</div></div>`;
+      <div class="meta"><span>${esc(n.v.공종 || n.v.구분)}</span>${n.v.추정가격 ? `<span class="num">${esc(n.v.추정가격)}원</span>` : ''}<span>${esc(L.fmtDate(new Date(n.updatedAt).toISOString()))}</span></div></div>`;
   }
   function renderList() {
     const groups = N.STATUS_ORDER.map((k) => ({ k, items: store.notices.filter((n) => N.statusOf(n) === k) })).filter((g) => g.items.length);
@@ -381,19 +411,7 @@
   }
   function statusPanel(n, st) {
     const steps = N.STATUS_ORDER.map((k, i) => `<span class="nstep${k === st ? ' on' : ''}${N.STATUS_ORDER.indexOf(st) > i ? ' past' : ''}"><i>${N.STATUS_ORDER.indexOf(st) > i ? '✓' : i + 1}</i>${esc(N.STATUS[k].label)}</span>`).join('<span class="nstep-line" aria-hidden="true"></span>');
-    let body;
-    if (st === 'posted') {
-      const g = n.g2b || {};
-      body = `<div class="g2b posted"><div class="g2b-main"><span class="muted">나라장터 입찰공고번호</span> <b class="num">${esc(g.no || '')}${g.ord ? '-' + esc(g.ord) : ''}</b>
-          ${g.checked ? `<span class="ok">✓ 나라장터에서 확인</span>${g.name ? `<div class="g2b-sub">${esc(g.name)}${g.close ? ` · 마감 ${esc(g.close.replace('T', ' '))}` : ''}${g.open ? ` · 개찰 ${esc(g.open.replace('T', ' '))}` : ''}</div>` : ''}`
-            : `<span class="warn-t">나라장터에서 아직 확인 안 됨</span> <button type="button" class="link sm" data-nact="g2bcheck">다시 확인</button>`}</div>
-        <div class="g2b-side">${g.url ? `<a class="btn sm" href="${esc(g.url)}" target="_blank" rel="noopener">나라장터에서 보기</a>` : ''}<button type="button" class="link sm" data-nact="unpost">연결 풀기</button></div>
-        <p class="g2b-note">등록된 공고문은 고칠 수 없게 잠겨 있습니다. 바꿔야 하면 [복사해서 새로 쓰기]를 누르세요.</p></div>`;
-    } else {
-      body = `<div class="g2b"><label for="g2bNo">나라장터에서 직접 등록한 뒤, 받은 입찰공고번호를 넣으면 이 공고문과 연결됩니다 <small class="muted">(이 프로그램이 나라장터에 등록하지는 않습니다)</small></label>
-        <div class="g2b-in"><input id="g2bNo" placeholder="예: R26BK01234567-000" autocomplete="off" spellcheck="false"><button type="button" class="btn${st === 'done' ? ' primary' : ''}" data-nact="g2b">번호 연결</button></div></div>`;
-    }
-    return `<div class="nstatus"><div class="nsteps">${steps}</div>${body}</div>`;
+    return `<div class="nstatus"><div class="nsteps">${steps}</div>${st === 'done' ? '<span class="muted small">만든 한글 파일을 나라장터에 직접 첨부해 등록하세요.</span>' : ''}</div>`;
   }
   function render() {
     if (!$('#view-notice').classList.contains('on')) return;
@@ -406,8 +424,8 @@
       return;
     }
     const s = n.learned;
-    const st = N.statusOf(n), locked = st === 'posted';
-    const secs = N.SECTIONS.map((sec) => `<fieldset class="nsec"${locked ? ' disabled' : ''}><legend>${esc(N.SECTION_LABEL[sec] || sec)}</legend><div class="ngrid">${N.FIELDS.filter((f) => f.sec === sec && (!f.showIf || f.showIf(n.v))).map((f) => field(f, n)).join('')}</div>
+    const st = N.statusOf(n);
+    const secs = N.SECTIONS.map((sec) => `<fieldset class="nsec"><legend>${esc(N.SECTION_LABEL[sec] || sec)}</legend><div class="ngrid">${N.FIELDS.filter((f) => f.sec === sec && (!f.showIf || f.showIf(n.v))).map((f) => field(f, n)).join('')}</div>
       ${sec === '일정' && s && s.summary.입찰기간일수 ? `<div class="learn-hint">비슷한 공고는 입찰서 제출 기간이 보통 <b>${s.summary.입찰기간일수}일</b>입니다. <button type="button" class="link sm" data-nact="schedule">공고일 기준으로 일정 채우기</button> <span class="muted">법정 공고기간을 꼭 확인하세요.</span></div>` : ''}</fieldset>`).join('');
     const draft = sectionsOf(n), dm = modeOf(n);
     const stale = dm === 'ai' && n.vAt && n.vAt > n.ai.at;
@@ -415,7 +433,7 @@
       <div class="nhead">
         <h2 class="ntitle" id="nTitle">${n.v.공고명 ? esc(n.v.공고명) : '<span class="muted">새 공고문 — 아래 [기본]의 공고명부터 넣으세요</span>'}</h2>
         <div class="actions">
-          <button class="btn${locked ? '' : ' primary'}" data-nact="hwp">${n.lastFile ? `한글 파일로 다시 만들기` : `한글 파일로 만들기`} <small class="kind">${esc(N.noticeKind(n.v))} 양식</small></button>
+          <button class="btn primary" data-nact="hwp">${n.lastFile ? `한글 파일로 다시 만들기` : `한글 파일로 만들기`} <small class="kind">${esc(N.noticeKind(n.v))} 양식</small></button>
           <button class="btn" data-nact="copyall">문장 초안 전체 복사</button>
           ${n.lastFile ? `<button class="btn ghost" data-nact="openlast">최근 만든 파일 열기</button>` : ''}
           <span class="spacer"></span>
@@ -427,19 +445,25 @@
         ${reportPanel(n)}
         ${statusPanel(n, st)}
       </div>
-      <section class="learn"${locked ? ' hidden' : ''}>
+      <section class="learn">
         <div class="learn-head"><h3>비슷한 공고에서 배우기</h3>
-          <span class="muted">${s ? `${esc(s.scope === 'mine' ? app().cfg.insttNm : '전국')} · 최근 ${s.months}개월 · ${s.total}건 · ${esc(L.fmtDate(s.at.slice(0, 10)))}` : '같은 업종·비슷한 금액의 나라장터 공고를 모아 조건별로 가장 많이 쓴 값을 추천합니다.'}</span>
+          <span class="muted">${s ? `${esc(s.scope === 'mine' ? app().cfg.insttNm : s.scope === 'org' ? s.org : '전국(모든 기관)')} · 최근 ${s.months}개월 · ${s.total}건${used(s).length < s.bids.length ? ` 중 ${used(s).length}건 참고` : ''} · ${esc(L.fmtDate(s.at.slice(0, 10)))}` : '같은 업종·비슷한 금액의 나라장터 공고를 모아 조건별로 가장 많이 쓴 값을 추천합니다.'}</span>
           <div class="learn-ctl">
             <input type="search" id="lKeyword" placeholder="공고명 검색어(선택), 예: 신갈오거리" value="${esc(s && s.keyword || '')}" aria-label="공고명 검색어">
-            <select id="lScope" aria-label="범위"><option value="mine"${s && s.scope === 'mine' ? ' selected' : ''}>우리 기관</option><option value="all"${s && s.scope === 'all' ? ' selected' : ''}>전국</option></select>
+            <select id="lScope" aria-label="범위"><option value="mine"${s && s.scope === 'mine' ? ' selected' : ''}>우리 기관</option><option value="all"${s && s.scope === 'all' ? ' selected' : ''}>전국(모든 기관)</option><option value="org"${s && s.scope === 'org' ? ' selected' : ''}>기관 지정</option></select>
+            <input type="search" id="lOrg" placeholder="기관 이름, 예: 성남도시개발공사" value="${esc(s && s.org || '')}" aria-label="기관 이름"${s && s.scope === 'org' ? '' : ' hidden'}>
             <select id="lMonths" aria-label="기간"><option value="6"${s && s.months === 6 ? ' selected' : ''}>최근 6개월</option><option value="12"${s && s.months === 12 ? ' selected' : ''}>최근 1년</option></select>
             <button class="btn" data-nact="learn">${s ? '다시 찾기' : '찾기'}</button>
           </div></div>
-        ${s && s.bids.length ? `<details class="bids"><summary>찾은 공고 ${s.bids.length}건 보기</summary><table class="grid"><thead><tr><th>공고</th><th class="r">추정가격</th><th>지역</th><th class="r">하한율</th><th>낙찰방법</th></tr></thead><tbody>
-          ${s.bids.map((b) => `<tr><td><div class="nm">${b.url ? `<a href="${esc(b.url)}" target="_blank" rel="noopener">${esc(b.name)}</a>` : esc(b.name)}</div><div class="sub">${esc(b.org)} · ${esc(b.date.slice(0, 10))}</div></td>
-            <td class="r num">${esc(N.won(b.price))}</td><td>${esc(b.regions ? N.regionLabel(b.regions) : '-')}</td><td class="r num">${esc(b.rate ? b.rate + '%' : '-')}</td><td>${esc(b.method)}</td></tr>`).join('')}
-          </tbody></table></details>` : ''}
+        ${s && s.bids.length ? `<details class="bids"${openBids.has(n.id) ? ' open' : ''} data-bidsbox><summary>찾은 공고 ${s.bids.length}건 — 참고할 공고 고르기 <span class="muted">(${used(s).length}건 고름 · 공고문 ${s.bids.filter(isRead).length}건 읽음)</span></summary>
+          <div class="bids-ctl"><span class="muted small">체크를 빼면 추천·배운 문장·업종 문장에서 빠집니다. 다른 기관 공고도 골라 참고하세요.</span>
+            <button type="button" class="link sm" data-nact="useall">모두 고르기</button><button type="button" class="link sm" data-nact="usenone">모두 빼기</button><button type="button" class="link sm" data-nact="usefile">공고문 있는 것만</button>
+            ${used(s).some((b) => !isRead(b) && hasFile(b)) ? `<button type="button" class="btn sm primary" data-nact="readpicked">고른 공고의 공고문 읽기 (${Math.min(10, used(s).filter((b) => !isRead(b) && hasFile(b)).length)}건)</button>` : ''}</div>
+          <div class="tbl-wrap"><table class="grid"><thead><tr><th class="c">참고</th><th>공고</th><th class="r">추정가격</th><th>지역</th><th class="r">하한율</th><th>낙찰방법</th><th>공고문</th></tr></thead><tbody>
+          ${s.bids.map((b, i) => `<tr class="${b.use === false ? 'off' : ''}"><td class="c"><input type="checkbox" data-buse="${i}"${b.use === false ? '' : ' checked'} aria-label="${esc(b.name)} 참고"></td><td><div class="nm">${b.url ? `<a href="${esc(b.url)}" target="_blank" rel="noopener">${esc(b.name)}</a>` : esc(b.name)}</div><div class="sub">${esc(b.org)} · ${esc(b.date.slice(0, 10))}</div></td>
+            <td class="r num">${esc(N.won(b.price))}</td><td>${esc(b.regions ? N.regionLabel(b.regions) : '-')}</td><td class="r num">${esc(b.rate ? b.rate + '%' : '-')}</td><td>${esc(b.method)}</td>
+            <td>${isRead(b) ? '<span class="ok-t small">읽음</span>' : b.fileError ? '<span class="warn-t small" title="' + esc(b.fileError) + '">못 읽음</span>' : hasFile(b) ? '<span class="muted small">첨부 있음</span>' : '<span class="muted small">-</span>'}</td></tr>`).join('')}
+          </tbody></table></div></details>` : ''}
         ${s && refBids(s).length ? `<details class="bids"${refBids(s).some((b) => b.doc) ? '' : ' open'}><summary>실제 공고문 (${refBids(s).length}건) — 전체 초안의 바탕</summary>
           ${refBids(s).map((b, bi) => `<details class="ref"${bi === 0 ? ' open' : ''}>
             <summary class="ref-head"><b>${esc(b.name)}</b><span class="muted">${esc(b.org)}${b.doc ? ` · ${b.doc.sections.length}개 절` : ''}</span>${b.savedPath ? `<button type="button" class="link sm" data-nact="openref" data-path="${esc(b.savedPath)}">원문 열기</button>` : ''}</summary>
@@ -448,7 +472,7 @@
           </details>`).join('')}</details>` : ''}
       </section>
       <div class="ncols">
-        <div class="nform">${secs}</div>
+        <div class="nform">${secs}${pickPanel(n)}</div>
         <aside class="draft"><div class="draft-head"><h3>문장 초안</h3>
             <div class="seg dmode" role="group" aria-label="초안 종류">
               ${hasLearned(n) ? `<button type="button" data-dmode="learned" class="${dm === 'learned' ? 'on' : ''}" title="비슷한 공고들이 공통으로 쓴 실제 문장을 이번 업종·지역으로 바꿈">배운 문장</button>` : ''}
@@ -457,9 +481,9 @@
             </div>
             ${aiWho ? `<button type="button" class="btn sm${n.ai ? '' : ' primary'}" data-nact="ai" title="비슷한 공고의 실제 문장과 이번 항목 값을 ${root.JH.ai.label(aiWho)}에 보내 공고문 문체로 다시 씁니다">${n.ai ? 'AI로 다시 쓰기' : 'AI로 쓰기'}</button>`
               : `<button type="button" class="btn sm" data-nact="aiq" title="업무용 AI·Gemini·ChatGPT 등 쓰는 AI 채팅에 붙여 넣을 질문(비슷한 공고 문장 + 이번 값)을 복사합니다">AI 질문 복사</button><button type="button" class="btn sm" data-nact="aip" title="AI가 준 답을 붙여 넣으면 초안에 들어갑니다">답 붙여넣기</button>`}</div>
-          <p class="muted small draft-note">${dm === 'ai' ? `AI 초안${stale ? ' · <b class="warn-t">항목을 바꿨습니다. 반영하려면 [AI로 다시 쓰기]</b>' : ''} — 지어낸 내용이 없는지 꼭 확인하세요.` : dm === 'learned' ? (n.learned.bids.some((b) => b.doc && b.doc.sections && b.doc.sections.length >= 3)
-              ? `비슷한 공고 ${n.learned.bids.filter((b) => b.doc && b.doc.sections && b.doc.sections.length >= 3).length}건의 공고문 전체를 읽어, 가장 전형적인 공고의 절·문장을 이번 공고 값(공고명·업종·지역·하한율)으로 바꿨습니다. 일정·금액은 이번 값으로 씁니다.`
-              : `비슷한 공고 ${n.learned.bids.filter((b) => b.clauses && b.clauses.length).length}건의 실제 문장에서 배웠습니다. 왼쪽 값을 바꾸면 바로 반영됩니다.`) : '왼쪽 값을 바꾸면 바로 반영됩니다. 위에서 [비슷한 공고 찾기]를 하면 실제 공고 문장으로 배웁니다.'}</p>
+          <p class="muted small draft-note">${dm === 'ai' ? `AI 초안${stale ? ' · <b class="warn-t">항목을 바꿨습니다. 반영하려면 [AI로 다시 쓰기]</b>' : ''} — 지어낸 내용이 없는지 꼭 확인하세요.` : dm === 'learned' ? (used(n.learned).some((b) => b.doc && b.doc.sections && b.doc.sections.length >= 3)
+              ? `비슷한 공고 ${used(n.learned).filter((b) => b.doc && b.doc.sections && b.doc.sections.length >= 3).length}건의 공고문 전체를 읽어, 가장 전형적인 공고의 절·문장을 이번 공고 값(공고명·업종·지역·하한율)으로 바꿨습니다. 일정·금액은 이번 값으로 씁니다.`
+              : `비슷한 공고 ${used(n.learned).filter((b) => b.clauses && b.clauses.length).length}건의 실제 문장에서 배웠습니다. 왼쪽 값을 바꾸면 바로 반영됩니다.`) : '왼쪽 값을 바꾸면 바로 반영됩니다. 위에서 [비슷한 공고 찾기]를 하면 실제 공고 문장으로 배웁니다.'}</p>
           ${draft.map((d, i) => `<div class="dsec"><div class="dsec-head"><b>${esc(d.title)}</b>${d.learned ? `<span class="lbadge" title="비슷한 공고 ${d.learned}건에 있는 절 — 실제 공고 문장을 이번 값으로 바꿈">공고 ${d.learned}건</span>` : ''}${d.check ? `<span class="lbadge warn" title="다른 공고의 금액·날짜 자리를 ○○로 비워 둠">○○ ${d.check}곳 확인</span>` : ''}<button type="button" class="link sm" data-copy="${i}">복사</button></div><pre>${esc(d.body)}</pre></div>`).join('')}
           <p class="muted small">초안입니다. 회사 표준 공고문과 관계 법령에 맞는지 확인한 뒤 사용하세요.</p>
         </aside>
@@ -495,7 +519,11 @@
     if (!a) return;
     const act = a.dataset.nact;
     if (act === 'new') create();
-    else if (act === 'learn') learnSimilar($('#lScope').value, Number($('#lMonths').value), $('#lKeyword').value.trim());
+    else if (act === 'learn') learnSimilar($('#lScope').value, Number($('#lMonths').value), $('#lKeyword').value.trim(), ($('#lOrg') || {}).value);
+    else if (act === 'useall') { openBids.add(n.id); setUse(n, () => true); }
+    else if (act === 'usenone') { openBids.add(n.id); setUse(n, () => false); }
+    else if (act === 'usefile') { openBids.add(n.id); setUse(n, (b) => isRead(b) || hasFile(b)); }
+    else if (act === 'readpicked') { openBids.add(n.id); await readPicked(n); }
     else if (act === 'schedule') applySchedule();
     else if (act === 'copyall') await copy(sectionsOf(n).map((d) => (d.title === '제목' ? '' : d.title + '\n') + d.body).join('\n\n'));
     else if (act === 'ai') await writeWithAi(n);
@@ -506,9 +534,6 @@
     else if (act === 'dup') { const c = JSON.parse(JSON.stringify(n)); c.id = L.uid(); c.v.공고명 = (c.v.공고명 || '') + ' (복사)'; c.v.공고번호 = ''; c.lastFile = ''; c.status = 'draft'; delete c.g2b; delete c.ai; delete c.dmode; c.createdAt = c.updatedAt = Date.now(); store.notices.unshift(c); sel = c.id; save(true); render(); }
     else if (act === 'markdone') setStatus(n, 'done');
     else if (act === 'markdraft') setStatus(n, 'draft');
-    else if (act === 'g2b') await registerBid(n, $('#g2bNo').value);
-    else if (act === 'g2bcheck') await checkBid(n);
-    else if (act === 'unpost') { if (confirm('입찰공고번호 연결을 풀고 작성 완료로 되돌릴까요? (나라장터의 실제 공고는 그대로입니다)')) { delete n.g2b; setStatus(n, 'done'); } }
     else if (act === 'del') { if (confirm('이 공고문을 삭제할까요? 만든 한글 파일은 남습니다.')) { store.notices = store.notices.filter((x) => x !== n); sel = null; save(true); render(); } }
     else if (act === 'hwp') await makeHwp(n);
   }
@@ -526,8 +551,10 @@
     catch (_) { app().toast('복사하지 못했습니다. 초안을 직접 선택해 복사해 주세요.', 'err'); }
   }
   function onInput(e) {
+    const pt = e.target.closest('[data-picktext]');
+    if (pt) { const tp = topics[+pt.dataset.picktext]; if (tp) { setPick(tp.key, pt.value); tp.current = pt.value; refreshLive(); } return; }
     const t = e.target.closest('[data-key]'); if (!t || !t.closest('#noticeMain')) return;
-    const n = cur(); if (!n || N.statusOf(n) === 'posted') return;
+    const n = cur(); if (!n) return;
     const f = N.FIELDS.find((x) => x.key === t.dataset.key);
     setVal(t.dataset.key, t.value, true);
     if (f && (f.type === 'select' || f.key === '구분' || f.key === '공종')) render(); else refreshLive();
@@ -542,19 +569,25 @@
   view().addEventListener('input', onInput);
   view().addEventListener('focusout', onBlur);
   view().addEventListener('change', (e) => {
+    const pk = e.target.closest('[data-pick]');
+    if (pk) { const tp = topics[+pk.dataset.pick]; if (!tp) return; const i = pk.value;
+      if (i === '-1') setPick(tp.key, ''); else if (i !== 'own') setPick(tp.key, tp.variants[+i].shown);
+      render(); const ta = $(`[data-picktext="${pk.dataset.pick}"]`); if (ta) ta.focus(); return; }
+    const bu = e.target.closest('[data-buse]');
+    if (bu) { const n = cur(); if (!n || !n.learned) return; openBids.add(n.id); const i = +bu.dataset.buse; setUse(n, (b, j) => (j === i ? bu.checked : null)); return; }
+    if (e.target.id === 'lScope') { const o = $('#lOrg'); if (o) { o.hidden = e.target.value !== 'org'; if (!o.hidden) o.focus(); } return; }
     const t = e.target.closest('[data-mkey]'); if (!t) return;
-    const n = cur(); if (!n || N.statusOf(n) === 'posted') return;
+    const n = cur(); if (!n) return;
     const vals = $$(`[data-mkey="${t.dataset.mkey}"]:checked`).map((x) => x.value);
     setVal(t.dataset.mkey, vals.join(', '), true); render();
   });
-  view().addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.id === 'g2bNo') { e.preventDefault(); const n = cur(); if (n) registerBid(n, e.target.value); } });
   $('#noticeList').addEventListener('keydown', (e) => { const it = e.target.closest('[data-nid]'); if (it && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); sel = it.dataset.nid; render(); } });
 
   root.JH.notice = Object.assign(root.JH.notice, {
     async show() { await load(); render(); },
     create, templates, TPL_DIR, slotInfo, uploadSlot, resetSlot, slotPath, KINDS,
     stats() {
-      const by = { draft: 0, done: 0, posted: 0 }; store.notices.forEach((n) => by[N.statusOf(n)]++);
+      const by = { draft: 0, done: 0 }; store.notices.forEach((n) => by[N.statusOf(n)]++);
       return { count: store.notices.length, recent: store.notices[0] ? store.notices[0].v.공고명 : '', ...by };
     },
     current: () => cur(),

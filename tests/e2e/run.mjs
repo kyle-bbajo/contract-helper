@@ -417,6 +417,33 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   await page.screenshot({ path: join(SHOTS, '6b-공고문-배운문장.png') });
   step('배운 문장(비슷한 공고 공통 문장) 기본 + AI로 쓰기(키가 있으면 Gemini, 연결 창구 경유, 항목 값·실제 문장 전달)');
 
+  // 찾은 공고 중 참고할 것 고르기 + 참가자격 업종 문장 골라 쓰기
+  await page.click('[data-bidsbox] > summary');
+  const nBids = await page.$$eval('[data-buse]', (x) => x.length);
+  assert.ok(nBids >= 1, '찾은 공고마다 참고 체크');
+  await page.uncheck('[data-buse="0"]');
+  await page.waitForSelector('.learn-head .muted:has-text("건 참고")');
+  assert.equal(await page.$eval('[data-buse="0"]', (x) => x.checked), false);
+  assert.ok(await page.$('[data-bidsbox][open]'), '고르는 동안 목록이 펼쳐져 있음');
+  await page.check('[data-buse="0"]');
+  // 공고마다 다른 문장 고르기: 업종 문장 하나 골라 고치면 초안에 들어감
+  await page.waitForSelector('.picks .pick');
+  const pickUp = await page.$$eval('.pick', (cs) => cs.findIndex((c) => c.querySelector('.pick-h b').textContent === '참가자격 업종'));
+  assert.ok(pickUp >= 0, '업종 문장 고르기');
+  const upCard = (await page.$$('.pick'))[pickUp];
+  assert.match(await upCard.textContent(), /전기공사업/);
+  await page.locator('.pick').nth(pickUp).locator('input[type=radio]').nth(1).click();
+  await page.waitForSelector('.pick.set textarea');
+  assert.match(await page.inputValue('.pick.set textarea'), /전기공사업/);
+  await page.fill('.pick.set textarea', '「전기공사업법」에 따른 전기공사업 등록업체로서 고친 문장인 자');
+  await page.waitForTimeout(200);
+  assert.match(await page.textContent('.draft'), /고친 문장인 자/);
+  await page.screenshot({ path: join(SHOTS, '6c-공고문-문장고르기.png') });
+  await page.locator('.pick.set input[type=radio]').first().click();
+  await page.waitForTimeout(200);
+  assert.doesNotMatch(await page.textContent('.draft'), /고친 문장인 자/);
+  step('찾은 공고 중 참고할 공고 고르기(빼면 추천에서 빠짐) + 공고마다 다른 문장(업종 등) 골라 고쳐 쓰기 → 초안 반영, 되돌리기');
+
   // 한글 양식 올리고 채우기(시험 PC엔 한글이 없어 HWPX 직접 채우기로 처리)
   await page.click('#btnSettings');
   await page.click('#dlgSettings .dlg-tabs button[data-tab="notice"]');
@@ -466,22 +493,32 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   await page.keyboard.press('Escape');
   step('다른 입찰공고 양식 올림 → 그 모양 그대로 채운 한글 파일 + 확인할 것 표시, [기본 양식으로] 되돌리기');
 
-  // 진행 상태: 한글 양식을 만들면 작성 완료 → 나라장터 입찰공고번호를 넣으면 등록(잠금) → 복사해서 새로 쓰기는 작성 중
+  // 진행 상태: 한글 파일을 만들면 작성 완료(나라장터 등록은 직접 하므로 번호 넣는 칸 없음) → 복사해서 새로 쓰기는 작성 중
   assert.match(await page.textContent('.lgroup'), /작성 완료/);
   assert.match(await page.textContent('.nstep.on'), /작성 완료/);
-  await page.fill('#g2bNo', 'r26bk09999999-000');
-  await page.click('[data-nact="g2b"]');
-  await waitFor(() => page.$('.toast:has-text("나라장터에서 확인했습니다")'), 20000, '나라장터 공고 확인');
-  assert.match(await page.textContent('.g2b.posted'), /R26BK09999999-000[\s\S]*개찰 2026-10-28 11:00/);
-  assert.ok(await page.$eval('.nsec', (f) => f.disabled), '등록된 공고문 잠금');
-  assert.ok(await page.$eval('#nf-공고명', (t) => t.closest('fieldset').disabled));
-  assert.match(await page.textContent('.lgroup'), /나라장터 등록/);
-  await page.screenshot({ path: join(SHOTS, '8-공고문-등록.png') });
+  assert.equal(await page.$('#g2bNo'), null, '번호 연결 칸 없음');
+  assert.equal(await page.$$eval('.nstep', (x) => x.length), 2);
+  await page.screenshot({ path: join(SHOTS, '8-공고문-작성완료.png') });
   await page.click('[data-nact="dup"]');
   assert.match(await page.textContent('.nstep.on'), /작성 중/);
-  assert.equal(await page.$eval('#nf-공고명', (t) => t.closest('fieldset').disabled), false);
-  assert.deepEqual(await page.$$eval('.lgroup span', (s) => s.map((x) => x.textContent)), ['작성 중', '나라장터 등록']);
-  step('진행 상태: 한글 양식 → 작성 완료, 나라장터 공고번호 → 등록(확인·잠금), 복사해서 새로 쓰기 → 작성 중');
+  assert.deepEqual(await page.$$eval('.lgroup span', (s) => s.map((x) => x.textContent)), ['작성 중', '작성 완료']);
+  step('진행 상태: 한글 파일 → 작성 완료(번호 연결 단계 없음), 복사해서 새로 쓰기 → 작성 중');
+
+  // 계약별 목록 너비: 경계를 끌어 넓히면 기억, 두 번 누르면 원래대로
+  await page.click('.views [data-view="contracts"]');
+  const listW = () => page.$eval('#view-contracts .list', (x) => Math.round(x.getBoundingClientRect().width));
+  const w0 = await listW();
+  const sp = await (await page.$('.splitter[data-split="contracts"]')).boundingBox();
+  await page.mouse.move(sp.x + 1, sp.y + 200); await page.mouse.down(); await page.mouse.move(sp.x + 260, sp.y + 200, { steps: 6 }); await page.mouse.up();
+  const w1 = await listW();
+  assert.ok(w1 > w0 + 200, `목록이 넓어짐 ${w0} → ${w1}`);
+  assert.ok(await page.$('#view-contracts.wide-list'), '넓으면 긴 계약명 두 줄');
+  assert.equal(await page.evaluate(() => localStorage.getItem('jh.listW.contracts')), String(w1));
+  await page.screenshot({ path: join(SHOTS, '9-계약별-넓힘.png') });
+  const sp2 = await (await page.$('.splitter[data-split="contracts"]')).boundingBox();
+  await page.mouse.dblclick(sp2.x + 1, sp2.y + 200);
+  assert.equal(await listW(), w0, '두 번 누르면 원래대로');
+  step('계약별 목록 너비 끌어서 조절(기억, 두 번 누르면 원래대로), 넓으면 긴 계약명 두 줄');
 
   await page.click('.brand');
   await page.waitForSelector('#homeNotice li');

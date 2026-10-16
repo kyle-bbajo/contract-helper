@@ -229,8 +229,7 @@
         추정가격: '60,000,000', 부가세: '6,000,000', 추정금액: '66,000,000', 기초금액: '', 계약방법: '제한경쟁', 낙찰자결정방법: '적격심사', 낙찰하한율: '86.745%',
         업종제한: '「전기공사업법」에 따른 전기공사업 등록업체', 지역제한: '경기도', 공동도급: '불허', 입찰보증금: '입찰금액의 100분의 5 이상', 상생결제: '적용',
         공고일: '', 입찰시작: '', 입찰마감: '', 개찰일시: '', 현장설명: '없음', 하자담보책임기간: '준공일로부터 2년', 담당부서: '계약팀', 담당자: ME, 연락처: '031-000-0000', 기관명: '용인도시공사' } };
-    const posted = JSON.parse(JSON.stringify(done)); Object.assign(posted, { id: 'demo2', status: 'posted', createdAt: now - 20 * 864e5, updatedAt: now - 15 * 864e5,
-      g2b: { no: 'R26BK00000002', ord: '000', name: '동백 체육공원 조명 교체 전기공사', org: '용인도시공사', close: '2026-09-09T10:00', open: '2026-09-09T11:00', checked: true } });
+    const posted = JSON.parse(JSON.stringify(done)); Object.assign(posted, { id: 'demo2', status: 'done', createdAt: now - 20 * 864e5, updatedAt: now - 15 * 864e5 });
     Object.assign(posted.v, { 공고명: '동백 체육공원 조명 교체 전기공사', 공고번호: '2026-074', 현장: '용인시 기흥구 동백동 일원', 추정가격: '45,000,000', 부가세: '4,500,000', 추정금액: '49,500,000', 낙찰하한율: '87.745%', 지역제한: '용인시', 상생결제: '미적용' });
     await server.writeJson('공고문대장.json', { version: 1, notices: [{ id: 'demo1', status: 'draft', createdAt: now, updatedAt: now, manual: {}, learned: null,
       v: { 구분: '공사', 공종: '전기공사', 공고명: '신갈오거리 보안등 정비 전기공사', 공고번호: '', 현장: '용인시 기흥구 신갈동 일원', 기간: '착공일로부터 45일',

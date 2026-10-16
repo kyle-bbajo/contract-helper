@@ -89,7 +89,7 @@ main { min-height: 0; }
 .view.on { display: grid; }
 
 /* ---------- 계약별 ---------- */
-#view-contracts { grid-template-columns: 360px 1fr; }
+#view-contracts { grid-template-columns: var(--list-w, 360px) 0 minmax(0, 1fr); }
 .list { display: grid; grid-template-rows: auto 1fr auto; min-height: 0; border-right: 1px solid var(--rule); background: var(--sheet); }
 .filters { padding: 14px 14px 10px; display: grid; gap: 8px; border-bottom: 1px solid var(--rule-soft); }
 .filters input { width: 100%; }
@@ -258,6 +258,7 @@ table.grid { width: 100%; border-collapse: separate; border-spacing: 0; backgrou
 
 @media (max-width: 900px) {
   #view-contracts { grid-template-columns: 1fr; }
+  .splitter { display: none; }
   .list { max-height: 42vh; border-right: 0; border-bottom: 1px solid var(--rule); }
   .bar { gap: 12px; overflow-x: auto; }
   .detail { padding: 18px 16px 40px; }
@@ -293,7 +294,7 @@ body[data-mod="home"] .views button.on::after { display: none; }
 @media (max-width: 860px) { .doors { grid-template-columns: 1fr; } .door { min-height: 0; } }
 
 /* ---------- 공고문 작성 ---------- */
-#view-notice { grid-template-columns: 300px 1fr; }
+#view-notice { grid-template-columns: var(--list-w, 300px) 0 minmax(0, 1fr); }
 #view-notice .filters strong { font-size: 14px; }
 .muted { color: var(--muted); }
 .small { font-size: 12.5px; }
@@ -531,3 +532,35 @@ details.adv > summary { cursor: pointer; color: var(--ink-2); font-size: 13px; f
 .hreport.warn { border-color: #efdcb8; background: var(--amber-soft); }
 .hcheck ul { margin: 4px 0; padding-left: 18px; }
 .hcheck li { color: #7a5112; }
+
+/* 공고마다 다른 문장 고르기 */
+.nsec.picks .picks-list { display: flex; flex-direction: column; gap: 10px; }
+.pick { border: 1px solid var(--rule-soft); border-radius: 8px; padding: 10px 12px; background: var(--sheet); }
+.pick.set { border-color: var(--ink-2); }
+.pick-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 6px; }
+.pick ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.pick li { padding: 5px 6px; border-radius: 6px; }
+.pick li:hover { background: var(--ink-soft); }
+.pick li label { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; font-size: 13.5px; line-height: 1.55; }
+.pick li label input { margin-top: 4px; flex: none; }
+.pick li .pv-t { min-width: 0; overflow-wrap: anywhere; }
+.pick li .pv-s { margin-left: 24px; }
+.pick li.match .pv-t { font-weight: 600; }
+.pick textarea { margin-top: 8px; width: 100%; font: inherit; font-size: 14px; line-height: 1.55; color: var(--text); padding: 7px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--sheet); resize: vertical; }
+.pick textarea:focus { border-color: var(--ink-2); outline: none; box-shadow: 0 0 0 3px var(--ink-soft); }
+/* 찾은 공고: 참고할 공고 고르기 */
+.bids-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 8px; }
+.bids-ctl .btn { margin-left: auto; }
+.bids .tbl-wrap { overflow-x: auto; }
+.bids th.c, .bids td.c { text-align: center; width: 44px; }
+.bids tr.off td { opacity: .45; }
+.bids tr.off td.c { opacity: 1; }
+
+/* 목록·상세 사이 경계: 끌어서 목록 너비 조절(두 번 누르면 원래대로) */
+.splitter { position: relative; z-index: 5; width: 0; cursor: col-resize; outline: none; }
+.splitter::before { content: ""; position: absolute; top: 0; bottom: 0; left: -5px; width: 10px; }
+.splitter::after { content: ""; position: absolute; top: 0; bottom: 0; left: -2px; width: 4px; background: transparent; transition: background .15s; }
+.splitter:hover::after, .splitter:focus-visible::after, .splitter.drag::after { background: var(--ink-2); }
+body.resizing { cursor: col-resize; user-select: none; }
+/* 목록을 넓히면 긴 계약명도 두 줄까지 보여 줌 */
+.view.wide-list .citem .nm { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
