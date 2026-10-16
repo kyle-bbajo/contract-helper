@@ -76,7 +76,7 @@
         try { const r = L.parseApiBody(await S.nara(N.bidDetailUrl('getBidPblancListInfoLicenseLimit', b.no, b.ord, cfg.apiKey))); b.licenses = [...new Set(r.items.map((x) => x.lcnsLmtNm).filter(Boolean))]; } catch (_) {}
       }
       // 첨부 공고문 읽기: 가까운 공고 5건의 공고서(한글·PDF)를 받아 문장 뽑기, 원본은 데이터 폴더에 보관
-      const withFiles = (keyword0 ? bids : near).filter((b) => b.files && b.files.some((f) => /\.(hwpx?|pdf)$/i.test(f.name))).slice(0, 5);
+      const withFiles = (keyword0 ? bids : near).filter((b) => b.files && b.files.some((f) => /\.(hwpx?|pdf)$/i.test(f.name))).slice(0, 6);
       let read = 0;
       for (let i = 0; i < withFiles.length; i++) {
         const b = withFiles[i];
@@ -87,6 +87,7 @@
           const kind = L.kindOf(f.name);
           const lines = await JH.readers.fullLines(bytes, kind);
           b.clauses = N.extractClauses(lines);
+          b.doc = N.parseNotice(lines); // 공고문 전체를 절 단위로(전체 초안에 씀)
           const saved = await S.save('공고문/참고', `${b.no}_${L.safeName(f.name, 80)}`, bytes);
           b.savedPath = saved.path; b.savedName = f.name; read++;
         } catch (e) { console.warn('첨부 읽기 실패', b.no, e); b.fileError = e.message; }
@@ -121,7 +122,8 @@
   }
 
   // ---------- 문장 초안: 배운 문장(기본값) · 기본 문장 · AI ----------
-  const hasLearned = (n) => !!(n.learned && n.learned.bids && n.learned.bids.some((b) => b.clauses && b.clauses.length));
+  const refBids = (s) => (s && s.bids ? s.bids.filter((b) => (b.doc && b.doc.sections && b.doc.sections.length) || (b.clauses && b.clauses.length)) : []);
+  const hasLearned = (n) => !!(n.learned && n.learned.bids && n.learned.bids.some((b) => (b.clauses && b.clauses.length) || (b.doc && b.doc.sections && b.doc.sections.length)));
   const modeOf = (n) => (n.dmode === 'ai' && n.ai ? 'ai' : n.dmode === 'basic' || !hasLearned(n) ? 'basic' : 'learned');
   function sectionsOf(n) {
     const m = modeOf(n);
@@ -311,11 +313,12 @@
           ${s.bids.map((b) => `<tr><td><div class="nm">${b.url ? `<a href="${esc(b.url)}" target="_blank" rel="noopener">${esc(b.name)}</a>` : esc(b.name)}</div><div class="sub">${esc(b.org)} · ${esc(b.date.slice(0, 10))}</div></td>
             <td class="r num">${esc(N.won(b.price))}</td><td>${esc(b.regions ? N.regionLabel(b.regions) : '-')}</td><td class="r num">${esc(b.rate ? b.rate + '%' : '-')}</td><td>${esc(b.method)}</td></tr>`).join('')}
           </tbody></table></details>` : ''}
-        ${s && s.bids.some((b) => b.clauses && b.clauses.length) ? `<details class="bids" open><summary>실제 공고문 문장 (${s.bids.filter((b) => b.clauses && b.clauses.length).length}건)</summary>
-          ${s.bids.filter((b) => b.clauses && b.clauses.length).map((b, bi) => `<div class="ref">
-            <div class="ref-head"><b>${esc(b.name)}</b><span class="muted">${esc(b.org)}</span>${b.savedPath ? `<button type="button" class="link sm" data-nact="openref" data-path="${esc(b.savedPath)}">원문 열기</button>` : ''}</div>
-            ${b.clauses.map((c, ci) => `<div class="dsec"><div class="dsec-head"><b>${esc(c.title)}</b><button type="button" class="link sm" data-clause="${bi}:${ci}">복사</button></div><pre>${esc(c.text)}</pre></div>`).join('')}
-          </div>`).join('')}</details>` : ''}
+        ${s && refBids(s).length ? `<details class="bids"${refBids(s).some((b) => b.doc) ? '' : ' open'}><summary>실제 공고문 (${refBids(s).length}건) — 전체 초안의 바탕</summary>
+          ${refBids(s).map((b, bi) => `<details class="ref"${bi === 0 ? ' open' : ''}>
+            <summary class="ref-head"><b>${esc(b.name)}</b><span class="muted">${esc(b.org)}${b.doc ? ` · ${b.doc.sections.length}개 절` : ''}</span>${b.savedPath ? `<button type="button" class="link sm" data-nact="openref" data-path="${esc(b.savedPath)}">원문 열기</button>` : ''}</summary>
+            ${b.doc && b.doc.sections.length ? b.doc.sections.map((c, ci) => `<div class="dsec"><div class="dsec-head"><b>${c.no}. ${esc(c.head)}</b><button type="button" class="link sm" data-docsec="${bi}:${ci}">복사</button></div><pre>${esc(c.lines.join('\n'))}</pre></div>`).join('')
+              : (b.clauses || []).map((c, ci) => `<div class="dsec"><div class="dsec-head"><b>${esc(c.title)}</b><button type="button" class="link sm" data-clause="${bi}:${ci}">복사</button></div><pre>${esc(c.text)}</pre></div>`).join('')}
+          </details>`).join('')}</details>` : ''}
       </section>
       <div class="ncols">
         <div class="nform">${secs}</div>
@@ -327,8 +330,10 @@
             </div>
             ${aiWho ? `<button type="button" class="btn sm${n.ai ? '' : ' primary'}" data-nact="ai" title="비슷한 공고의 실제 문장과 이번 항목 값을 ${root.JH.ai.label(aiWho)}에 보내 공고문 문체로 다시 씁니다">${n.ai ? 'AI로 다시 쓰기' : 'AI로 쓰기'}</button>`
               : `<button type="button" class="btn sm" data-nact="aiq" title="업무용 AI·Gemini·ChatGPT 등 쓰는 AI 채팅에 붙여 넣을 질문(비슷한 공고 문장 + 이번 값)을 복사합니다">AI 질문 복사</button><button type="button" class="btn sm" data-nact="aip" title="AI가 준 답을 붙여 넣으면 초안에 들어갑니다">답 붙여넣기</button>`}</div>
-          <p class="muted small draft-note">${dm === 'ai' ? `AI 초안${stale ? ' · <b class="warn-t">항목을 바꿨습니다. 반영하려면 [AI로 다시 쓰기]</b>' : ''} — 지어낸 내용이 없는지 꼭 확인하세요.` : dm === 'learned' ? `비슷한 공고 ${n.learned.bids.filter((b) => b.clauses && b.clauses.length).length}건의 실제 문장에서 배웠습니다. 왼쪽 값을 바꾸면 바로 반영됩니다.` : '왼쪽 값을 바꾸면 바로 반영됩니다. 위에서 [비슷한 공고 찾기]를 하면 실제 공고 문장으로 배웁니다.'}</p>
-          ${draft.map((d, i) => `<div class="dsec"><div class="dsec-head"><b>${esc(d.title)}</b>${d.learned ? `<span class="lbadge" title="비슷한 공고 ${d.learned}건 중 여러 건이 쓴 문장">배움</span>` : ''}<button type="button" class="link sm" data-copy="${i}">복사</button></div><pre>${esc(d.body)}</pre></div>`).join('')}
+          <p class="muted small draft-note">${dm === 'ai' ? `AI 초안${stale ? ' · <b class="warn-t">항목을 바꿨습니다. 반영하려면 [AI로 다시 쓰기]</b>' : ''} — 지어낸 내용이 없는지 꼭 확인하세요.` : dm === 'learned' ? (n.learned.bids.some((b) => b.doc && b.doc.sections && b.doc.sections.length >= 3)
+              ? `비슷한 공고 ${n.learned.bids.filter((b) => b.doc && b.doc.sections && b.doc.sections.length >= 3).length}건의 공고문 전체를 읽어, 가장 전형적인 공고의 절·문장을 이번 공고 값(공고명·업종·지역·하한율)으로 바꿨습니다. 일정·금액은 이번 값으로 씁니다.`
+              : `비슷한 공고 ${n.learned.bids.filter((b) => b.clauses && b.clauses.length).length}건의 실제 문장에서 배웠습니다. 왼쪽 값을 바꾸면 바로 반영됩니다.`) : '왼쪽 값을 바꾸면 바로 반영됩니다. 위에서 [비슷한 공고 찾기]를 하면 실제 공고 문장으로 배웁니다.'}</p>
+          ${draft.map((d, i) => `<div class="dsec"><div class="dsec-head"><b>${esc(d.title)}</b>${d.learned ? `<span class="lbadge" title="비슷한 공고 ${d.learned}건에 있는 절 — 실제 공고 문장을 이번 값으로 바꿈">공고 ${d.learned}건</span>` : ''}${d.check ? `<span class="lbadge warn" title="다른 공고의 금액·날짜 자리를 ○○로 비워 둠">○○ ${d.check}곳 확인</span>` : ''}<button type="button" class="link sm" data-copy="${i}">복사</button></div><pre>${esc(d.body)}</pre></div>`).join('')}
           <p class="muted small">초안입니다. 회사 표준 공고문과 관계 법령에 맞는지 확인한 뒤 사용하세요.</p>
         </aside>
       </div>`;
@@ -355,7 +360,9 @@
     const dmb = e.target.closest('[data-dmode]');
     if (dmb) { n.dmode = dmb.dataset.dmode; save(); render(); return; }
     const cc = e.target.closest('[data-clause]');
-    if (cc) { const [bi, ci] = cc.dataset.clause.split(':').map(Number); await copy(n.learned.bids.filter((b) => b.clauses && b.clauses.length)[bi].clauses[ci].text); return; }
+    if (cc) { const [bi, ci] = cc.dataset.clause.split(':').map(Number); await copy(refBids(n.learned)[bi].clauses[ci].text); return; }
+    const dc = e.target.closest('[data-docsec]');
+    if (dc) { const [bi, ci] = dc.dataset.docsec.split(':').map(Number); const c = refBids(n.learned)[bi].doc.sections[ci]; await copy(`${c.no}. ${c.head}\n${c.lines.join('\n')}`); return; }
     if (!a) return;
     const act = a.dataset.nact;
     if (act === 'new') create();

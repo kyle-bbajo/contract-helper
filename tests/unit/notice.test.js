@@ -66,7 +66,9 @@ test('문장 초안', () => {
   assert.match(all, /본점 소재지.*용인시에 있는 자/);
   assert.match(all, /낙찰하한율\(87\.745%\)/);
   assert.match(all, /2026\. 10\. 28\. 10:00/);
-  assert.match(all, /6\. 상생결제\n  해당 없음/);
+  assert.doesNotMatch(all, /상생결제/, '미적용이면 상생결제 문장 없음');
+  assert.match(N.draft({ ...v, 상생결제: '적용' }).map((x) => x.body).join('\n'), /상생결제시스템을 통해 지급/);
+  assert.match(all, /6\. 입찰의 무효[\s\S]*7\. 계약 체결[\s\S]*8\. 기타/);
   assert.match(all, /추정가격: 금 30,000,000원/);
 });
 
@@ -134,4 +136,28 @@ test('비슷한 공고의 실제 문장에서 배워 이번 업종·지역으로
   assert.match(p, /## 이번 공고 항목[\s\S]*지역제한|지역/); assert.match(p, /\[1\] b0 \(o\)/); assert.match(p, /"sections"/);
   assert.deepEqual(N.parseAi('좋습니다.\n{"sections":[{"title":"2. 입찰참가자격","body":"가. ..."}]}'), [{ title: '2. 입찰참가자격', body: '가. ...' }]);
   assert.throws(() => N.parseAi('죄송합니다'), /결과를 찾지 못했습니다/);
+});
+
+test('공고문 전체 배우기: 절 나누기 → 가장 전형적인 공고를 뼈대로 이번 값으로 바꾼 전체 초안', () => {
+  const { noticeText } = require('../../demo/notice-text.js');
+  const mk = (o) => ({ name: o.name, org: o.org, doc: N.parseNotice(noticeText(o)) });
+  const bids = [mk({ name: '동백 체육공원 조명 교체 전기공사', org: '용인도시공사' }), mk({ name: '수지 주차장 수변전 설비 전기공사', org: '용인시 수지구', region: '경기도', rate: '86.745' }), mk({ name: '포곡 하수처리장 동력설비 전기공사', org: '용인도시공사' })];
+  assert.deepEqual(bids[0].doc.sections.map((s) => s.key), ['입찰에 부치는 사항', '입찰참가자격', '공동계약', '입찰보증금', '입찰서 제출·개찰', '낙찰자 결정방법', '입찰 무효', '계약 체결', '기타']);
+  // PDF처럼 끊긴 줄은 이어 붙임, 하위 번호(1. 안의 가.)는 큰 제목으로 보지 않음
+  assert.deepEqual(N.mergeWrapped(['가. 입찰보증금은 입찰금액의 100분의 5 이상으로', '하며 지급각서로 갈음합니다.', '나. 다음 줄']), ['가. 입찰보증금은 입찰금액의 100분의 5 이상으로 하며 지급각서로 갈음합니다.', '나. 다음 줄']);
+  const v = { 구분: '공사', 공고명: '시청사 조명 교체 전기공사', 기관명: '용인도시공사', 업종제한: '「전기공사업법」에 따른 전기공사업 등록업체', 지역제한: '용인시', 낙찰하한율: '87.745%', 연락처: '031-111-2222', 담당부서: '계약팀' };
+  const d = N.draft(v, { bids });
+  const text = d.map((s) => s.title + '\n' + s.body).join('\n');
+  assert.ok(d.length >= 11, `절 ${d.length}개`);
+  assert.match(text, /본점 소재지가 용인시에 있는 자/); assert.match(text, /낙찰하한율 87\.745% 이상/);
+  assert.match(text, /입찰의 무효/); assert.match(text, /노무비 구분관리/); assert.match(text, /☎ 031-111-2222/);
+  assert.doesNotMatch(text, /동백 체육공원|수지 주차장|포곡 하수처리장/, '다른 공고명이 남지 않음');
+  assert.doesNotMatch(text, /2026\. 9\. 9\./, '다른 공고 일정은 빼고 이번 일정으로');
+  assert.match(d.find((s) => /입찰서 제출/.test(s.title)).body, /^ {2}가\. 입찰서 제출/);
+  assert.equal(d.find((s) => /입찰참가자격/.test(s.title)).learned, 3);
+  // 공고문 전체가 없는 예전 기록은 문장 배우기로
+  assert.equal(N.learnDocument([{ clauses: [{ title: '입찰참가자격', text: '가. 자격' }] }], v), null);
+  // 기본 초안도 무효·계약 체결·기타 절까지
+  assert.ok(N.draft(v).some((s) => /입찰의 무효/.test(s.title)));
+  assert.match(N.templateValues(v, d)['공고문전문'], /입찰참가자격[\s\S]*계약 체결/);
 });

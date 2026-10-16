@@ -34,7 +34,7 @@
     $('#ntWinwin').value = nt.winwinMin ? Number(nt.winwinMin).toLocaleString('ko-KR') : '';
     $('#ntAiProvider').value = JH.ai.cfg().mode; $('#ntAiKey').value = nt.aiKey || ''; $('#ntAiModel').value = nt.aiModel || ''; $('#ntAiLocalModel').value = nt.aiLocalModel || '';
     showAi(false);
-    $('#phKeys').innerHTML = [...JH.notice.logic.FIELDS.map((f) => f.key), '지역제한문장', '입찰참가자격', '낙찰자결정문장'].map((k) => `<button type="button" class="phk" data-ph="${esc(k)}">{{${esc(k)}}}</button>`).join('');
+    $('#phKeys').innerHTML = [...JH.notice.logic.FIELDS.map((f) => f.key), '지역제한문장', '입찰참가자격', '낙찰자결정문장', '공고문전문'].map((k) => `<button type="button" class="phk" data-ph="${esc(k)}">{{${esc(k)}}}</button>`).join('');
     renderTpls();
     tab(name || 'nara');
     dlg.showModal();

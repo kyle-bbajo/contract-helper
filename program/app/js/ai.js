@@ -55,7 +55,7 @@
     if (!p) throw new Error(privateData ? 'PC 안 AI가 아직 준비되지 않았습니다(설정 → AI에서 상태 확인).' : 'AI가 준비되지 않았습니다.');
     const c = cfg();
     if (p === 'local') {
-      const body = { model: c.localModel, stream: false, keep_alive: '15m', options: { temperature: 0.2, num_ctx: 8192 },
+      const body = { model: c.localModel, stream: false, keep_alive: '15m', options: { temperature: 0.2, num_ctx: 16384 },
         messages: [{ role: 'system', content: system || '' }, { role: 'user', content: prompt }] };
       if (json) body.format = 'json';
       const r = S().localChat ? await S().localChat(body) : await (async () => {

@@ -24,10 +24,11 @@ html = html.replace(/<!doctype html>\s*/i, '').replace(/<html[^>]*>\s*/i, '').re
   .replace(/<meta charset="utf-8">\s*/i, '').replace(/<meta name="viewport"[^>]*>\s*/i, '').replace(/<meta name="jh-token"[^>]*>\s*/i, '')
   .replace('<title>계약업무 도우미</title>', '<title>계약업무 도우미 시연판</title>')
   .replace('<link rel="stylesheet" href="css/app.css">', '<link rel="stylesheet" href="css/app.css">\n<link rel="stylesheet" href="css/demo.css">')
-  .replace('<script src="js/server.js"></script>', '<script src="js/demo-server.js"></script>');
+  .replace('<script src="js/server.js"></script>', '<script src="js/notice-text.js"></script>\n<script src="js/demo-server.js"></script>');
 writeFileSync(join(OUT, 'index.html'), html);
 rmSync(join(OUT, 'js/server.js'));
 cpSync(join(ROOT, 'demo/demo-server.js'), join(OUT, 'js/demo-server.js'));
+cpSync(join(ROOT, 'demo/notice-text.js'), join(OUT, 'js/notice-text.js'));
 
 // 글꼴은 파일 대신 CSS 안에 넣음(게시 페이지 규칙)
 const font = readFileSync(join(OUT, 'vendor/fonts/PretendardVariable.woff2')).toString('base64');
@@ -64,7 +65,6 @@ for (const f of readdirSync(join(ROOT, 'tests/fixtures/docs'))) if (!/\.hwpx?$/i
   const rep = (a, b) => { if (!d.includes(a)) throw new Error('demo-server 바꿀 곳 없음: ' + a.slice(0, 50)); d = d.replace(a, b); };
   rep(", 'noname(9).hwp', 'noname(10).hwpx']", ']');
   rep("    const tpl = new Uint8Array(await (await fetch('samples/공고문양식.hwpx')).arrayBuffer());\n    files.set('공고문/양식/공고문양식.hwpx', tpl);\n", '');
-  rep("async fetchFile() { return new Uint8Array(await (await fetch('samples/attach-notice.hwp')).arrayBuffer()); }", "async fetchFile() { throw new Error('이 시연판에는 한글 첨부 예시를 넣지 않았습니다.'); }");
   rep('샘플 서류 11개', '샘플 서류 9개(PDF·스캔·사진)');
   rep("cMapUrl: 'vendor/pdfjs/cmaps/', cMapPacked: true,", 'CMapReaderFactory: root.JH_DemoCMapFactory, cMapPacked: true,');
   writeFileSync(p, d);

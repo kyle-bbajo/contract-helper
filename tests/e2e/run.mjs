@@ -65,8 +65,10 @@ function hwpBytes(lines) {
   CFB.utils.cfb_add(z, '/FileHeader', fh); CFB.utils.cfb_add(z, '/BodyText/Section0', zlib.deflateRawSync(Buffer.concat(lines.map(rec))));
   return Buffer.from(CFB.write(z, { type: 'buffer' }));
 }
-const ATTACH = hwpBytes(['「신갈오거리 보안등 정비 전기공사」 입찰 공고', '1. 입찰에 부치는 사항', '2. 입찰참가자격',
-  '가. 「전기공사업법」에 따른 전기공사업 등록업체', '나. 입찰공고일 전일부터 입찰일까지 법인등기부상 본점 소재지가 경기도 용인시에 있는 자', '3. 낙찰자 결정방법', '낙찰하한율 87.745% 이상 적격심사']);
+const { noticeText } = require('../../demo/notice-text.js');
+// 첨부 공고문: 공고마다 지역·하한율을 바꾼 공고문 전문(HWP 본문)
+const attachFor = (url) => { const no = (String(url).match(/R26BK\d+/) || [''])[0]; const b = BIDS.find((x) => x.bidNtceNo === no) || BIDS[0];
+  return hwpBytes(noticeText({ name: b.bidNtceNm, org: b.ntceInsttNm, region: (REGIONS[b.bidNtceNo] || ['경기도 용인시'])[0], rate: b.sucsfbidLwltRate })); };
 // 한글 양식(HWPX): {{항목}}이 서식 경계로 쪼개진 것 포함
 function hwpxTemplate() {
   const sec = '<?xml version="1.0" encoding="UTF-8"?><hs:sec xmlns:hs="s" xmlns:hp="p"><hp:p><hp:run><hp:t>{{기관명}} 공고 제{{공고번호}}호</hp:t></hp:run></hp:p>' +
@@ -101,7 +103,7 @@ await page.route('**/api/nara**', (r) => {
   else body = api(u.includes('Cnstwk') ? 공사 : 용역);
   r.fulfill({ status: 200, contentType: 'text/plain; charset=utf-8', body });
 });
-await page.route('**/api/fetchfile**', (r) => r.fulfill({ status: 200, contentType: 'application/octet-stream', body: ATTACH }));
+await page.route('**/api/fetchfile**', (r) => r.fulfill({ status: 200, contentType: 'application/octet-stream', body: attachFor(new URL(r.request().url()).searchParams.get('u')) }));
 let ok = 0; const step = (m) => { ok++; console.log('  ✓ ' + m); };
 
 try {
@@ -366,9 +368,13 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
 
   const draft = await page.$$eval('.dsec pre', (ps) => ps.map((p) => p.textContent).join('\n'));
   assert.match(draft, /전기공사업 등록업체/); assert.match(draft, /용인시에 있는 자/); assert.match(draft, /87\.745%/);
+  // 공고문 전체를 배워 절이 모두 들어감(입찰보증금·입찰서 제출·낙찰자 결정·무효·계약 체결·기타)
+  const heads = await page.$$eval('.draft .dsec-head b', (b) => b.map((x) => x.textContent));
+  for (const h of ['입찰참가자격', '공동계약', '입찰보증금', '입찰서 제출', '낙찰자 결정방법', '입찰의 무효', '계약 체결', '기타사항']) assert.ok(heads.some((x) => x.includes(h)), h);
+  assert.match(draft, /노무비 구분관리/); assert.match(draft, /청렴계약/);
   await page.click('[data-nact="copyall"]');
   assert.match(await page.evaluate(() => navigator.clipboard.readText()), /신갈오거리 보안등 정비 전기공사/);
-  step('문장 초안 생성·전체 복사');
+  step('비슷한 공고문 전체를 배워 절 9개짜리 전체 초안(이번 공고명·지역·하한율로 바꿈) 생성·전체 복사');
 
   // 배운 문장: 첨부 공고문에서 뽑은 참가자격 문장이 기본 초안 대신 들어감
   assert.ok(await page.$('.seg.dmode [data-dmode="learned"].on'), '배운 문장이 기본');

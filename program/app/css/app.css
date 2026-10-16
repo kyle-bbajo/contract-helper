@@ -499,3 +499,11 @@ body[data-mod="home"] .views button.on::after { display: none; }
 .ai-state { padding: 10px 12px; border-radius: 8px; background: var(--ink-soft); color: var(--ink); font-weight: 600; font-size: 13.5px; }
 .ai-state.ok { background: var(--ok-soft); color: var(--ok); }
 .ai-state.err { background: var(--seal-soft); color: var(--seal); }
+.fsort { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); font-weight: 600; }
+.fsort select { flex: 1; min-width: 0; font-size: 13px; padding: 5px 8px; }
+.lbadge.warn { color: #7a5112; background: var(--amber-soft); }
+.dsec-head .lbadge.warn + .link { margin-left: auto; }
+details.ref > summary.ref-head { cursor: pointer; list-style: none; }
+details.ref > summary.ref-head::-webkit-details-marker { display: none; }
+details.ref > summary.ref-head::before { content: "▸"; color: var(--muted); font-size: 12px; margin-right: 2px; }
+details.ref[open] > summary.ref-head::before { content: "▾"; }

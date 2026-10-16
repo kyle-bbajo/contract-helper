@@ -180,7 +180,16 @@
       const r = await server.ai({ model: body.model });
       return { message: { content: r.content[0].text } };
     },
-    async fetchFile() { return new Uint8Array(await (await fetch('samples/attach-notice.hwp')).arrayBuffer()); },
+    // 첨부 공고문(시연): 공고마다 지역·하한율·기관을 바꾼 공고문 전문을 한글(HWPX)로 만들어 줌
+    async fetchFile(url) {
+      const no = (String(url).match(/R26BK\d+/) || [''])[0]; const b = BIDS.find((x) => x.bidNtceNo === no) || BIDS[0];
+      const region = (REGIONS[b.bidNtceNo] || ['경기도 용인시'])[0];
+      const lines = root.JH_NOTICE_TEXT({ name: b.bidNtceNm, org: b.ntceInsttNm, region, rate: b.sucsfbidLwltRate, price: Number(b.presmptPrce).toLocaleString('ko-KR'),
+        extra: b.bidNtceNo === 'R26BK00000003' ? ['라. 하도급을 하려면 미리 발주기관의 승인을 받아야 합니다.'] : [] });
+      const x = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const sec = '<?xml version="1.0" encoding="UTF-8"?><hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">' + lines.map((l) => `<hp:p><hp:run><hp:t>${x(l)}</hp:t></hp:run></hp:p>`).join('') + '</hs:sec>';
+      return root.JH.notice.logic.zipStore([{ name: 'mimetype', data: enc.encode('application/hwp+zip') }, { name: 'Contents/section0.xml', data: enc.encode(sec) }]);
+    },
     async hwp2pdf() { throw new Error('시연판에서는 한글→PDF 변환을 하지 않습니다. 실제 프로그램은 설치된 한글로 자동 변환합니다.'); },
     async open() { throw new Error('시연판에서는 폴더를 열 수 없습니다. 실제 프로그램은 탐색기로 엽니다.'); },
     async openFile(path) { await showFile(norm(path)); return { ok: true }; },

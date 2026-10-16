@@ -73,6 +73,11 @@
             <button type="button" data-state="ready">지출 대기</button>
             <button type="button" data-state="paid">지출 완료</button>
           </div>
+          <label class="fsort"><span>정렬</span><select id="fSort" aria-label="목록 정렬">
+            <option value="end-desc">준공일 늦은 순</option><option value="end-asc">준공일 빠른 순</option>
+            <option value="date-desc">계약일 최근 순</option><option value="date-asc">계약일 오래된 순</option>
+            <option value="name">가나다 순(계약명)</option><option value="vendor">가나다 순(업체)</option><option value="touched">최근 작업한 순</option>
+          </select></label>
         </div>
         <div class="items" id="contractList" role="list"></div>
         <div class="list-foot">

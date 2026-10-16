@@ -27,7 +27,7 @@
     return out;
   }
   let db = { version: 1, contracts: {}, docs: [], checklists: null };
-  const ui = { view: 'home', sel: null, q: '', officer: '', officerTouched: false, type: '', state: '', board: '' };
+  const ui = { view: 'home', sel: null, q: '', officer: '', officerTouched: false, type: '', state: '', board: '', sort: (() => { try { return localStorage.getItem('jh.sort') || 'end-desc'; } catch (_) { return 'end-desc'; } })() };
 
   const lists = (type) => (db.checklists && db.checklists[type]) || defaults[type] || defaults.공사;
   const contracts = () => Object.values(db.contracts).filter((c) => !c.archived);
@@ -402,8 +402,17 @@
       if (q && !hits(c, q)) return false;
       if (!ignoreState && ui.state) { const s = statusOf(c).state; if (ui.state === 'missing' ? !(s === 'missing' || s === 'empty') : s !== ui.state) return false; }
       return true;
-    }).sort((a, b) => (L.toDate(b.endDate) || 0) - (L.toDate(a.endDate) || 0) || b.updatedAt - a.updatedAt);
+    }).sort(SORTS[ui.sort] || SORTS['end-desc']);
   }
+  // 목록 정렬: 날짜가 없는 계약은 맨 뒤
+  const d8 = (s) => { const t = L.toDate(s); return t ? t.getTime() : null; };
+  const byDate = (pick, dir) => (a, b) => { const x = d8(pick(a)), y = d8(pick(b)); if (x == null || y == null) return (x == null) - (y == null) || b.updatedAt - a.updatedAt; return (x - y) * dir || a.name.localeCompare(b.name, 'ko'); };
+  const ko = (pick) => (a, b) => String(pick(a) || '힣').localeCompare(String(pick(b) || '힣'), 'ko', { numeric: true }) || (a.name || '').localeCompare(b.name || '', 'ko');
+  const SORTS = {
+    'end-desc': byDate((c) => c.endDate, -1), 'end-asc': byDate((c) => c.endDate, 1),
+    'date-desc': byDate((c) => c.contractDate || c.startDate, -1), 'date-asc': byDate((c) => c.contractDate || c.startDate, 1),
+    name: ko((c) => c.name), vendor: ko((c) => c.vendor), touched: (a, b) => (b.updatedAt || 0) - (a.updatedAt || 0),
+  };
   function pillFor(st, c) {
     if (st.state === 'paid') return `<span class="pill paid">지출 ${esc(L.fmtDate(c.paidDate).slice(5))}</span>`;
     if (st.state === 'empty') return '<span class="pill none">서류 없음</span>';
@@ -437,7 +446,7 @@
       return `<div class="citem${c.key === ui.sel ? ' on' : ''}" role="listitem" tabindex="0" data-key="${esc(c.key)}">
         <div class="nm" title="${esc(c.name)}">${hl(c.name || '이름 없는 계약')}</div>
         <div class="st">${pillFor(st, c)}</div>
-        <div class="meta"><span>${hl(c.vendor || '업체 미상')}</span><span>${esc(c.type)}</span>${isExt(c) ? '<span class="ext-dot" title="외부 예산(e나라도움 등)">외부</span>' : ''}${c.endDate ? `<span class="date"${st.late ? ' style="color:var(--seal)"' : ''}>준공 ${esc(L.fmtDate(c.endDate))}</span>` : ''}${m.note || m.person ? `<span class="memo-dot" title="${esc([m.dept, m.person, m.phone].filter(Boolean).join(' ') + (m.note ? '\n' + m.note : ''))}">메모</span>` : ''}</div>
+        <div class="meta"><span>${hl(c.vendor || '업체 미상')}</span><span>${esc(c.type)}</span>${isExt(c) ? '<span class="ext-dot" title="외부 예산(e나라도움 등)">외부</span>' : ''}${/^date/.test(ui.sort) ? ((c.contractDate || c.startDate) ? `<span class="date">계약 ${esc(L.fmtDate(c.contractDate || c.startDate))}</span>` : '') : c.endDate ? `<span class="date"${st.late ? ' style="color:var(--seal)"' : ''}>준공 ${esc(L.fmtDate(c.endDate))}</span>` : ''}${m.note || m.person ? `<span class="memo-dot" title="${esc([m.dept, m.person, m.phone].filter(Boolean).join(' ') + (m.note ? '\n' + m.note : ''))}">메모</span>` : ''}</div>
         ${memoHit ? `<div class="hit">${hl(String(memoHit).replace(/\s+/g, ' ').slice(0, 80))}</div>` : ''}
         <div class="bar-mini"><i style="width:${pct}%"></i></div></div>`;
     }).join('') + (hidden ? `<button type="button" class="more-hits" data-act="searchall">담당자·구분·상태 거름 때문에 안 보이는 계약 <b>${hidden}건</b> — 모두에서 찾기</button>` : '')
@@ -1163,6 +1172,8 @@
   $('#q').addEventListener('input', (e) => { ui.q = e.target.value; renderList(); });
   $('#fOfficer').addEventListener('change', (e) => { ui.officer = e.target.value; ui.officerTouched = true; ui.sel = null; render(); });
   $('#fType').addEventListener('change', (e) => { ui.type = e.target.value; ui.sel = null; render(); });
+  $('#fSort').value = ui.sort;
+  $('#fSort').addEventListener('change', (e) => { ui.sort = e.target.value; try { localStorage.setItem('jh.sort', ui.sort); } catch (_) { /* 저장 못 해도 이번엔 적용 */ } renderList(); });
   $('#fState').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { ui.state = b.dataset.state; ui.sel = null; render(); } });
   $('#btnAdd').onclick = () => { pickTarget = null; $('#fileIn').click(); };
   $('#btnFetch').onclick = () => fetchContracts();
