@@ -408,28 +408,44 @@ body[data-mod="home"] .views button.on::after { display: none; }
 @media (max-width: 700px) { .memo-grid { grid-template-columns: 1fr 1fr; } .memo-grid .mf:nth-child(3) { grid-column: 1 / -1; } }
 .memo-line { color: var(--amber) !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 420px; }
 
-/* ---------- 계약 상세 배치: 머리 아래 [업로드·서류 단계] + 오른쪽 메모 ---------- */
-.dbody { margin-top: 22px; max-width: 1060px; display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); grid-template-areas: "up" "side" "list"; }
-.dbody > .dropin { grid-area: up; margin: 0; max-width: none; }
-.dbody > .dside { grid-area: side; min-width: 0; }
-.dbody > .stages { grid-area: list; margin: 0; max-width: none; }
+/* ---------- 계약 상세 배치: 머리 아래 [업로드] → 위 칸(지출요청일 | 메모, 감사 자료는 아래 전체) → 서류 단계 ---------- */
+.dbody { margin-top: 22px; max-width: 1340px; display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); }
+.dbody > .dropin { margin: 0; max-width: none; }
+.dbody > .stages { margin: 0; max-width: none; }
+.dhead { max-width: 1340px; }
+.dtop { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.dtop > .audit { grid-column: 1 / -1; }
+@media (max-width: 900px) { .dtop { grid-template-columns: minmax(0, 1fr); } }
+details.dcard.req, details.dcard.memo, details.dcard { padding: 0; display: block; }
+.dcard > summary { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; cursor: pointer; list-style: none; padding: 11px 16px; }
+.dcard > summary::-webkit-details-marker { display: none; }
+.dcard > summary::before { content: '▸'; color: var(--muted); font-size: 12px; }
+.dcard[open] > summary::before { content: '▾'; }
+.dcard > summary h3 { margin: 0; font-size: 15px; }
+.dcard > summary .csum { font-size: 13px; color: var(--ink-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 200px; }
+.dcard > summary .date { font-size: 14px; }
+.dcard > .cbody { padding: 0 16px 14px; display: grid; gap: 8px; }
+.dcard.memo > .cbody { display: block; }
+.bad-t { color: var(--seal); font-weight: 600; }
 .memo .seg.budget { display: flex; width: 100%; }
 .memo .seg.budget button { flex: 1; padding: 5px 8px; font-size: 12.5px; }
-.memo > .mf { margin-bottom: 10px; }
+.memo .cbody > .mf { margin-bottom: 10px; }
 .memo-foot { margin: 10px 0 0; color: var(--muted); font-size: 11.5px; }
-@media (min-width: 1280px) {
-  .dhead { max-width: 1340px; }
-  .dbody { max-width: 1340px; grid-template-columns: minmax(0, 1fr) 300px; grid-template-areas: "up side" "list side"; align-items: start; }
-  .dside { position: sticky; top: 0; }
-  .dside .memo-grid { grid-template-columns: 1fr; }
-}
+/* 감사·검사 자료: 자동 값 보기(고치려면 [직접 고치기]) */
+.audit-view { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 18px; }
+.audit-view .agroup { grid-column: 1 / -1; }
+.audit-view .av { display: grid; grid-template-columns: 8.5em minmax(0, 1fr) auto; gap: 6px; align-items: baseline; padding: 4px 0; border-bottom: 1px dashed var(--rule-soft); font-size: 13px; min-width: 0; }
+.audit-view .av.wide { grid-column: 1 / -1; }
+.audit-view .al { color: var(--muted); font-weight: 600; font-size: 12.5px; }
+.audit-view .vv { min-width: 0; overflow-wrap: anywhere; }
+.audit-view .vv.none { color: var(--seal); }
+.audit-view .as { color: var(--muted); font-size: 11px; white-space: nowrap; }
 .list-foot .foot-acts { display: inline-flex; gap: 14px; }
 .btn .ico { width: 15px; height: 15px; vertical-align: -3px; margin-right: 5px; color: var(--ok); }
 .board-head .right { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .bsrc { font-weight: 500; color: var(--muted); margin-left: 6px; }
 
 /* ---------- 지출요청일·유효기간·보완 요청 ---------- */
-.dside { display: grid; gap: 14px; align-content: start; }
 .req { background: var(--sheet); border: 1px solid var(--rule); border-left: 4px solid var(--seal); border-radius: 10px; padding: 12px 16px 14px; display: grid; gap: 8px; }
 .req .memo-head { margin: 0; justify-content: space-between; }
 .req input[type=date] { width: 100%; font: inherit; font-size: 15px; font-weight: 650; padding: 6px 9px; }
@@ -578,3 +594,4 @@ body.resizing { cursor: col-resize; user-select: none; }
 .dsec.edited textarea.dbody { border-color: var(--rule); background: var(--ok-soft); }
 .lbadge.ok { background: var(--ok-soft); color: var(--ok); }
 .btn-group { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.g2bst { margin: 0 0 6px; line-height: 1.6; }

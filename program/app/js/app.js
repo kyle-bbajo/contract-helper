@@ -27,6 +27,8 @@
     return out;
   }
   let db = { version: 1, contracts: {}, docs: [], checklists: null };
+  // 계약 화면 위 칸(지출요청일·메모·감사 자료) 펼침 상태 — 이 PC에 기억
+  const cardOpen = (() => { try { return JSON.parse(localStorage.getItem('jh.cards') || '{}') || {}; } catch (_) { return {}; } })();
   const ui = { view: 'home', sel: null, q: '', officer: '', officerTouched: false, type: '', state: '', board: '', sort: (() => { try { return localStorage.getItem('jh.sort') || 'end-desc'; } catch (_) { return 'end-desc'; } })() };
 
   const lists = (type) => (db.checklists && db.checklists[type]) || defaults[type] || defaults.공사;
@@ -340,6 +342,7 @@
       // 이어서 계약마다 세부 정보(변경이력·예정가격·낙찰·업체 주소)
       const en = await enrichContracts([...seen].map((k) => db.contracts[k]));
       if (en.errs.length) toast(`세부 정보 일부를 받지 못했습니다: ${en.errs.map(([n]) => n).join(', ')}. 공공데이터포털에서 같은 인증키로 이 서비스들을 활용신청하면 다음 새로고침부터 받습니다.`, 'err');
+      else if (en.soft) toast(`계약 ${en.soft}건은 세부 정보 일부를 받지 못했습니다(나라장터 응답 오류). 다음 새로고침 때 다시 받습니다. 계약 화면 [감사·검사 자료]에 이유가 나옵니다.`, 'err');
     } catch (e) {
       console.error(e); toast(e.message, 'err');
     } finally { btn.classList.remove('busy'); btn.disabled = false; progress(null); render(); }
@@ -536,14 +539,17 @@
       n.reissue.length ? `<li class="bad"><b class="num">${n.reissue.length}</b> 유효기간 부족 → 재발급</li>` : '',
       st.unknownValid.length ? `<li class="unk"><b class="num">${st.unknownValid.length}</b> 유효기간 못 읽음(서류 줄에서 입력)</li>` : '',
     ].join('');
-    return `<section class="req" aria-label="지출요청일과 업체 보완 요청">
-      <div class="memo-head"><h3>지출요청일</h3>${c.payPlan ? '<button type="button" class="link sm" data-act="payauto">자동으로</button>' : ''}</div>
+    const sum = [n.missing.length ? `<span class="warn-t">업체 서류 빠짐 ${n.missing.length}</span>` : '', n.reissue.length ? `<span class="bad-t">재발급 ${n.reissue.length}</span>` : '', st.unknownValid.length ? `<span class="muted">유효기간 못 읽음 ${st.unknownValid.length}</span>` : ''].filter(Boolean).join(' · ') || '<span class="ok-t">다시 받을 서류 없음</span>';
+    return `<details class="dcard req" data-card="req"${cardOpen.req ? ' open' : ''} aria-label="지출요청일과 업체 보완 요청">
+      <summary><h3>지출요청일</h3><b class="date">${b && b.date ? esc(L.fmtDate(b.date)) : '모름'}</b><span class="csum">${sum}</span></summary>
+      <div class="cbody">
+      <div class="memo-head"><span class="muted">${c.payPlan ? '직접 넣은 날짜' : '자동'}</span>${c.payPlan ? '<button type="button" class="link sm" data-act="payauto">자동으로</button>' : ''}</div>
       <input type="date" data-act="payplan" value="${isoOf(b && b.date)}" aria-label="지출요청일(증명서 유효기간을 이 날짜로 따짐)">
       <p class="req-how">${b ? esc(b.how) : '준공일을 알 수 없어 직접 넣어 주세요'}<br>증명서 유효기간은 이 날짜까지 남아 있어야 합니다.</p>
       ${items ? `<ul class="req-list">${items}</ul>` : '<p class="req-ok">업체에 다시 받을 서류가 없습니다.</p>'}
       ${st.missing.length ? `<button type="button" class="link sm recvall" data-act="recvall" title="이미 처리한 지난 계약처럼 서류를 따로 넣지 않을 때">빠진 서류 ${st.missing.length}개 모두 '받음'으로 표시</button>` : ''}
       <button type="button" class="btn${n.missing.length || n.reissue.length ? ' primary' : ''} block" data-act="mail"${n.missing.length || n.reissue.length ? '' : ' disabled'}>보완 요청 메일 쓰기</button>
-    </section>`;
+    </div></details>`;
   }
   function memoCard(c) {
     const m = memoOf(c);
@@ -552,15 +558,19 @@
     // 예산 출처: 직접 / 서류 / 나라장터 / 모름
     const src = bo.manual ? `직접 고름 · <button type="button" class="link sm" data-act="budgetauto">자동으로</button>`
       : b === 'unknown' ? '<span class="unk">모름 — 구매요구서·기안문이 오거나 설정의 외부 예산 사업 이름에 맞으면 자동으로</span>' : `<span title="${esc(bo.why)}">자동: ${esc(bo.why.length > 28 ? bo.why.slice(0, 28) + '…' : bo.why)}</span>`;
-    return `<section class="memo" aria-label="계약 메모">
-      <div class="memo-head"><h3>메모</h3><span class="muted" id="memoState">자동 저장</span></div>
+    const who = [m.dept, m.person, m.phone].filter(Boolean).join(' ');
+    const sum = [`예산 ${b === 'ext' ? '외부' : b === 'own' ? '우리' : '모름'}`, who ? `감독 ${who}` : '', m.note ? String(m.note).replace(/\s+/g, ' ').slice(0, 40) : ''].filter(Boolean).map(esc).join(' · ');
+    return `<details class="dcard memo" data-card="memo"${cardOpen.memo ? ' open' : ''} aria-label="계약 메모">
+      <summary><h3>메모</h3><span class="csum">${sum}</span></summary>
+      <div class="cbody">
+      <div class="memo-head"><span class="muted" id="memoState">자동 저장</span></div>
       <div class="mf"><span>예산${src ? ` <small class="bsrc">${src}</small>` : ''}</span><div class="seg budget" role="group" aria-label="예산 구분">${[['own', '우리 예산'], ['ext', '외부(e나라도움 등)']].map(([k, v]) => `<button type="button" data-act="budget" data-v="${k}" class="${k === b ? 'on' : ''}" aria-pressed="${k === b}" title="${esc(BUDGET[k])}">${esc(v)}</button>`).join('')}</div></div>
       <div class="memo-grid">
         ${f('dept', '감독부서', '예: 시설관리팀')}${f('person', '감독관', '이름')}${f('phone', '연락처', '예: 031-000-0000', ' inputmode="tel"')}
         ${f('vmail', '업체 메일', '보완 요청 메일 받는 사람', ' inputmode="email"')}
         <label class="mf wide"><span>특이사항</span><textarea data-memo="note" rows="4" placeholder="예: 준공검사 10/20 예정, 하자보증서 원본은 업체가 직접 가져오기로 함">${esc(m.note || '')}</textarea></label>
       </div>
-      <p class="memo-foot">이 PC에만 저장되고 인쇄본에는 들어가지 않습니다.</p></section>`;
+      <p class="memo-foot">이 PC에만 저장되고 인쇄본에는 들어가지 않습니다.</p></div></details>`;
   }
   function renderDetail() {
     const el = $('#detail');
@@ -604,7 +614,7 @@
       <div class="dbody">
       <div class="dropin" id="dropin"><button class="btn primary" data-act="addhere">업로드</button>
         <span>이 계약 서류로 올립니다. 서류 종류는 자동으로 찾고, 파일을 여기에 끌어다 놓아도 됩니다.</span></div>
-      <aside class="dside">${reqCard(c, st)}${memoCard(c)}${auditCard(c)}</aside>
+      <div class="dtop">${reqCard(c, st)}${memoCard(c)}${auditCard(c)}</div>
       <div class="stages">
         ${untyped.length ? `<section class="stage"><div class="stage-head"><span class="stage-no" style="background:var(--amber)">?</span><h3>서류 종류를 정해 주세요</h3><span class="where">이 계약 서류인데 어떤 서류인지 찾지 못했습니다</span></div>
           <div class="row"><span class="mark warn">!</span><div class="rname">종류 미정 ${untyped.length}개</div><div class="rside"></div><div class="files">${untyped.map((d) => fileRow(d, list)).join('')}</div></div></section>` : ''}
@@ -641,6 +651,7 @@
         }).join('')}
       </div>
       </div>`;
+    autoAudit(c);
   }
 
   // 예전 버전에서 올린 서류(날짜를 아직 안 읽은 증명서·준공계·준공조서)는 계약을 열 때 한 번 읽어 둠 — 다시 설치해도 그대로 이어서 씀
@@ -701,41 +712,59 @@
 
   // ---------- 나라장터 세부 정보(감사·검사 서식용) ----------
   // 변경이력 → 당초 계약금액·설계변경·기간연장, 공고가 있는 계약은 입찰공고(예산)·예비가격(예정가격·기초금액)·낙찰(업체 주소), 그 밖엔 조달업체 기본정보(주소)
-  const needsEnrich = (c) => c && (c.untyNo || c.ntceNo || c.bizno) && (!c.g2b || c.g2b.v !== 1 || c.g2b.chgDt !== (c.chgDt || '') || c.g2b.retry);
-  async function enrichOne(c, errs, corpCache) {
-    const g = { v: 1, at: new Date().toISOString(), chgDt: c.chgDt || '' }; let retry = false;
+  const needsEnrich = (c) => c && (c.untyNo || c.ntceNo || c.bizno) && (!c.g2b || c.g2b.v !== 2 || c.g2b.chgDt !== (c.chgDt || '') || c.g2b.retry);
+  // 서비스마다 결과를 남김(st): ok 받음 · none 자료 없음 · skip 해당 없음(공고번호·사업자번호 없음) · err 못 받음(이유)
+  const G2B_LABEL = { chg: '변경이력', bid: '입찰공고(예산)', prepar: '예정가격', scsbid: '낙찰', corp: '업체 정보' };
+  async function enrichOne(c, errs, corpCache, diag) {
+    const g = { v: 2, at: new Date().toISOString(), chgDt: c.chgDt || '', st: {} }; let retry = false;
     const get = async (kind, arg) => {
-      const name = L.G2B[kind].name; if (errs.has(name)) { retry = true; return null; }
-      try { return L.parseApiBody(await S.nara(L.g2bUrl(kind, c.type, arg, cfg.apiKey))).items; }
-      catch (e) { if (/활용신청|권한|등록되지|횟수|기간이 끝/.test(e.message)) errs.set(name, e.message); retry = true; return null; }
+      const name = L.G2B[kind].name; if (errs.has(name)) { retry = true; g.st[kind] = 'err:' + errs.get(name); return null; }
+      try {
+        const body = await S.nara(L.g2bUrl(kind, c.type, arg, cfg.apiKey));
+        if (diag && diag.length < 40) diag.push({ 계약: c.name, 종류: G2B_LABEL[kind], 응답: body });
+        const items = L.parseApiBody(body).items;
+        g.st[kind] = items.length ? 'ok' : 'none';
+        return items;
+      } catch (e) {
+        if (/활용신청|권한|등록되지|횟수|기간이 끝/.test(e.message)) errs.set(name, e.message); // 권한 문제면 다른 계약도 건너뜀
+        retry = true; g.st[kind] = 'err:' + e.message;
+        if (diag && diag.length < 40) diag.push({ 계약: c.name, 종류: G2B_LABEL[kind], 오류: e.message });
+        return null;
+      }
     };
-    if (c.untyNo) { const sm = L.summarizeChanges(await get('chg', c.untyNo)); if (sm) Object.assign(g, sm); }
+    if (c.untyNo) { const sm = L.summarizeChanges(await get('chg', c.untyNo)); if (sm) Object.assign(g, sm); } else g.st.chg = 'skip';
     if (c.ntceNo) {
       const b = L.pickBid(await get('bid', c.ntceNo), c.ntceNo); if (b) Object.assign(g, b);
       const p = L.pickPrepar(await get('prepar', c.ntceNo), c.ntceNo); if (p) Object.assign(g, p);
       const w = L.pickScsbid(await get('scsbid', c.ntceNo), c.ntceNo);
       if (w) { g.sucsfAmt = w.amount; g.sucsfRate = w.rate; if (w.addr) g.addr = w.addr; if (w.rep) g.rep = w.rep; if (w.bizno) g.bizno = w.bizno; }
-    }
+    } else { g.st.bid = g.st.prepar = g.st.scsbid = 'skip'; }
     const bz = c.bizno || g.bizno;
     if (bz && !g.addr) {
       if (!(bz in corpCache)) corpCache[bz] = L.pickCorp(await get('corp', bz), bz);
+      else g.st.corp = corpCache[bz] ? 'ok' : 'none';
       const k = corpCache[bz]; if (k) { g.addr = k.addr; if (!g.rep) g.rep = k.rep; }
-    }
+    } else if (!bz) g.st.corp = 'skip';
     if (retry) g.retry = true;
     c.g2b = g;
   }
   async function enrichContracts(cs, force) {
     const todo = cs.filter((c) => c && (force ? (c.untyNo || c.ntceNo || c.bizno) : needsEnrich(c)));
     if (!todo.length || !cfg.apiKey) return { done: 0, errs: [] };
-    const errs = new Map(), corp = {};
+    const errs = new Map(), corp = {}, diag = [];
     try {
       for (let i = 0; i < todo.length; i++) {
         progress(`나라장터에서 세부 정보(예정가격·변경이력·업체 주소) 받는 중 ${i + 1}/${todo.length}`, i / todo.length);
-        await enrichOne(todo[i], errs, corp);
+        await enrichOne(todo[i], errs, corp, diag);
         if (i % 10 === 9) saveDb();
       }
-    } finally { await saveDb(true); progress(null); }
-    return { done: todo.length, errs: [...errs.entries()] };
+    } finally {
+      await saveDb(true); progress(null);
+      // 받은 그대로(앞 40개) — 안 채워질 때 원인 확인용: 데이터 폴더 \진단\나라장터_세부응답.json
+      if (diag.length) S.writeJson('진단/나라장터_세부응답.json', { at: new Date().toISOString(), items: diag }).catch(() => {});
+    }
+    const soft = todo.filter((c) => c.g2b && Object.values(c.g2b.st || {}).some((v) => String(v).startsWith('err:'))).length;
+    return { done: todo.length, errs: [...errs.entries()], soft };
   }
 
   // ---------- 감사·검사 자료 칸 ----------
@@ -747,6 +776,25 @@
   }
   const formRow = (c) => JH.forms.rowOf(c, { finish: finishOf(c) });
   const wonText = (n) => (n ? Number(n).toLocaleString('ko-KR') + '원' : '');
+  // 나라장터 세부 정보 받은 결과 한 줄
+  function g2bLine(c) {
+    if (c.source !== 'api') return '<p class="g2bst muted small">나라장터에서 불러온 계약이 아니라 서류에서만 채웁니다.</p>';
+    if (!cfg.apiKey) return '<p class="g2bst warn-t small">나라장터 인증키가 없어 세부 정보를 받지 못했습니다(설정 → 나라장터 연결).</p>';
+    const g = c.g2b;
+    if (!g) return `<p class="g2bst muted small">${c.untyNo || c.ntceNo || c.bizno ? '아직 세부 정보를 받지 않았습니다. [나라장터에서 다시 받기]를 누르세요.' : '나라장터 응답에 통합계약번호·공고번호·사업자번호가 없어 세부 정보를 받을 수 없습니다. [새로고침]을 한 번 더 해 보세요.'}</p>`;
+    const st = g.st || {};
+    const part = (k) => { const v = st[k] || ''; const l = G2B_LABEL[k];
+      if (v === 'ok') return `<span class="ok-t">${l} 받음</span>`;
+      if (v === 'none') return `<span class="muted">${l} 자료 없음</span>`;
+      if (v === 'skip') return k === 'corp' ? `<span class="muted">${l} 해당 없음(사업자번호 없음)</span>` : k === 'chg' ? `<span class="muted">${l} 해당 없음</span>` : '';
+      if (v.startsWith('err:')) return `<span class="bad-t" title="${esc(v.slice(4))}">${l} 못 받음</span>`;
+      return '';
+    };
+    const parts = ['chg', 'bid', 'prepar', 'scsbid', 'corp'].map(part).filter(Boolean);
+    const noNtce = st.bid === 'skip';
+    const errs = [...new Set(Object.values(st).filter((v) => String(v).startsWith('err:')).map((v) => v.slice(4)))];
+    return `<p class="g2bst small">나라장터 ${esc(L.fmtDate(String(g.at).slice(0, 10)))}: ${parts.join(' · ')}${noNtce ? ' · <span class="muted">입찰공고 없는 수의계약이라 예산액·설계금액·예정가격은 서류(견적서·설계내역서·기안문)에서 읽습니다</span>' : ''}</p>${errs.length ? `<p class="g2bst bad-t small">못 받은 이유: ${esc(errs.join(' / '))}</p>` : ''}`;
+  }
   function auditCard(c) {
     const F = JH.forms, m = memoOf(c);
     // 비워 두면 쓰는 값(자동) — 직접 넣은 감사 칸을 뺀 메모로 계산
@@ -763,16 +811,26 @@
     const blanks = F.missingOf(r, 'inspect').concat(F.isSole(r) && r.amount >= 10000000 ? F.missingOf(r, 'audit') : []);
     const uniq = [...new Set(blanks)];
     let group = '';
+    const edit = !!ui.auditEdit;
+    let autoN = 0;
     const fields = F.FIELDS.map((f) => {
       const [av, as] = auto[f.k] || ['', ''];
+      const mine = String(m[f.k] || '').trim();
+      if (!mine && av) autoN++;
       const head = f.group && f.group !== group ? `<div class="agroup">${esc(f.group)}</div>` : ''; group = f.group || '';
+      if (!edit) {
+        const val = mine ? (f.money ? wonText(L.num(mine)) || mine : mine) : av;
+        return `${head}<div class="av${f.wide ? ' wide' : ''}"><span class="al">${esc(f.label)}</span><span class="vv${val ? '' : ' none'}">${val ? esc(val) : '—'}</span>${val ? `<small class="as">${esc(mine ? '직접' : as || '자동')}</small>` : ''}</div>`;
+      }
       return `${head}<label class="mf${f.wide ? ' wide' : ''}"><span>${esc(f.label)}</span><input type="text" data-memo="${f.k}" value="${esc(m[f.k] || '')}" placeholder="${esc(av ? '자동: ' + av : f.ph)}"${av ? ` title="${esc('비워 두면 ' + av + (as ? ' (' + as + ')' : ''))}"` : ''}${f.money ? ' inputmode="numeric"' : ''} autocomplete="off"></label>`;
     }).join('');
-    return `<details class="memo audit"${ui.auditOpen ? ' open' : ''} data-audit="1">
-      <summary><h3>감사·검사 자료</h3>${uniq.length ? `<span class="ablank">빈칸 ${esc(uniq.join('·'))}</span>` : '<span class="afull">다 채움</span>'}</summary>
-      <p class="memo-foot" style="margin:0 0 8px">종합검사(엑셀)·행정사무감사(한글) 서식에 들어갑니다. 비워 두면 흐린 글씨의 자동 값을 씁니다.</p>
-      <div class="audit-acts"><button type="button" class="btn sm" data-act="auditdocs" title="견적서·설계내역서·사업자등록증 등을 읽어 빈칸을 채웁니다(PC 안 AI 사용, 외부로 보내지 않음)">서류에서 채우기</button>${c.source === 'api' ? '<button type="button" class="btn sm ghost" data-act="g2bre" title="변경이력·예정가격·낙찰·업체 주소를 나라장터에서 다시 받습니다">나라장터에서 다시 받기</button>' : ''}</div>
-      <div class="memo-grid audit-grid">${fields}</div></details>`;
+    return `<details class="dcard memo audit" data-card="audit"${cardOpen.audit || ui.auditOpen ? ' open' : ''} data-audit="1">
+      <summary><h3>감사·검사 자료</h3><span class="csum">${uniq.length ? `<span class="ablank">빈칸 ${esc(uniq.join('·'))}</span>` : '<span class="afull">다 채움</span>'}<span class="muted"> · 나라장터·서류에서 자동</span></span></summary>
+      <div class="cbody">
+      <p class="memo-foot" style="margin:0 0 8px">나라장터와 올린 서류(견적서·설계내역서·사업자등록증 등)에서 자동으로 채워 종합검사(엑셀)·행정사무감사(한글) 서식에 들어갑니다. 따로 쓸 필요 없고, 틀린 것만 [직접 고치기]로 고치세요.</p>
+      ${g2bLine(c)}
+      <div class="audit-acts"><button type="button" class="btn sm" data-act="auditdocs" title="견적서·설계내역서·사업자등록증 등을 다시 읽어 빈칸을 채웁니다(PC 안 AI 사용, 외부로 보내지 않음)">서류에서 다시 읽기</button>${c.source === 'api' ? '<button type="button" class="btn sm ghost" data-act="g2bre" title="변경이력·예정가격·낙찰·업체 주소를 나라장터에서 다시 받습니다">나라장터에서 다시 받기</button>' : ''}<button type="button" class="btn sm ghost" data-act="auditedit">${edit ? '다 고침' : '직접 고치기'}</button></div>
+      <div class="${edit ? 'memo-grid audit-grid' : 'audit-view'}">${fields}</div></div></details>`;
   }
 
   // 서류 글자 → 감사 칸(정규식으로 먼저, 남은 칸은 PC 안 AI)
@@ -792,7 +850,7 @@
     if (n) c.memoAt = new Date().toISOString();
     return n;
   }
-  async function fillFromDocs(c, quiet) {
+  async function fillFromDocs(c, quiet, opt = {}) {
     const docs = docsOf(c.key).filter((d) => AUDIT_DOC.test(d.itemId || '') && d.kind !== 'other');
     if (!docs.length) { if (!quiet) toast('이 계약에 견적서·설계내역서·계약 관련서류(사업자등록증 등)가 아직 없습니다.', 'err'); return 0; }
     const texts = [];
@@ -807,7 +865,7 @@
     const cur = formRow(c);
     const empty = (k) => !String(memoOf(c)[MAP[k]] || '').trim() && !cur[k];
     let by = '서류';
-    if (Object.keys(MAP).some((k) => empty(k) && !found[k]) && await JH.ai.pick(true)) {
+    if (opt.ai !== false && Object.keys(MAP).some((k) => empty(k) && !found[k]) && await JH.ai.pick(true)) {
       if (!quiet) progress('PC AI가 서류를 읽는 중 (1~2분 걸릴 수 있습니다)', .6);
       try {
         const body = texts.map((t) => `### ${t.name}\n${t.lines.join('\n').slice(0, 2500)}`).join('\n\n').slice(0, 9000);
@@ -827,6 +885,19 @@
     if (filled.length) { c.memoAt = new Date().toISOString(); await saveDb(true); }
     if (!quiet) { progress(null); toast(filled.length ? `${by}에서 ${filled.join('·')}을(를) 채웠습니다. 맞는지 확인해 주세요.` : '서류에서 새로 채울 값을 찾지 못했습니다.', filled.length ? 'ok' : ''); }
     return filled.length;
+  }
+
+  // 계약 화면을 열면 감사 칸이 비어 있고 아직 안 읽은 서류가 있을 때 뒤에서 한 번 읽어 채움(글자 규칙만, 빠름)
+  const autoTried = new Set();
+  function autoAudit(c) {
+    const docs = docsOf(c.key).filter((d) => AUDIT_DOC.test(d.itemId || '') && d.kind !== 'other');
+    if (!docs.length || !S.online) return;
+    const sig = docs.map((d) => d.id).join(',');
+    if (c.auditSig === sig || autoTried.has(c.key + '|' + sig)) return;
+    autoTried.add(c.key + '|' + sig);
+    const r = formRow(c);
+    if (!JH.forms.missingOf(r, 'inspect').length) { c.auditSig = sig; return; }
+    fillFromDocs(c, true, { ai: false }).then((n) => { c.auditSig = sig; saveDb(); if (n && ui.sel === c.key && ui.view === 'contracts') { toast(`서류에서 감사·검사 칸 ${n}개를 채웠습니다.`, 'ok'); render(); } }).catch(() => {});
   }
 
   // ---------- 감사·검사 제출 서식 ----------
@@ -1084,6 +1155,7 @@
       } else if (act === 'searchall') { ui.officer = ''; ui.officerTouched = true; ui.type = ''; ui.state = ''; $$('#fState button').forEach((b) => b.classList.toggle('on', !b.dataset.state)); render();
       } else if (act === 'quickform') { await quickForms(t.dataset.fk);
       } else if (act === 'forms') { openForms();
+      } else if (act === 'auditedit') { ui.auditEdit = !ui.auditEdit; cardOpen.audit = true; render();
       } else if (act === 'auditdocs') { await fillFromDocs(c); render();
       } else if (act === 'g2bre') {
         if (!cfg.apiKey) { toast('설정에서 나라장터 인증키를 먼저 넣어 주세요.', 'err'); return; }
@@ -1204,7 +1276,11 @@
     saveDb().then(() => { const s2 = $('#memoState'); if (s2) s2.textContent = '저장됨 · 이 PC에만 저장, 인쇄본에는 들어가지 않습니다'; });
   });
   document.addEventListener('focusout', (e) => { if (e.target.closest && e.target.closest('[data-memo]')) renderList(); });
-  document.addEventListener('toggle', (e) => { if (e.target.dataset && e.target.dataset.audit) ui.auditOpen = e.target.open; }, true);
+  document.addEventListener('toggle', (e) => {
+    const d = e.target; if (!d.dataset || !d.dataset.card) return;
+    cardOpen[d.dataset.card] = d.open; if (d.dataset.audit) ui.auditOpen = d.open;
+    try { localStorage.setItem('jh.cards', JSON.stringify(cardOpen)); } catch (_) { /* 기억 못 해도 됨 */ }
+  }, true);
   // 어디서든 / 를 누르면 계약 찾기, Esc로 지움
   document.addEventListener('keydown', (e) => {
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);

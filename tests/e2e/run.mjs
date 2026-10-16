@@ -191,6 +191,10 @@ try {
   step('계약 화면 맨 위 [업로드], 서류 줄 [+ 추가]로 그 서류에 직접 넣기');
 
   // ===== 메모(감독부서·감독관·연락처·특이사항)와 찾기 =====
+  // 위 칸(지출요청일 | 메모, 아래 감사 자료)은 접혀 있고 펼치면 이 PC에 기억
+  assert.equal(await page.$$eval('.dtop > details', (d) => d.map((x) => x.dataset.card).join(',')), 'req,memo,audit');
+  assert.match(await page.textContent('details[data-card="req"] > summary'), /지출요청일/);
+  for (const k of ['req', 'memo']) if (!(await page.$(`details[data-card="${k}"][open]`))) await page.click(`details[data-card="${k}"] > summary`);
   await page.fill('[data-memo="dept"]', '시설관리팀'); await page.fill('[data-memo="person"]', '홍감독');
   await page.fill('[data-memo="phone"]', '031-324-1234'); await page.fill('[data-memo="note"]', '준공검사 10/20 예정, 하자보증서 원본은 업체가 직접 가져옴');
   await page.click('.cname');
@@ -269,6 +273,12 @@ print(json.dumps({'names': wb.sheetnames, 'head': rows[0], 'rows': rows[1:], 'de
   // 감사·검사 자료: 나라장터 세부 정보(변경이력·업체 주소) 자동 + 직접 넣은 예정가격 → 종합검사 엑셀·행정사무감사 한글
   await page.click('.citem:has-text("시청사 옥상 방수공사")');
   await page.click('details.audit summary');
+  // 따로 쓰지 않아도 나라장터·서류에서 자동으로 채운 값이 보임, 받은 결과 한 줄
+  const av = await page.textContent('.audit-view');
+  assert.match(av, /48,000,000원[\s\S]*나라장터/, '당초 계약금액(변경이력) 자동');
+  assert.match(av, /경기도 용인시 처인구 중부대로 1199/, '업체 주소 자동');
+  assert.match(await page.textContent('.g2bst'), /변경이력 받음/);
+  await page.click('[data-act="auditedit"]');
   assert.match(await page.getAttribute('[data-memo="aAward"]', 'placeholder'), /48,000,000원/, '당초 계약금액(변경이력)');
   assert.match(await page.getAttribute('[data-memo="aAddr"]', 'placeholder'), /경기도 용인시 처인구 중부대로 1199/, '조달업체 주소');
   assert.match(await page.getAttribute('[data-memo="aChgAmt"]', 'placeholder'), /47,139,000원/, '설계변경 금액');

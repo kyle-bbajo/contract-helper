@@ -297,10 +297,16 @@
     const code = m ? m[1].trim() : '';
     throw new Error(API_ERRORS[code] || `나라장터 응답을 읽지 못했습니다${code ? ` (${code})` : ''}.`);
   }
+  // 공공데이터포털 결과코드(새 게이트웨이는 JSON에 영어 문장으로 줌)
+  const RESULT_CODES = { '20': 'SERVICE_ACCESS_DENIED_ERROR', '22': 'LIMITED_NUMBER_OF_SERVICE_REQUESTS_EXCEEDS_ERROR', '30': 'SERVICE_KEY_IS_NOT_REGISTERED_ERROR', '31': 'DEADLINE_HAS_EXPIRED_ERROR', '10': 'INVALID_REQUEST_PARAMETER_ERROR', '11': 'INVALID_REQUEST_PARAMETER_ERROR' };
   function parseApiBody(json) {
     const r = json && (json.response || json);
     const h = (r && r.header) || {};
-    if (h.resultCode && h.resultCode !== '00') throw new Error(`나라장터 응답 오류 ${h.resultCode}: ${h.resultMsg || ''}`.trim());
+    if (h.resultCode && h.resultCode !== '00') {
+      if (h.resultCode === '03' || /NODATA|NO_DATA|NO DATA/i.test(h.resultMsg || '')) return { items: [], total: 0 }; // 자료 없음
+      const key = RESULT_CODES[h.resultCode] || String(h.resultMsg || '').trim().toUpperCase().replace(/[.\s]+$/, '').replace(/\s+/g, '_');
+      throw new Error(API_ERRORS[key] || `나라장터 응답 오류 ${h.resultCode}: ${h.resultMsg || ''}`.trim());
+    }
     const b = (r && r.body) || {};
     let items = b.items;
     if (items && !Array.isArray(items)) items = items.item || [];

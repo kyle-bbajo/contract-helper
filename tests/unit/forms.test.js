@@ -103,3 +103,10 @@ print(json.dumps({'first': names[0], 'stored': z.infolist()[0].compress_type, 'p
   assert.ok(out.texts.includes('지방계약법 시행령 제25조 제1항 제5호 나목 (추정가격 2천만원 이하)'));
   if (out.valid !== null) assert.equal(out.valid, true);
 });
+
+test('나라장터 결과코드: 자료 없음은 빈 목록, 새 게이트웨이 영어 오류는 우리말로', () => {
+  assert.deepEqual(L.parseApiBody({ response: { header: { resultCode: '03', resultMsg: 'NODATA_ERROR' } } }), { items: [], total: 0 });
+  assert.throws(() => L.parseApiBody({ response: { header: { resultCode: '30', resultMsg: 'SERVICE KEY IS NOT REGISTERED ERROR.' } } }), /인증키가 등록되지 않았습니다/);
+  assert.throws(() => L.parseApiBody({ response: { header: { resultCode: '20', resultMsg: 'SERVICE ACCESS DENIED ERROR.' } } }), /권한이 없습니다/);
+  assert.equal(L.parseApiBody({ response: { header: { resultCode: '00' }, body: { items: { item: { a: 1 } }, totalCount: 1 } } }).items.length, 1);
+});
