@@ -145,7 +145,7 @@
       for (const o of cs.slice(1)) {
         db.docs.forEach((d) => { if (d.key === o.key) d.key = keepC.key; });
         keepC.nums = [...new Set([...(keepC.nums || []), ...(o.nums || [])])];
-        for (const f of ['originals', 'received', 'edited']) keepC[f] = { ...(o[f] || {}), ...(keepC[f] || {}) };
+        for (const f of ['originals', 'received', 'edited', 'via']) keepC[f] = { ...(o[f] || {}), ...(keepC[f] || {}) };
         const ck = { ...((o.memo || {}).chgKind || {}), ...((keepC.memo || {}).chgKind || {}) };
         keepC.memo = { ...(o.memo || {}), ...(keepC.memo || {}) }; if (Object.keys(ck).length) keepC.memo.chgKind = ck;
         for (const f of ['paidDate', 'payMemo', 'payPlan', 'folder', 'g2b', 'docVals']) if (!keepC[f] && o[f]) keepC[f] = o[f];
@@ -613,10 +613,13 @@
     return { name: x.name, note: x.note };
   }
   // 업체에 다시 받을 서류: 업체·메일로 받는 서류 중 빠진 것 + 유효기간이 지출요청일보다 먼저 끝나는 증명서
+  // 감독관 경유: 들어온 서류(파일·묶음 안·원본·받음) 중 경유 체크 안 된 것
+  const viaOf = (c) => { const docs = docsOf(c.key), got = gotMap(c); return L.viaStatus(c, lists(c.type), (id) => L.hasItem(docs, got, id) || docs.some((d) => (d.also || []).includes(id))); };
   function vendorNeeds(c, st) {
     const missing = st.missing.filter((x) => L.ORIGINAL_SOURCES.includes(x.source)).map((x) => itemView(c, x).name);
     const reissue = st.expired.map((x) => ({ name: itemView(c, x.item).name, valid: x.valid }));
-    return { missing, reissue };
+    const via = viaOf(c).missing;
+    return { missing, reissue, via };
   }
   function reqCard(c, st) {
     const b = st.basis, n = vendorNeeds(c, st);
@@ -624,8 +627,9 @@
       n.missing.length ? `<li><b class="num">${n.missing.length}</b> 업체 서류 빠짐</li>` : '',
       n.reissue.length ? `<li class="bad"><b class="num">${n.reissue.length}</b> 유효기간 부족 → 재발급</li>` : '',
       st.unknownValid.length ? `<li class="unk"><b class="num">${st.unknownValid.length}</b> 유효기간 못 읽음(서류 줄에서 입력)</li>` : '',
+      n.via.length ? `<li class="bad"><b class="num">${n.via.length}</b> 감독관 경유 안 됨 <span class="muted">${esc(n.via.join('·'))}</span></li>` : '',
     ].join('');
-    const sum = [n.missing.length ? `<span class="warn-t">업체 서류 빠짐 ${n.missing.length}</span>` : '', n.reissue.length ? `<span class="bad-t">재발급 ${n.reissue.length}</span>` : '', st.unknownValid.length ? `<span class="muted">유효기간 못 읽음 ${st.unknownValid.length}</span>` : ''].filter(Boolean).join(' · ') || '<span class="ok-t">다시 받을 서류 없음</span>';
+    const sum = [n.missing.length ? `<span class="warn-t">업체 서류 빠짐 ${n.missing.length}</span>` : '', n.reissue.length ? `<span class="bad-t">재발급 ${n.reissue.length}</span>` : '', st.unknownValid.length ? `<span class="muted">유효기간 못 읽음 ${st.unknownValid.length}</span>` : '', n.via.length ? `<span class="bad-t">감독관 경유 ${n.via.length}</span>` : ''].filter(Boolean).join(' · ') || '<span class="ok-t">다시 받을 서류 없음</span>';
     return `<details class="dcard req" data-card="req"${cardOpen.req ? ' open' : ''} aria-label="지출요청일과 업체 보완 요청">
       <summary><h3>지출요청일</h3><b class="date">${b && b.date ? esc(L.fmtDate(b.date)) : '모름'}</b><span class="csum">${sum}</span></summary>
       <div class="cbody">
@@ -634,7 +638,7 @@
       <p class="req-how">${b ? esc(b.how) : '준공일을 알 수 없어 직접 넣어 주세요'}<br>증명서 유효기간은 이 날짜까지 남아 있어야 합니다.</p>
       ${items ? `<ul class="req-list">${items}</ul>` : '<p class="req-ok">업체에 다시 받을 서류가 없습니다.</p>'}
       ${st.missing.length ? `<button type="button" class="link sm recvall" data-act="recvall" title="이미 처리한 지난 계약처럼 서류를 따로 넣지 않을 때">빠진 서류 ${st.missing.length}개 모두 '받음'으로 표시</button>` : ''}
-      <button type="button" class="btn${n.missing.length || n.reissue.length ? ' primary' : ''} block" data-act="mail"${n.missing.length || n.reissue.length ? '' : ' disabled'}>보완 요청 메일 쓰기</button>
+      <button type="button" class="btn${n.missing.length || n.reissue.length || n.via.length ? ' primary' : ''} block" data-act="mail"${n.missing.length || n.reissue.length || n.via.length ? '' : ' disabled'}>보완 요청 메일 쓰기</button>
     </div></details>`;
   }
   function memoCard(c) {
@@ -709,7 +713,7 @@
           const done = req.filter((x) => L.hasItem(docs, gotMap(c), x.id) || (x.alt && L.hasItem(docs, gotMap(c), x.alt))).length;
           const where = [...new Set(g.items.map((x) => SRC_LABEL[x.source] || x.source))].join(', ');
           return `<section class="stage${req.length && done === req.length ? ' done' : ''}">
-            <div class="stage-head"><span class="stage-no">${gi + 1}</span><h3>${esc(g.name)}</h3><span class="where">${esc(where)}</span><span class="sum num">필수 ${done}/${req.length}</span></div>
+            <div class="stage-head"><span class="stage-no">${gi + 1}</span><h3>${esc(g.name)}</h3><span class="where">${esc(where)}</span>${(() => { const vs = L.viaStatus(c, g.items, (id) => L.hasItem(docs, gotMap(c), id) || docs.some((d) => (d.also || []).includes(id))); return vs.need ? `<span class="sum num via-sum${vs.done < vs.need ? ' bad-t' : ''}" title="${esc(vs.missing.length ? '경유 안 됨: ' + vs.missing.join(', ') : '모두 경유')}">감독관 경유 ${vs.done}/${vs.need}</span>` : ''; })()}<span class="sum num">필수 ${done}/${req.length}</span></div>
             ${g.items.map((x) => {
               const ds = docs.filter((d) => d.itemId === x.id);
               const inner = docs.filter((d) => d.itemId !== x.id && (d.also || []).includes(x.id));
@@ -741,7 +745,9 @@
                 else side = `<span class="valid ok" title="지출요청일까지 유효">${esc(L.fmtDate(cv.valid).slice(5))}까지 유효</span>`;
               }
               const add = `<button class="add-item" data-act="additem" data-item="${esc(x.id)}" title="${esc(xv.name)}(으)로 바로 넣기">+ 추가</button>`;
-              return `<div class="row" data-drop-item="${esc(x.id)}">${mark}<div class="rname">${esc(xv.name)}${xv.note ? `<span class="note">${esc(xv.note)}</span>` : ''}</div>
+              const vps = L.viaParts(x.id), vv = c.via || {}, present = !!(ds.length || inner.length || orig || rcv);
+              const viaHtml = vps ? `<div class="via${present ? '' : ' off'}"${present ? '' : ' title="서류가 들어오면 경유를 체크하세요"'}><span class="via-l">감독관 경유</span>${vps.map((p) => { const on = !!vv[L.viaKey(x.id, p)]; return `<label class="via-c${on ? ' on' : present ? ' no' : ''}"><input type="checkbox" data-act="via" data-item="${esc(x.id)}" data-part="${esc(p)}"${on ? ' checked' : ''}> ${esc(p || '경유함')}</label>`; }).join('')}</div>` : '';
+              return `<div class="row" data-drop-item="${esc(x.id)}">${mark}<div class="rname">${esc(xv.name)}${xv.note ? `<span class="note">${esc(xv.note)}</span>` : ''}${viaHtml}</div>
                 <div class="rside">${tog}${side}${add}</div>${ds.length || inner.length ? `<div class="files">${ds.map((d) => fileRow(d, list)).join('')}${inner.map((d) => `<div class="file inner"><span class="ft">묶음</span><span class="fn" title="${esc(d.name)}">${esc(d.name)}</span><span class="muted small">${(d.pagesOf && d.pagesOf[x.id] && d.pagesOf[x.id].length) ? esc(d.pagesOf[x.id].join('·')) + '쪽' : '이 파일 안'}</span><button class="link sm" data-act="view" data-doc="${d.id}">보기</button></div>`).join('')}</div>` : ''}</div>`;
             }).join('')}
           </section>`;
@@ -1302,7 +1308,12 @@
   async function onChange(e) {
     const t = e.target;
     try {
-      if (t.dataset.act === 'recv') {
+      if (t.dataset.act === 'via') {
+        const c = db.contracts[ui.sel]; c.via = c.via || {};
+        const k = L.viaKey(t.dataset.item, t.dataset.part || '');
+        if (t.checked) c.via[k] = true; else delete c.via[k];
+        c.updatedAt = Date.now(); render(); await saveDb();
+      } else if (t.dataset.act === 'recv') {
         const c = db.contracts[ui.sel]; c.received = c.received || {};
         if (t.checked) c.received[t.dataset.item] = true; else delete c.received[t.dataset.item];
         c.updatedAt = Date.now(); render(); await saveDb();
@@ -1332,7 +1343,7 @@
   // 업체 보완 요청 메일
   function openMail(c) {
     const st = statusOf(c), n = vendorNeeds(c, st);
-    const m = L.vendorMail({ c, org: cfg.insttNm, dept: (cfg.notice && cfg.notice.dept) || '', officer: cfg.officer, phone: (cfg.notice && cfg.notice.phone) || '', missing: n.missing, reissue: n.reissue, basis: st.basis || {} });
+    const m = L.vendorMail({ c, org: cfg.insttNm, dept: (cfg.notice && cfg.notice.dept) || '', officer: cfg.officer, phone: (cfg.notice && cfg.notice.phone) || '', missing: n.missing, reissue: n.reissue, via: n.via, basis: st.basis || {} });
     $('#mailTo').value = memoOf(c).vmail || ''; $('#mailSubj').value = m.title; $('#mailBody').value = m.body;
     $('#mailNote').textContent = st.unknownValid.length ? `유효기간을 읽지 못한 증명서 ${st.unknownValid.length}개는 빠져 있습니다. 서류 줄에서 날짜를 넣으면 반영됩니다.` : '';
     $('#dlgMail').showModal();

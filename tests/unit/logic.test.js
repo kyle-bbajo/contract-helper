@@ -158,3 +158,19 @@ test('계약번호 차수(-00/-01)는 같은 계약으로', () => {
   for (const n of ['R26TA0191434800', 'R26TA01914348-01', 'R26TA01914348', ' R26TA01914348-001 ']) assert.equal(L.baseNo(n), 'r26ta01914348');
   assert.equal(L.ordOf('R26TA0191434800'), 0); assert.equal(L.ordOf('R26TA01914348-01'), 1); assert.equal(L.ordOf('R26TA01914348'), null);
 });
+
+test('감독관 경유: 착공계·현장대리인계·예정공정표, 산출내역서, 견적서, 노무비 지급확인제, 준공계·준공검사원', () => {
+  assert.deepEqual(L.viaParts('c-start'), ['착공계', '현장대리인계', '예정공정표']);
+  assert.deepEqual(L.viaParts('s-start'), ['착수계(착공계)', '현장대리인계', '예정공정표']);
+  assert.deepEqual(L.viaParts('c-finish'), ['준공계', '준공검사원']);
+  for (const id of ['c-calc', 'c-estimate', 'c-laborconfirm', 's-calc', 's-estimate', 's-laborconfirm']) assert.deepEqual(L.viaParts(id), [''], id);
+  assert.equal(L.viaParts('g-estimate'), null, '물품은 없음'); assert.equal(L.viaParts('c-photo'), null);
+  const list = L.defaultChecklists().공사;
+  const has = (id) => ['c-start', 'c-estimate', 'c-finish'].includes(id);
+  const c = { via: { 'c-start:착공계': true, 'c-start:예정공정표': true, 'c-estimate': true } };
+  const vs = L.viaStatus(c, list, has);
+  assert.equal(vs.need, 6); assert.equal(vs.done, 3);
+  assert.deepEqual(vs.missing, ['현장대리인계', '준공계', '준공검사원']);
+  const m = L.vendorMail({ c: { name: '시험 공사' }, via: vs.missing });
+  assert.match(m.body, /감독관 경유가 필요한 서류[\s\S]*- 현장대리인계: 감독관 경유\(확인\) 후 다시 제출/);
+});

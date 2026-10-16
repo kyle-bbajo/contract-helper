@@ -638,3 +638,14 @@ body.resizing { cursor: col-resize; user-select: none; }
 .chgtbl small.warn { color: var(--amber); }
 .chgtbl tr.off td { color: var(--muted); }
 .chgtbl select { font: inherit; padding: 2px 4px; }
+/* 감독관 경유 체크 */
+.via { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 4px; font-size: 12px; font-weight: 400; }
+.via .via-l { color: var(--muted); font-weight: 600; }
+.via-c { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--rule); background: var(--sheet); }
+.via-c.on { border-color: var(--ok); color: var(--ok); background: var(--ok-soft); }
+.via-c.no { border-color: var(--seal); color: var(--seal); background: var(--seal-soft); }
+.via.off .via-c { opacity: .6; }
+.via-c input { margin: 0; }
+.stage-head .via-sum { margin-left: auto; }
+.stage-head .via-sum + .sum { margin-left: 10px; }
+.stage-head .via-sum.bad-t { color: var(--seal); font-weight: 600; }

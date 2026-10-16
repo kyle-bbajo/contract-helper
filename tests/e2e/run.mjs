@@ -279,6 +279,15 @@ print(json.dumps({'names': wb.sheetnames, 'head': rows[0], 'rows': rows[1:], 'de
   assert.match(av, /경기도 용인시 처인구 중부대로 1199/, '업체 주소 자동');
   assert.match(await page.textContent('.g2bst'), /변경이력 받음/);
   assert.ok(await page.$('.vchecks, .g2bst'), '나라장터와 서류 맞춰 보기 자리');
+  // 감독관 경유: 착공계·현장대리인계·예정공정표 따로 체크, 기억
+  assert.equal(await page.locator('[data-act="via"][data-item="c-start"]').count(), 3, '착공계·현장대리인계·예정공정표');
+  assert.equal(await page.locator('[data-act="via"][data-item="c-finish"]').count(), 2, '준공계·준공검사원');
+  for (const id of ['c-calc', 'c-estimate', 'c-laborconfirm']) assert.equal(await page.locator(`[data-act="via"][data-item="${id}"]`).count(), 1, id);
+  await page.check('[data-act="via"][data-item="c-start"][data-part="착공계"]');
+  await page.waitForSelector('.via-c.on:has-text("착공계")');
+  assert.ok(await page.isChecked('[data-act="via"][data-item="c-start"][data-part="착공계"]'));
+  assert.ok(!(await page.isChecked('[data-act="via"][data-item="c-start"][data-part="예정공정표"]')));
+  await page.locator('.row[data-drop-item="c-start"]').scrollIntoViewIfNeeded(); await page.screenshot({ path: join(SHOTS, '4a-감독관경유.png') });
   // 변경이력 표: 차수마다 구분(자동 기본값) → 해당 없음으로 고르면 서식 값에서 빠지고, 자동으로 되돌릴 수 있음
   assert.equal(await page.locator('.chgtbl tbody tr').count(), 3, '원계약·1차·2차');
   assert.equal(await page.inputValue('[data-chgkind="R26BK01234567-01"]'), 'ext');
@@ -337,7 +346,7 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   await waitFor(() => readdirSync(xdir).filter((f) => f.endsWith('.xlsx')).length >= 2, 20000, '종합검사 바로 받기');
   step('현황판 [행정사무감사 서식]·[종합검사 서식] 누르면 나라장터·서류에서 채운 파일을 바로 받음');
   await page.click('.views [data-view="contracts"]');
-  step('감사·검사 자료: 나라장터 변경이력(차수마다 구분 고름)·업체 주소 자동 + 직접 넣은 값 → 종합검사 엑셀(양식 그대로) · 행정사무감사 한글(받은 양식에 채움)');
+  step('감독관 경유 체크(착공계·현장대리인계·예정공정표·산출내역서·견적서·노무비 지급확인제·준공계·준공검사원) + 감사·검사 자료: 나라장터 변경이력(차수마다 구분 고름)·업체 주소 자동 + 직접 넣은 값 → 종합검사 엑셀(양식 그대로) · 행정사무감사 한글(받은 양식에 채움)');
 
   // 지난 계약처럼 파일 없이 이미 받은 서류: 줄마다 [받음], 빠진 서류 한 번에 [받음]
   await page.click('.citem:has-text("시청사 옥상 방수공사")');

@@ -652,12 +652,30 @@
   const isCertItem = (id) => /-(inspaid|emppaid|tax|ltax)$/.test(String(id || ''));
 
   // 업체 보완 요청 메일(빠진 서류 + 유효기간 부족으로 재발급할 서류)
-  function vendorMail({ c, org, dept, officer, phone, missing = [], reissue = [], basis }) {
+  // 감독관 경유가 필요한 서류(공사·용역): 착공(착수)계·현장대리인계·예정공정표, 산출내역서, 견적서, 노무비 지급확인제, 준공계·준공검사원
+  // 한 줄에 여러 서류가 묶인 것은 서류마다 따로 체크. 저장: c.via['c-start:착공계'] = true
+  const VIA_PARTS = { start: ['착공계', '현장대리인계', '예정공정표'], calc: [''], estimate: [''], laborconfirm: [''], finish: ['준공계', '준공검사원'] };
+  function viaParts(id) {
+    const m = String(id || '').match(/^([cs])-(start|calc|estimate|laborconfirm|finish)$/); if (!m) return null;
+    return m[1] === 's' && m[2] === 'start' ? ['착수계(착공계)', '현장대리인계', '예정공정표'] : VIA_PARTS[m[2]];
+  }
+  const viaKey = (id, part) => (part ? `${id}:${part}` : id);
+  // 들어온 서류만 따짐(has(id)): 경유 안 된 것 이름 목록
+  function viaStatus(c, list, has) {
+    const out = { need: 0, done: 0, missing: [] }, v = (c && c.via) || {};
+    for (const x of list || []) {
+      const ps = viaParts(x.id); if (!ps || !has(x.id)) continue;
+      for (const p of ps) { out.need++; if (v[viaKey(x.id, p)]) out.done++; else out.missing.push(p || x.name.replace(/\(.*\)$/, '')); }
+    }
+    return out;
+  }
+  function vendorMail({ c, org, dept, officer, phone, missing = [], reissue = [], via = [], basis }) {
     const f = (s) => fmtDate(s);
     const title = `[${org || '발주기관'}] 「${c.name || '계약'}」 대금 청구 서류 보완 요청`;
     const secs = [];
     if (missing.length) secs.push(['미제출 서류', missing.map((n) => `  - ${n}`)]);
     if (reissue.length) secs.push(['재발급 필요 서류(유효기간 부족)', reissue.map((x) => `  - ${x.name}: 유효기간 ${f(x.valid)}까지 → ${f(basis.date)} 이후까지 유효한 증명서로 재발급`)]);
+    if (via.length) secs.push(['감독관 경유가 필요한 서류', via.map((n) => `  - ${n}: 감독관 경유(확인) 후 다시 제출`)]);
     if (reissue.length && basis && basis.date) secs.push(['기준', [`  - 대금 지급 예정일(${f(basis.date)}) 기준으로 유효한 증명서가 필요합니다.`]]);
     const who = [org, dept, officer].filter(Boolean).join(' ');
     const body = [
@@ -682,7 +700,7 @@
     classifyItem, guessType, findMeta, vendorCore, baseNo, contractScore, matchContract, contractKey,
     API_BASE, API_OPS, TYPES, apiUrl, keyParam, monthRanges, parseApiText, parseApiBody, parseCorpList, parseCorpRows, normalizeApiItem, detectExtFinance,
     G2B, g2bUrl, scanAuditFields, summarizeChanges, chgPlan, autoKind, CHG_KINDS, changesOf, ordSnap, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
-    ordOf, itemsInName, isRecentItem, issuedTooEarly, matchCandidates, checklistStatus, holds, hasItem, classifyPages, classifyTitleLines, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail,
+    ordOf, viaParts, viaKey, viaStatus, itemsInName, isRecentItem, issuedTooEarly, matchCandidates, checklistStatus, holds, hasItem, classifyPages, classifyTitleLines, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail,
   };
   root.JH = root.JH || {};
   root.JH.logic = api;
