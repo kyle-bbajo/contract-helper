@@ -123,12 +123,14 @@
     if (!S.online) { el.innerHTML = '<p class="muted">바탕화면 아이콘으로 실행하면 양식을 올릴 수 있습니다.</p>'; return; }
     const xs = await JH.notice.slotInfo();
     el.innerHTML = xs.map((x) => `<div class="tpl-slot${x.has ? ' on' : ''}">
-      <div class="ts-head"><b>${esc(x.kind)} 양식</b>${x.has ? `<span class="ok-t">올림</span>` : '<span class="warn-t">아직 없음</span>'}</div>
+      <div class="ts-head"><b>${esc(x.kind)} 양식</b>${x.has ? (x.bundled ? '<span class="ok-t">기본 양식</span>' : '<span class="ok-t">올린 양식</span>') : '<span class="warn-t">아직 없음</span>'}</div>
       <div class="ts-body">${x.has ? `${esc(x.name || '')}${x.at ? ` <span class="muted">· ${esc(L.fmtDate(x.at))}</span>` : ''}${x.found && x.found.length ? `<div class="muted small">바꿀 자리: ${esc(x.found.map((k) => ({ 현장: '장소', 입찰기간: '제출 기간', 지역제한: '지역', 업종제한: '업종', 낙찰하한율: '하한율' }[k] || k)).join('·'))}</div>` : ''}` : `<span class="muted">${x.kind === '견적공고' ? '수의계약(2인 이상 견적)' : '경쟁입찰'} 공고문에 씁니다</span>`}</div>
-      <div class="ts-acts"><button type="button" class="btn sm${x.has ? '' : ' primary'}" data-slotup="${esc(x.kind)}">${x.has ? '바꾸기' : '올리기'}</button>${x.has ? `<button type="button" class="link sm" data-tplopen="${esc(x.path)}">한글로 열기</button>` : ''}</div></div>`).join('');
+      <div class="ts-acts"><button type="button" class="btn sm${x.has ? '' : ' primary'}" data-slotup="${esc(x.kind)}">${x.has ? '다른 양식 올리기' : '올리기'}</button>${x.has ? `<button type="button" class="link sm" data-tplopen="${esc(x.path)}">한글로 열기</button>` : ''}${x.has && !x.bundled && x.canReset ? `<button type="button" class="link sm" data-slotreset="${esc(x.kind)}">기본 양식으로</button>` : ''}</div></div>`).join('');
   }
   $('#tplSlots').addEventListener('click', (e) => {
     const u = e.target.closest('[data-slotup]'); if (u) { slotKind = u.dataset.slotup; $('#tplSlotIn').click(); return; }
+    const rs = e.target.closest('[data-slotreset]');
+    if (rs) { JH.notice.resetSlot(rs.dataset.slotreset).then(() => JH.app.toast(`${rs.dataset.slotreset}를 회사 기본 양식으로 되돌렸습니다.`, 'ok'), (err) => JH.app.toast(err.message, 'err')).finally(renderSlots); return; }
     const o = e.target.closest('[data-tplopen]'); if (o) S.openFile(o.dataset.tplopen).catch((err) => JH.app.toast(err.message, 'err'));
   });
   $('#tplSlotIn').onchange = async (e) => {

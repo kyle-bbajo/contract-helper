@@ -216,3 +216,27 @@ test('한글 양식 그대로 채우기: 이름표·표(오른쪽/아래)·괄�
   // 견적공고 종류는 계약방법으로
   assert.equal(N.noticeKind({ 계약방법: '수의계약(2인 이상 견적)' }), '견적공고'); assert.equal(N.noticeKind({ 계약방법: '제한경쟁' }), '입찰공고');
 });
+
+test('프로그램에 든 회사 기본 양식(입찰공고·견적공고): 이번 값으로 채우고 지난 공고 값·(긴급)이 남지 않음', () => {
+  const { readFileSync } = require('node:fs');
+  const text = (bytes) => {
+    const z = CFB.read(bytes, { type: 'array' });
+    return Buffer.from(z.FileIndex[z.FullPaths.findIndex((p) => /section0/.test(p))].content).toString().replace(/<\/hp:p>/g, '\n').replace(/<[^>]+>/g, '');
+  };
+  const base = N.blank({ insttNm: '용인도시공사', notice: { region: '용인시', dept: '재무관리처 계약팀', phone: '031-330-3972' } });
+  const v = N.applyRules({ ...base, 공고명: '○○동 주거환경개선사업', 공고번호: '2026 - 310', 공종: '토목공사(종합)', 현장: '경기도 용인시 처인구 ○○동 일원', 기간: '착공일로부터 180일',
+    추정가격: '184,000,000', 기초금액: '202,400,000', 입찰시작: '2026-11-02T09:00', 입찰마감: '2026-11-06T12:00', 개찰일시: '2026-11-06T13:00', 공고일: '2026-10-30' }, {}, {});
+  for (const [file, kind] of [['notice-bid', '입찰공고'], ['notice-est', '견적공고']]) {
+    const vv = N.applyRules({ ...v, 계약방법: kind === '견적공고' ? '수의계약(2인 이상 견적)' : '제한경쟁' }, {}, {});
+    assert.equal(N.noticeKind(vv), kind);
+    const r = N.fillNoticeHwpx(CFB, new Uint8Array(readFileSync(join(__dirname, '../../src/app/tpl', file + '.hwpx'))), vv, N.draft(vv));
+    const t = text(r.bytes);
+    assert.match(t, /공 사 명 : ○○동 주거환경개선사업/, kind);
+    assert.match(t, /제2026 - 310호/, kind);
+    assert.match(t, /2026\. 11\. 6\. 13:00/, kind);
+    assert.doesNotMatch(t, /소방공사|소3-37호/, kind + ': 지난 공고명 없음');
+    assert.doesNotMatch(t, /\(긴급\)/, kind);
+  }
+  const urgent = N.fillNoticeHwpx(CFB, new Uint8Array(readFileSync(join(__dirname, '../../src/app/tpl/notice-bid.hwpx'))), { ...v, 계약방법: '제한경쟁', 긴급공고: '예' }, []);
+  assert.match(text(urgent.bytes), /입찰공고\(긴급\)/);
+});

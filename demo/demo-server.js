@@ -201,6 +201,16 @@
     showPdf, showTable,
     _files: files,
   };
+  // 회사 공고문 양식(tpl/*.hwpx)은 글자(base64)로 게시돼 있어 받아서 되돌림
+  const fetch0 = root.fetch.bind(root);
+  root.fetch = async (u, o) => {
+    const m = typeof u === 'string' && u.match(/^tpl\/([\w-]+\.hwpx?)$/);
+    if (!m) return fetch0(u, o);
+    if (!/\.hwpx$/.test(m[1])) return new Response('', { status: 404 });
+    const b = atob((await (await fetch0(`tpl/${m[1]}.b64.txt`)).text()).trim());
+    const a = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i);
+    return new Response(a, { status: 200 });
+  };
   root.JH = root.JH || {};
   root.JH.server = server;
 
@@ -210,14 +220,7 @@
     files.clear();
     await server.writeJson('설정.json', { officer: ME, notice: { dept: '계약팀', phone: '031-000-0000', winwinMin: 50000000, aiKey: '시연용' },
       forms: { dept: '경영기획본부', committee: '도시건설위원회', confirmer: { pos: '재무관리처장' }, writer: { pos: '회계팀장' } } });
-    // 입찰공고·견적공고 기본 양식(예시 — 회사 양식처럼 생긴 가상의 공고문)
-    for (const k of ['입찰공고', '견적공고']) {
-      const z = root.CFB.utils.cfb_new();
-      root.CFB.utils.cfb_add(z, '/mimetype', enc.encode('application/hwp+zip'));
-      root.CFB.utils.cfb_add(z, '/Contents/section0.xml', enc.encode(root.JH_TEMPLATE_XML(k)));
-      files.set(`공고문/양식/기본/${k}.hwpx`, new Uint8Array(root.CFB.write(z, { type: 'array', fileType: 'zip' })));
-    }
-    await server.writeJson('공고문/양식/기본/양식정보.json', { 입찰공고: { name: '입찰공고 양식(예시).hwpx', at: new Date().toISOString() }, 견적공고: { name: '견적공고 양식(예시).hwpx', at: new Date().toISOString() } });
+    // 입찰공고·견적공고는 프로그램에 든 회사 기본 양식(tpl/)을 그대로 씀
     const tpl = new Uint8Array(await (await fetch('samples/공고문양식.hwpx')).arrayBuffer());
     files.set('공고문/양식/공고문양식.hwpx', tpl);
     const now = Date.now();

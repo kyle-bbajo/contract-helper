@@ -3,7 +3,7 @@
 // 나라장터·첨부파일은 시험용 응답으로 대신함(브라우저의 /api/nara, /api/fetchfile 요청을 가로챔)
 import { chromium } from 'playwright-core';
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, renameSync, copyFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, renameSync, copyFileSync, rmSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -86,7 +86,7 @@ const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));
 page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
 // 실패한 요청은 주소로 판단: 한글 변환·한글 양식 채우기는 시험 PC에 한글이 없어 실패가 정상(대체 방법으로 처리됨)
-page.on('response', (r) => { if (r.status() >= 500 && !/\/api\/(hwp2pdf|hwpfill|open)/.test(r.url())) errors.push(`${r.status()} ${r.url()}`); });
+page.on('response', (r) => { if (r.status() >= 500 && !/\/api\/(hwp2pdf|hwpfill|hwpconvert|open)/.test(r.url())) errors.push(`${r.status()} ${r.url()}`); });
 await page.route('**/api/nara**', (r) => {
   const u = decodeURIComponent(new URL(r.request().url()).searchParams.get('u'));
   let body;
@@ -423,14 +423,18 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   // 한글 파일명은 버퍼로 넘김(시험 PC에 UTF-8 로캘이 없어 한글 경로 전달이 깨짐 — 실제 파일 선택 창과 같은 방식)
   await page.setInputFiles('#tplIn', { name: '공고문양식.hwpx', mimeType: 'application/octet-stream', buffer: readFileSync(hwpxTemplate()) });
   await waitFor(() => page.evaluate(() => [...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('6개를 찾았습니다'))), 10000, '양식 점검');
+  // 회사 기본 양식(입찰공고·견적공고)은 프로그램에 들어 있어 올리지 않아도 칸이 채워져 있음
+  await waitFor(async () => (await page.$$('.tpl-slot.on')).length === 2, 15000, '기본 양식 깔기');
+  assert.match(await page.textContent('#tplSlots'), /기본 양식[\s\S]*기본 양식/);
   await page.screenshot({ path: join(SHOTS, '7-설정-공고문.png') });
   await page.keyboard.press('Escape');
   await page.click('[data-nact="hwp"]');
-  await waitFor(() => page.$('.toast:has-text("한글 공고문을 만들었습니다")'), 20000, '한글 양식 채우기');
+  await waitFor(() => page.$('.toast:has-text("입찰공고 한글 파일을 만들었습니다")'), 20000, '기본 양식 채우기');
   const outF = join(data, '공고문', '작성', readdirSync(join(data, '공고문', '작성'))[0]);
-  const xml = execFileSync('python3', ['-c', 'import zipfile,sys;z=zipfile.ZipFile(sys.argv[1]);assert z.infolist()[0].filename=="mimetype";print(z.read("Contents/section0.xml").decode())', outF]).toString();
-  assert.match(xml, /용인도시공사 공고/); assert.match(xml, /「신갈오거리 보안등 정비 전기공사」/); assert.match(xml, /추정가격 32,000,000원, 지역 용인시, 하한율 87\.745%/);
-  step('한글 양식(HWPX)의 {{항목}} 채워 새 파일 생성(쪼개진 표시 포함)');
+  const xml = execFileSync('python3', ['-c', 'import zipfile,sys;z=zipfile.ZipFile(sys.argv[1]);assert z.infolist()[0].filename=="mimetype";print(z.read("Contents/section0.xml").decode())', outF]).toString().replace(/<\/hp:p>/g, '\n').replace(/<[^>]+>/g, '');
+  assert.match(xml, /공 사 명 : 신갈오거리 보안등 정비 전기공사/); assert.match(xml, /^입찰공고$/m, '(긴급) 뺌'); assert.match(xml, /지역제한\(용인시\)/);
+  assert.doesNotMatch(xml, /소방공사/, '양식에 있던 지난 공고명이 남지 않음');
+  step('회사 기본 입찰공고 양식(프로그램에 포함)에 이번 값 채워 한글 파일 생성 — 올리지 않아도 됨');
 
   // 입찰공고 양식(표시 없는 회사 양식)을 올리면 그 모양 그대로 이번 값으로 채움
   const { templateXml } = require('../../demo/notice-text.js');
@@ -442,19 +446,25 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   const [slotFc] = await Promise.all([page.waitForEvent("filechooser"), page.click("[data-slotup=\"입찰공고\"]")]);
   await slotFc.setFiles({ name: "ipchal.hwpx", mimeType: 'application/octet-stream', buffer: tplBytes });
   await waitFor(() => page.$('.toast:has-text("입찰공고 양식을 올렸습니다")'), 10000, '입찰공고 양식 올리기');
-  assert.match(await page.textContent('.tpl-slot.on'), /바꿀 자리: 공고명/);
+  await page.waitForSelector('.tpl-slot.on:has-text("올린 양식"):has-text("바꿀 자리: 공고명")', { timeout: 10000 });
   await page.screenshot({ path: join(SHOTS, '7b-설정-공고문양식.png') });
   await page.keyboard.press('Escape');
   assert.match(await page.textContent('[data-nact="hwp"]'), /입찰공고 양식/);
   await page.click('[data-nact="hwp"]');
-  await waitFor(() => page.$('.toast:has-text("입찰공고 한글 파일을 만들었습니다")'), 20000, '입찰공고 한글 파일');
-  const outs = readdirSync(join(data, '공고문', '작성')).filter((f) => f.includes('입찰공고'));
+  await waitFor(() => readdirSync(join(data, '공고문', '작성')).filter((f) => f.includes('입찰공고')).length >= 2, 20000, '입찰공고 한글 파일');
+  const outs = readdirSync(join(data, '공고문', '작성')).filter((f) => f.includes('입찰공고')).sort((x, y) => statSync(join(data, '공고문', '작성', y)).mtimeMs - statSync(join(data, '공고문', '작성', x)).mtimeMs);
   const xml2 = execFileSync('python3', ['-c', 'import zipfile,sys;z=zipfile.ZipFile(sys.argv[1]);print(z.read("Contents/section0.xml").decode())', join(data, '공고문', '작성', outs[0])]).toString().replace(/<\/hp:p>/g, '\n').replace(/<[^>]+>/g, '');
   assert.match(xml2, /공 사 명 : 신갈오거리 보안등 정비 전기공사/); assert.match(xml2, /지역제한\(용인시\)/); assert.match(xml2, /낙찰하한율\(87\.745%\)/);
   assert.match(xml2, /\[전기공사업\(○○○○\)\]/);
   await page.waitForSelector('.hreport.warn .hcheck li');
   await page.screenshot({ path: join(SHOTS, '7c-공고문-한글결과.png') });
-  step('입찰공고 양식(표시 없는 회사 양식) 올림 → 그 모양 그대로 공고명·지역·하한율·업종 등 채운 한글 파일 + 확인할 것 표시');
+  await page.click('#btnSettings');
+  await page.click('#dlgSettings .dlg-tabs button[data-tab="notice"]');
+  await page.click('[data-slotreset="입찰공고"]');
+  await waitFor(() => page.$('.toast:has-text("회사 기본 양식으로 되돌렸습니다")'), 15000, '기본 양식으로 되돌리기');
+  await waitFor(async () => !(await page.$('[data-slotreset]')), 5000, '되돌린 뒤 버튼 사라짐');
+  await page.keyboard.press('Escape');
+  step('다른 입찰공고 양식 올림 → 그 모양 그대로 채운 한글 파일 + 확인할 것 표시, [기본 양식으로] 되돌리기');
 
   // 진행 상태: 한글 양식을 만들면 작성 완료 → 나라장터 입찰공고번호를 넣으면 등록(잠금) → 복사해서 새로 쓰기는 작성 중
   assert.match(await page.textContent('.lgroup'), /작성 완료/);

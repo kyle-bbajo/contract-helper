@@ -226,10 +226,47 @@
   const SLOT_DIR = '공고문/양식/기본';
   const KINDS = ['입찰공고', '견적공고'];
   const slotPath = (kind) => `${SLOT_DIR}/${kind}.hwpx`;
-  async function slotInfo() {
-    let files = []; try { files = (await S.list(SLOT_DIR, false)).files; } catch (_) { /* 아직 없음 */ }
+  // 회사 기본 양식(프로그램에 들어 있음) — 올린 양식이 없으면 이것을 씀. 설정에서 올리면 그 양식으로 바뀜
+  const BUNDLED = { 입찰공고: 'tpl/notice-bid', 견적공고: 'tpl/notice-est' };
+  const BUNDLED_NAME = '회사 기본 양식(프로그램에 포함)';
+  const fetchBytes = async (u) => { const r = await fetch(u); if (!r.ok) throw new Error(u + ' ' + r.status); return new Uint8Array(await r.arrayBuffer()); };
+  // 기본 양식을 내 폴더에 깔아 둠: 원본 .hwp를 설치된 한글로 .hwpx로 바꾸고(모양이 가장 정확), 한글이 없으면 미리 바꿔 둔 .hwpx를 씀
+  async function installBundled(kind) {
+    const base = BUNDLED[kind]; if (!base) return false;
+    let ok = false;
+    try {
+      const src = `${SLOT_DIR}/${kind}.hwp`;
+      await S.writeBytes(src, await fetchBytes(base + '.hwp'));
+      await S.hwpConvert(src, 'HWPX');
+      ok = !!(await S.readBytes(slotPath(kind))).length;
+    } catch (_) { /* 한글이 없거나 바꾸기 실패 */ }
+    if (!ok) {
+      try { await S.writeBytes(slotPath(kind), await fetchBytes(base + '.hwpx')); ok = true; } catch (_) { return false; }
+    }
     const meta = (await S.readJson(`${SLOT_DIR}/양식정보.json`).catch(() => null)) || {};
-    return KINDS.map((k) => ({ kind: k, path: slotPath(k), has: files.some((f) => f.path === slotPath(k)), ...(meta[k] || {}) }));
+    meta[kind] = { name: BUNDLED_NAME, at: new Date().toISOString(), bundled: true };
+    await S.writeJson(`${SLOT_DIR}/양식정보.json`, meta);
+    return true;
+  }
+  let seeding = null;
+  async function listSlots() {
+    let files = []; try { files = (await S.list(SLOT_DIR, false)).files; } catch (_) { /* 아직 없음 */ }
+    return files;
+  }
+  async function slotInfo() {
+    let files = await listSlots();
+    const missing = KINDS.filter((k) => !files.some((f) => f.path === slotPath(k)) && BUNDLED[k]);
+    if (missing.length && S.online) {
+      seeding = seeding || (async () => { app().progress('회사 기본 공고문 양식 준비 중', .3); for (const k of missing) await installBundled(k); })().finally(() => { seeding = null; app().progress(null); });
+      await seeding; files = await listSlots();
+    }
+    const meta = (await S.readJson(`${SLOT_DIR}/양식정보.json`).catch(() => null)) || {};
+    return KINDS.map((k) => ({ kind: k, path: slotPath(k), has: files.some((f) => f.path === slotPath(k)), canReset: !!BUNDLED[k], ...(meta[k] || {}) }));
+  }
+  // 올린 양식을 빼고 회사 기본 양식으로 되돌림
+  async function resetSlot(kind) {
+    for (const p of [slotPath(kind), `${SLOT_DIR}/${kind}.hwp`]) { try { await S.remove(p); } catch (_) { /* 없음 */ } }
+    if (!(await installBundled(kind))) throw new Error('기본 양식을 깔지 못했습니다.');
   }
   // 양식에서 바꿀 수 있는 자리 미리 보기(모든 값을 넣어 시험으로 채워 봄)
   function probeTemplate(bytes) {
@@ -277,7 +314,7 @@
     if (!info || !info.has) {
       const old = await templates();
       if (old.length) { const tpl = old.length === 1 ? old[0].path : await pickTemplate(old); if (tpl) fillTemplate(tpl); return; }
-      app().toast(`먼저 설정 → 공고문에서 [${kind} 양식]에 회사 ${kind} 한글 파일을 올려 주세요. 지난 공고문을 그대로 올려도 됩니다.`, 'err', { label: '설정 열기', run: () => JH.settings.open('notice') });
+      app().toast(`${kind} 양식을 찾지 못했습니다. 설정 → 공고문에서 [${kind} 양식]에 한글 파일을 올려 주세요.`, 'err', { label: '설정 열기', run: () => JH.settings.open('notice') });
       return;
     }
     app().progress(`${kind} 양식에 이번 공고 내용을 채우는 중`, .5);
@@ -515,7 +552,7 @@
 
   root.JH.notice = Object.assign(root.JH.notice, {
     async show() { await load(); render(); },
-    create, templates, TPL_DIR, slotInfo, uploadSlot, slotPath, KINDS,
+    create, templates, TPL_DIR, slotInfo, uploadSlot, resetSlot, slotPath, KINDS,
     stats() {
       const by = { draft: 0, done: 0, posted: 0 }; store.notices.forEach((n) => by[N.statusOf(n)]++);
       return { count: store.notices.length, recent: store.notices[0] ? store.notices[0].v.공고명 : '', ...by };

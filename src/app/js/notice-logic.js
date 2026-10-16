@@ -81,6 +81,7 @@
     { key: '주공종금액', sec: '금액', type: 'money', label: '주공종 추정가격', hint: '복합공사일 때, 부가세 별도', showIf: (v) => !!subWorks(v).length },
     { key: '계약방법', sec: '입찰', type: 'select', opts: ['제한경쟁', '일반경쟁', '지명경쟁', '수의계약(2인 이상 견적)', '수의계약(1인 견적)'] },
     { key: '공고종류', sec: '입찰', type: 'select', opts: ['입찰공고', '견적공고'], auto: true, hint: '한글 파일 만들 때 쓸 양식' },
+    { key: '긴급공고', sec: '입찰', type: 'select', opts: ['아니오', '예'], hint: '예면 제목에 (긴급)' },
     { key: '낙찰자결정방법', sec: '입찰', type: 'select', opts: ['적격심사', '최저가', '협상에 의한 계약', '2단계 경쟁'], label: '낙찰자 결정방법' },
     { key: '낙찰하한율', sec: '입찰', type: 'combo', hint: '유사 공고에서 배우기로 채울 수 있음' },
     { key: '업종제한', sec: '자격', type: 'text', auto: true, wide: true },
@@ -826,6 +827,14 @@
       for (const h of hits.reverse()) { const r = typeof rep === 'function' ? rep(h) : rep; if (r == null || r === h[0]) continue; spliceRuns(p.texts, h.index, h.index + h[0].length, r); changed = true; }
       return changed || hits.length > 0;
     };
+    // 제목 "입찰공고(긴급)": 긴급공고가 아니면 (긴급)을 뺌, 긴급이면 붙임
+    for (const p of paras.slice(0, 8)) {
+      const t = ptext(p); if (!/^\s*(입\s*찰|견\s*적)?\s*공\s*고(\s*\(\s*긴\s*급\s*\))?\s*$/.test(t)) continue;
+      const m = t.match(/\s*\(\s*긴\s*급\s*\)/);
+      if (m && v.긴급공고 !== '예') { spliceRuns(p.texts, m.index, m.index + m[0].length, ''); done.add('긴급공고'); }
+      else if (!m && v.긴급공고 === '예') { const e = t.replace(/\s+$/, '').length; spliceRuns(p.texts, e, e, '(긴급)'); done.add('긴급공고'); }
+      break;
+    }
     const names = [...oldNames].filter((x) => x && x.length >= 4 && v.공고명 && x !== v.공고명).sort((a, b) => b.length - a.length);
     const numIn = (h, n) => h[0].replace(/[\d,]{3,}/, n ? won(n) : BLANK_MONEY);
     const licWords = new Set(), licCode = {}; let inQual = false;

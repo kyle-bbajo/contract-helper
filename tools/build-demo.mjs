@@ -29,6 +29,11 @@ writeFileSync(join(OUT, 'index.html'), html);
 rmSync(join(OUT, 'js/server.js'));
 cpSync(join(ROOT, 'demo/demo-server.js'), join(OUT, 'js/demo-server.js'));
 cpSync(join(ROOT, 'demo/notice-text.js'), join(OUT, 'js/notice-text.js'));
+// 회사 공고문 양식: 게시판은 한글 파일을 그대로 못 올리므로 .hwpx를 글자(base64)로 바꿔 둠(.hwp 원본은 시연판에서 안 씀)
+for (const f of readdirSync(join(OUT, 'tpl'))) {
+  if (f.endsWith('.hwpx')) writeFileSync(join(OUT, 'tpl', f + '.b64.txt'), readFileSync(join(OUT, 'tpl', f)).toString('base64'));
+  rmSync(join(OUT, 'tpl', f));
+}
 
 // 글꼴은 파일 대신 CSS 안에 넣음(게시 페이지 규칙)
 const font = readFileSync(join(OUT, 'vendor/fonts/PretendardVariable.woff2')).toString('base64');
