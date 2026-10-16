@@ -189,25 +189,16 @@ try {
   const mg = await page.evaluate(() => { const c = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사'); return { n: Object.values(JH.app.db.contracts).filter((x) => x.name === '시청사 옥상 방수공사').length, dup: !!JH.app.db.contracts.r26bk0123456701, doc: (JH.app.db.docs.find((d) => d.id === 'dup-doc') || {}).key === c.key, photo: !!(c.received || {})['c-photo'], note: (c.memo || {}).note, amount: c.amount, end: c.endDate, nums: c.nums, period: c.period }; });
   assert.equal(mg.n, 1); assert.ok(!mg.dup); assert.ok(mg.doc, '딸린 서류가 옮겨 옴'); assert.ok(mg.photo, '받음 표시 옮겨 옴'); assert.equal(mg.note, '차수 계약의 메모');
   assert.equal(mg.amount, 48000000); assert.match(mg.end, /2026-?10-?10/); assert.ok(mg.nums.includes('R26BK0123456701')); assert.equal(mg.period, '2026-06-01 ~ 2026-10-10(1차 변경)', '최신 차수 값');
-  // 번호가 달라 안 합쳐진 계약은 [같은 계약 합치기]로 직접
-  await page.evaluate(() => { JH.app.db.contracts.manual1 = { key: 'manual1', source: 'manual', type: '공사', name: '시청사 옥상 방수공사', vendor: '(주)다해토건', nums: [], no: '', amount: 0, originals: {}, received: { 'c-laborlist': true }, edited: {}, memo: {}, updatedAt: Date.now() }; JH.app.setView('contracts'); });
-  await page.click('.citem:has-text("시청사 옥상 방수공사") >> nth=0');
-  await page.click('[data-act="mergepick"]');
-  await page.waitForSelector('#dlgMerge[open]');
-  assert.match(await page.$eval('#mgPick option:checked', (o) => o.textContent), /시청사 옥상 방수공사.*이름·업체 같음/, '이름·업체 같은 계약이 미리 골라짐');
-  await page.click('#mgGo');
-  await waitFor(() => page.$('.toast:has-text("이 계약으로 합쳤습니다")'), 10000, '직접 합치기');
-  assert.equal(await page.evaluate(() => Object.values(JH.app.db.contracts).filter((x) => x.name === '시청사 옥상 방수공사').length), 1);
-  const mg2 = await page.evaluate(() => { const c = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사'); return { lab: !!c.received['c-laborlist'], amount: c.amount, ords: Object.keys(c.ords || {}) }; });
-  assert.ok(mg2.lab, '직접 합친 계약의 받음 표시'); assert.equal(mg2.amount, 48000000, '직접 합치면 이 계약 값은 그대로'); assert.deepEqual(mg2.ords, ['0', '1'], '값 없는 직접 추가 계약은 차수 표에 안 들어감');
   // 합친 뒤 변경 차수 표: 원계약(-00) 값과 1차 변경 값이 둘 다 남아 설계변경·기간연장 기본값이 매겨짐
-  await page.click('details.audit summary');
-  assert.equal(await page.locator('.chgtbl tbody tr').count(), 3, '나라장터 변경이력 3줄(원계약·1차·2차)');
-  await page.click('details.audit summary');
+  await page.evaluate(() => JH.app.setView('contracts'));
+  await page.click('.citem:has-text("시청사 옥상 방수공사") >> nth=0');
+  if (!(await page.$('details.audit[open]'))) await page.click('details.audit summary');
+  assert.equal(await page.locator('.chgtbl tbody tr').count(), 3, '변경 차수 표 3줄(원계약·1차·2차)');
+  await page.click('details.audit summary'); // 뒤 시험이 다시 펼침
   await waitFor(() => existsSync(join(data, '서류본문.json')) && !JSON.parse(readFileSync(join(data, '서류대장.json'), 'utf8')).docs.some((d) => 'text' in d), 20000, '본문을 따로 떼어 저장');
   assert.ok(st.extra && st.extra.itemId === 'c-ltax', '직접 넣은 지방세 서류 분류');
   assert.equal(JSON.parse(readFileSync(join(PROG, 'local.json'), 'utf8')).dataDir, moved);
-  step('데이터 폴더를 통째로 옮겨도 표식으로 찾음 + 계약 폴더 이름 변경 추적 + 직접 넣은 파일 분류 + 예전 서류대장 형식 읽기 + 차수만 다른 계약 자동 합침·[같은 계약 합치기]');
+  step('데이터 폴더를 통째로 옮겨도 표식으로 찾음 + 계약 폴더 이름 변경 추적 + 직접 넣은 파일 분류 + 예전 서류대장 형식 읽기 + 차수만 다른 계약 자동 합침(차수 순서대로 변경 표)');
 
   // ===== 계약 화면: 맨 위 [업로드], 서류 줄마다 [+ 추가]로 직접 넣기 =====
   await page.click('.views [data-view="contracts"]');

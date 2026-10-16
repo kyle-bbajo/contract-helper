@@ -210,14 +210,6 @@
     if (merged) { saveDb(true); setTimeout(() => toast(`차수(-00, -01)만 다른 같은 계약 ${merged}건을 하나로 합쳤습니다.`, 'ok'), 500); }
     return merged;
   }
-  // 같은 이름·같은 업체인데 번호가 달라 따로 보이는 계약(직접 고를 때 후보로)
-  function mergeCandidates(c) {
-    const nm = L.norm(c.name || ''), vd = L.vendorCore(c.vendor || '');
-    return contracts().filter((o) => o.key !== c.key).map((o) => {
-      const sameName = nm && L.norm(o.name || '') === nm, sameVendor = vd && L.vendorCore(o.vendor || '') === vd;
-      return { c: o, score: (sameName ? 2 : 0) + (sameVendor ? 1 : 0), why: sameName && sameVendor ? '이름·업체 같음' : sameName ? '이름 같음' : sameVendor ? '업체 같음' : '' };
-    }).sort((a, b) => b.score - a.score || (b.c.updatedAt || 0) - (a.c.updatedAt || 0));
-  }
   function upsertContract(n) {
     // 계약번호가 하나라도 같으면 같은 계약
     const nb = (n.nums || []).map(L.baseNo).filter((x) => x.length >= 6);
@@ -762,7 +754,6 @@
             <span class="spacer"></span>
             <button class="btn" data-act="pay">${c.paidDate ? '지출 정보 수정' : '지출 처리'}</button>
             <button class="btn ghost" data-act="edit">계약 수정</button>
-            <button class="btn ghost" data-act="mergepick" title="차수(-00, -01)나 번호가 달라 둘로 보이는 같은 계약을 하나로 합칩니다">같은 계약 합치기</button>
           </div>
         </div>
         ${sealSvg(st, c)}
@@ -1352,7 +1343,6 @@
       else if (act === 'folder') await S.open(folderOf(c));
       else if (act === 'pay') openPay(c);
       else if (act === 'edit') openContract(c);
-      else if (act === 'mergepick') openMerge(c);
       else if (act === 'view') { const d = docById(t.dataset.doc); if (S.view) await S.view(d.pdfPath || d.path); else window.open(S.fileUrl(d.pdfPath || d.path), '_blank'); }
       else if (act === 'del') { const d = docById(t.dataset.doc); if (confirm(`"${d.name}"을 목록에서 뺄까요? 파일은 데이터 폴더의 _삭제됨으로 옮겨집니다.`)) { await removeDoc(d); render(); } }
       else if (act === 'hwp') {
@@ -1453,22 +1443,6 @@
 
   // 계약 직접 추가·수정
   let editing = null;
-  // 같은 계약 합치기(직접 고름): 이름·업체가 같은 계약을 앞에 보여 줌
-  function openMerge(c) {
-    const cands = mergeCandidates(c);
-    if (!cands.length) { toast('합칠 다른 계약이 없습니다.'); return; }
-    const sel = $('#mgPick');
-    sel.innerHTML = '<option value="">합칠 계약 고르기</option>' + cands.map(({ c: o, why }) => `<option value="${esc(o.key)}">${esc(o.name)}${o.vendor ? ` · ${esc(o.vendor)}` : ''}${o.no ? ` · ${esc(o.no)}` : ''}${why ? ` — ${why}` : ''}</option>`).join('');
-    const top = cands[0]; if (top.score) sel.value = top.c.key;
-    $('#mgThis').textContent = `${c.name}${c.no ? ` (${c.no})` : ''}`;
-    $('#mgGo').onclick = async () => {
-      const o = db.contracts[sel.value]; if (!o) { toast('합칠 계약을 골라 주세요.', 'err'); return; }
-      const n = withIndex(() => mergeContracts([c, o], c));
-      $('#dlgMerge').close();
-      if (n) { await saveDb(true); render(); toast(`"${o.name}"을(를) 이 계약으로 합쳤습니다. 서류·메모·받음 표시도 옮겼고, 금액·준공일은 최신 차수 기준입니다.`, 'ok'); }
-    };
-    $('#dlgMerge').showModal();
-  }
   function openContract(c) {
     editing = c || null;
     $('#ctTitle').textContent = c ? '계약 수정' : '계약 직접 추가';
