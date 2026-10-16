@@ -108,7 +108,7 @@
   async function ingest(fileList, forceKey, forceItem) {
     const files = [...fileList].filter((f) => f && f.name && !f.name.startsWith('.') && !/^(thumbs\.db|desktop\.ini)$/i.test(f.name));
     if (!files.length) return;
-    if (!S.online) { toast('바탕화면의 "지출서류 도우미" 바로가기로 실행해야 서류를 저장할 수 있습니다.', 'err'); return; }
+    if (!S.online) { toast('바탕화면의 "계약업무 도우미" 아이콘으로 실행해야 서류를 저장할 수 있습니다.', 'err'); return; }
     const recs = []; let skipped = 0;
     try {
       // 1) 읽기
@@ -349,12 +349,16 @@
     contracts().forEach((c) => { if (c.officer) m.set(c.officer, (m.get(c.officer) || 0) + 1); });
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
   }
+  // 검색 대상: 계약명·업체·계약번호·담당자 + 내 메모(감독부서·감독관·연락처·특이사항)
+  const memoOf = (c) => c.memo || {};
+  const hay = (c) => { const m = memoOf(c); return L.norm([c.name, c.vendor, c.no, ...(c.nums || []), c.officer, c.dept, m.dept, m.person, m.phone, m.note].join(' ')); };
+  const hits = (c, q) => !q || hay(c).includes(q) || (/\d{3,}/.test(q) && hay(c).replace(/\D/g, '').includes(q.replace(/\D/g, '')));
   function filtered(ignoreState) {
     const q = L.norm(ui.q);
     return contracts().filter((c) => {
       if (ui.officer && c.officer !== ui.officer) return false;
       if (ui.type && c.type !== ui.type) return false;
-      if (q && !L.norm([c.name, c.vendor, c.no, ...(c.nums || [])].join(' ')).includes(q)) return false;
+      if (q && !hits(c, q)) return false;
       if (!ignoreState && ui.state) { const s = statusOf(c).state; if (ui.state === 'missing' ? !(s === 'missing' || s === 'empty') : s !== ui.state) return false; }
       return true;
     }).sort((a, b) => (L.toDate(b.endDate) || 0) - (L.toDate(a.endDate) || 0) || b.updatedAt - a.updatedAt);
@@ -379,15 +383,24 @@
     const list = filtered();
     if (ui.sel && !db.contracts[ui.sel]) ui.sel = null;
     if (!ui.sel && list.length) ui.sel = list[0].key;
+    // 검색어가 있는데 담당자·구분·상태 거름 때문에 안 보이는 계약이 있으면 알려 줌
+    const q = L.norm(ui.q);
+    const hidden = q ? contracts().filter((c) => hits(c, q) && !list.includes(c)).length : 0;
+    const raw = (ui.q || '').trim();
+    const hl = (s) => { s = String(s || ''); const i = raw ? s.toLowerCase().indexOf(raw.toLowerCase()) : -1; return i < 0 ? esc(s) : esc(s.slice(0, i)) + '<mark>' + esc(s.slice(i, i + raw.length)) + '</mark>' + esc(s.slice(i + raw.length)); };
     $('#contractList').innerHTML = list.map((c) => {
-      const st = statusOf(c);
+      const st = statusOf(c), m = memoOf(c);
       const pct = st.reqTotal ? Math.round((st.reqDone / st.reqTotal) * 100) : 0;
+      // 메모에서 찾은 경우 어느 내용인지 한 줄 보여 줌
+      const memoHit = raw && !L.norm([c.name, c.vendor, c.no, ...(c.nums || [])].join(' ')).includes(q) ? [m.dept, m.person, m.phone, m.note, c.officer].find((x) => x && L.norm(x).includes(q)) : '';
       return `<div class="citem${c.key === ui.sel ? ' on' : ''}" role="listitem" tabindex="0" data-key="${esc(c.key)}">
-        <div class="nm" title="${esc(c.name)}">${esc(c.name || '이름 없는 계약')}</div>
+        <div class="nm" title="${esc(c.name)}">${hl(c.name || '이름 없는 계약')}</div>
         <div class="st">${pillFor(st, c)}</div>
-        <div class="meta"><span>${esc(c.vendor || '업체 미상')}</span><span>${esc(c.type)}</span>${c.endDate ? `<span class="date"${st.late ? ' style="color:var(--seal)"' : ''}>준공 ${esc(L.fmtDate(c.endDate))}</span>` : ''}</div>
+        <div class="meta"><span>${hl(c.vendor || '업체 미상')}</span><span>${esc(c.type)}</span>${c.endDate ? `<span class="date"${st.late ? ' style="color:var(--seal)"' : ''}>준공 ${esc(L.fmtDate(c.endDate))}</span>` : ''}${m.note || m.person ? `<span class="memo-dot" title="${esc([m.dept, m.person, m.phone].filter(Boolean).join(' ') + (m.note ? '\n' + m.note : ''))}">메모</span>` : ''}</div>
+        ${memoHit ? `<div class="hit">${hl(String(memoHit).replace(/\s+/g, ' ').slice(0, 80))}</div>` : ''}
         <div class="bar-mini"><i style="width:${pct}%"></i></div></div>`;
-    }).join('') || `<div class="empty-state" style="margin:40px 16px"><p>${contracts().length ? '조건에 맞는 계약이 없습니다.' : '아직 계약이 없습니다. 나라장터에서 불러오거나 계약서를 넣으면 생깁니다.'}</p></div>`;
+    }).join('') + (hidden ? `<button type="button" class="more-hits" data-act="searchall">담당자·구분·상태 거름 때문에 안 보이는 계약 <b>${hidden}건</b> — 모두에서 찾기</button>` : '')
+      || `<div class="empty-state" style="margin:40px 16px"><p>${contracts().length ? (q ? `"${esc(raw)}"에 맞는 계약이 없습니다.` : '조건에 맞는 계약이 없습니다.') : '아직 계약이 없습니다. 나라장터에서 불러오거나 계약서를 넣으면 생깁니다.'}</p></div>`;
     const stamp = fetchStamp();
     $('#listCount').textContent = `${list.length}건` + (stamp ? ` · 나라장터 ${stamp} 기준` : '');
     $('#btnFetch').title = '나라장터 계약목록 새로고침' + (stamp ? ` (마지막 ${stamp})` : '');
@@ -419,6 +432,16 @@
       <select data-act="moveitem" data-doc="${d.id}" aria-label="서류 종류">${itemOptions(list, d.itemId, true)}</select>
       <button class="link" data-act="view" data-doc="${d.id}">보기</button>
       <button class="x" data-act="del" data-doc="${d.id}" title="빼기" aria-label="빼기">✕</button></div>`;
+  }
+  function memoCard(c) {
+    const m = memoOf(c);
+    const f = (k, label, ph, extra = '') => `<label class="mf"><span>${label}</span><input type="text" data-memo="${k}" value="${esc(m[k] || '')}" placeholder="${esc(ph)}" autocomplete="off"${extra}></label>`;
+    return `<section class="memo" aria-label="메모">
+      <div class="memo-head"><h3>메모</h3><span class="muted" id="memoState">이 PC에만 저장 · 인쇄본에는 들어가지 않습니다</span></div>
+      <div class="memo-grid">
+        ${f('dept', '감독부서', '예: 시설관리팀')}${f('person', '감독관', '이름')}${f('phone', '연락처', '예: 031-000-0000', ' inputmode="tel"')}
+        <label class="mf wide"><span>특이사항</span><textarea data-memo="note" rows="2" placeholder="예: 준공검사 10/20 예정, 하자보증서 원본은 업체가 직접 가져오기로 함">${esc(m.note || '')}</textarea></label>
+      </div></section>`;
   }
   function renderDetail() {
     const el = $('#detail');
@@ -459,6 +482,7 @@
         </div>
         ${sealSvg(st, c)}
       </div>
+      ${memoCard(c)}
       <div class="dropin" id="dropin"><button class="btn primary" data-act="addhere">업로드</button>
         <span>이 계약 서류로 올립니다. 서류 종류는 자동으로 찾고, 파일을 여기에 끌어다 놓아도 됩니다.</span></div>
       <div class="stages">
@@ -489,6 +513,9 @@
       </div>`;
   }
 
+  // 메모 칸 높이를 내용에 맞춤
+  const fitMemo = () => $$('textarea[data-memo]').forEach((t) => { t.style.height = 'auto'; t.style.height = t.scrollHeight + 2 + 'px'; });
+
   // ---------- 화면: 현황판 ----------
   function renderBoard() {
     const all = filtered(true).map((c) => ({ c, st: statusOf(c) }));
@@ -503,7 +530,7 @@
       <div class="chips">${chip('', '전체')}${chip('missing', '서류 미비')}${chip('ready', '지출 대기')}${chip('late', '준공 지남·미지출', true)}${chip('paid', '지출 완료')}</div>
       ${rows.length ? `<table class="grid"><thead><tr><th>계약</th><th>구분</th><th>준공일</th><th>서류</th><th class="r">원본</th><th>지출</th><th>상태</th></tr></thead><tbody>
         ${rows.map(({ c, st }) => `<tr data-key="${esc(c.key)}">
-          <td><div class="nm">${esc(c.name)}</div><div class="sub">${esc(c.vendor || '')}${c.amount ? ` · ${esc(L.won(c.amount))}` : ''}</div></td>
+          <td><div class="nm">${esc(c.name)}</div><div class="sub">${esc(c.vendor || '')}${c.amount ? ` · ${esc(L.won(c.amount))}` : ''}</div>${(() => { const m = memoOf(c); const who = [m.dept, m.person, m.phone].filter(Boolean).join(' '); return who || m.note ? `<div class="sub memo-line" title="${esc(m.note || '')}">${who ? `감독 ${esc(who)}` : ''}${m.note ? `${who ? ' · ' : ''}${esc(m.note.replace(/\s+/g, ' ').slice(0, 40))}` : ''}</div>` : ''; })()}</td>
           <td>${esc(c.type)}</td>
           <td class="date"${st.late ? ' style="color:var(--seal);font-weight:650"' : ''}>${esc(L.fmtDate(c.endDate) || '-')}</td>
           <td><div class="prog${st.reqDone === st.reqTotal ? ' full' : ''}"><span class="track"><i style="width:${st.reqTotal ? Math.round(st.reqDone / st.reqTotal * 100) : 0}%"></i></span><span class="num">${st.reqDone}/${st.reqTotal}</span></div></td>
@@ -553,7 +580,7 @@
     const ic = $('#inboxCount'); ic.hidden = !n; ic.textContent = n;
     if (ui.view === 'home') { renderHome(); return; }
     if (ui.view === 'notice') return;
-    renderList(); renderDetail();
+    renderList(); renderDetail(); fitMemo();
     if (ui.view === 'board') renderBoard();
     if (ui.view === 'inbox') renderInbox();
   }
@@ -591,6 +618,7 @@
         try { const r = await S.hwp2pdf(d.path); d.pdfPath = r.path; await saveDb(true); toast('PDF로 변환했습니다.', 'ok'); }
         catch (err) { toast('한글 변환 실패: ' + err.message, 'err'); }
         render();
+      } else if (act === 'searchall') { ui.officer = ''; ui.officerTouched = true; ui.type = ''; ui.state = ''; $$('#fState button').forEach((b) => b.classList.toggle('on', !b.dataset.state)); render();
       } else if (act === 'rematch') { const n = await rematchInbox(); toast(n ? `${n}개를 계약으로 옮겼습니다.` : '새로 찾은 계약이 없습니다.'); render(); }
     } catch (err) { console.error(err); toast(err.message, 'err'); }
   }
@@ -667,6 +695,21 @@
   $('#paySave').onclick = async () => { editing.paidDate = $('#payDate').value.replace(/-/g, ''); editing.payMemo = $('#payMemo').value.trim(); editing.updatedAt = Date.now(); await saveDb(true); $('#dlgPay').close(); render(); };
   $('#payUndo').onclick = async () => { editing.paidDate = ''; editing.payMemo = ''; await saveDb(true); $('#dlgPay').close(); render(); };
 
+  document.addEventListener('input', (e) => {
+    const t = e.target.closest('[data-memo]'); if (!t) return;
+    const c = ui.sel && db.contracts[ui.sel]; if (!c) return;
+    c.memo = { ...(c.memo || {}), [t.dataset.memo]: t.value }; c.memoAt = new Date().toISOString();
+    if (t.tagName === 'TEXTAREA') { t.style.height = 'auto'; t.style.height = t.scrollHeight + 2 + 'px'; }
+    const s = $('#memoState'); if (s) s.textContent = '저장 중…';
+    saveDb().then(() => { const s2 = $('#memoState'); if (s2) s2.textContent = '저장됨 · 이 PC에만 저장, 인쇄본에는 들어가지 않습니다'; });
+  });
+  document.addEventListener('focusout', (e) => { if (e.target.closest && e.target.closest('[data-memo]')) renderList(); });
+  // 어디서든 / 를 누르면 계약 찾기, Esc로 지움
+  document.addEventListener('keydown', (e) => {
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
+    if (e.key === '/' && !typing && !document.querySelector('dialog[open]') && MOD[ui.view] === 'jichul') { e.preventDefault(); if (ui.view !== 'contracts') setView('contracts'); $('#q').focus(); $('#q').select(); }
+    if (e.key === 'Escape' && document.activeElement === $('#q') && $('#q').value) { $('#q').value = ''; ui.q = ''; renderList(); }
+  });
   document.addEventListener('click', onAct);
   document.addEventListener('change', onChange);
   document.addEventListener('click', (e) => { const b = e.target.closest('[data-view]'); if (b && !b.disabled && !b.closest('dialog')) setView(b.dataset.view); });
@@ -730,7 +773,7 @@
   async function start() {
     if (JH.demo && JH.demo.ready) { try { await JH.demo.ready; } catch (_) {} }
     if (!S.online) {
-      banner('이 화면은 바탕화면의 <b>지출서류 도우미</b> 바로가기로 실행해야 서류를 저장하고 나라장터에 연결할 수 있습니다.', true);
+      banner('이 화면은 바탕화면의 <b>계약업무 도우미</b> 아이콘으로 실행해야 서류를 저장하고 나라장터에 연결할 수 있습니다.', true);
       setView(ui.view); return;
     }
     try {

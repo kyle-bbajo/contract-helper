@@ -181,6 +181,27 @@ try {
   await waitFor(() => page.$('.row[data-drop-item="c-defect"] .file:has-text("scan_0012.pdf")'), 10000, '줄에 표시');
   step('계약 화면 맨 위 [업로드], 서류 줄 [+ 추가]로 그 서류에 직접 넣기');
 
+  // ===== 메모(감독부서·감독관·연락처·특이사항)와 찾기 =====
+  await page.fill('[data-memo="dept"]', '시설관리팀'); await page.fill('[data-memo="person"]', '홍감독');
+  await page.fill('[data-memo="phone"]', '031-324-1234'); await page.fill('[data-memo="note"]', '준공검사 10/20 예정, 하자보증서 원본은 업체가 직접 가져옴');
+  await page.click('.cname');
+  await waitFor(() => { const d = JSON.parse(readFileSync(join(data, '서류대장.json'), 'utf8')); const c = Object.values(d.contracts).find((x) => x.name === '시청사 옥상 방수공사'); return c.memo && c.memo.note && c.memo.note.includes('하자보증서'); }, 10000, '메모 저장');
+  await page.fill('#q', '홍감독');
+  assert.deepEqual(await page.$$eval('.citem .nm', (e) => e.map((x) => x.textContent)), ['시청사 옥상 방수공사']);
+  assert.match(await page.textContent('.citem .hit'), /홍감독/);
+  await page.fill('#q', '3241234'); // 연락처 숫자만
+  assert.equal(await page.$$eval('.citem', (e) => e.length), 1);
+  await page.fill('#q', '주차장'); // 다른 담당자(김철수) 계약 → 안내 후 모두에서 찾기
+  assert.match(await page.textContent('.more-hits'), /1건/);
+  await page.click('.more-hits');
+  assert.deepEqual(await page.$$eval('.citem .nm', (e) => e.map((x) => x.textContent)), ['처인구 공영주차장 전기설비 교체']);
+  await page.fill('#q', ''); await page.selectOption('#fOfficer', '박주호');
+  await page.click('.views [data-view="board"]');
+  assert.match(await page.textContent('#view-board'), /감독 시설관리팀 홍감독 031-324-1234/);
+  await page.screenshot({ path: join(SHOTS, '5-현황판-메모.png') });
+  await page.click('.views [data-view="contracts"]');
+  step('계약 메모(감독부서·감독관·연락처·특이사항) 저장 + 메모·연락처까지 찾기, 다른 담당자 계약 안내');
+
   // ===== 공고문 =====
   await page.click('.brand');
   await page.waitForSelector('#view-home.on');

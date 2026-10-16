@@ -171,6 +171,9 @@
     const fs = [];
     for (const n of SAMPLES) { const b = await (await fetch('samples/' + encodeURIComponent(n))).arrayBuffer(); fs.push(new File([b], n)); }
     await app.ingest(fs);
+    // 메모 예시
+    const c = Object.values(app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사');
+    if (c) { c.memo = { dept: '시설관리팀', person: '홍감독', phone: '031-000-1234', note: '준공검사 10/20 예정. 하자보증서 원본은 업체가 직접 가져오기로 함.' }; await app.saveDb(true); }
     app.setView('home');
     showBar();
   }

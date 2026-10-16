@@ -6,7 +6,7 @@
   const online = !!token && location.protocol.startsWith('http');
 
   async function call(method, path, params, body) {
-    if (!online) throw new Error('바탕화면의 "지출서류 도우미" 바로가기로 실행해야 합니다.');
+    if (!online) throw new Error('바탕화면의 "계약업무 도우미" 아이콘으로 실행해야 합니다.');
     const q = params ? '?' + new URLSearchParams(params).toString() : '';
     const res = await fetch(path + q, { method, headers: { 'X-JH-Token': token }, body });
     const type = res.headers.get('content-type') || '';
