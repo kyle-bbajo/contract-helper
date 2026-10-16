@@ -42,7 +42,9 @@
     const pick = (memoKey, auto, src, docV) => (String(m[memoKey] || '').trim() ? { v: m[memoKey], src: '직접' } : auto ? { v: auto, src } : docV ? { v: docV, src: '서류' } : { v: '', src: '' });
     const budget = pick('aBudget', g.budget, '나라장터 입찰공고', dv.budget), design = pick('aDesign', g.bssamt, '나라장터 기초금액', dv.design);
     const est = pick('aEst', g.plnprc, '나라장터 예정가격', dv.est);
-    const award = pick('aAward', g.origAmount || c.amount, g.origAmount ? '나라장터 당초 계약' : '계약금액');
+    const ch = L.changesOf(c); // 변경이력(없으면 -00·-01 차수 계약에서)
+    const orig0 = g.origAmount || (ch && ch.origAmount) || 0;
+    const award = pick('aAward', orig0 || c.amount, orig0 ? '나라장터 당초 계약' : '계약금액');
     const rep = pick('aRep', c.rep || g.rep, '나라장터', dv.rep), addr = pick('aAddr', g.addr, '나라장터', dv.addr);
     // 실제 준공일: 준공계·준공조서 날짜, 없으면 나라장터 준공(용역은 완수)일자가 지났을 때 그 날짜
     const due8 = String(c.endDate || '').replace(/\D/g, '').slice(0, 8);
@@ -52,11 +54,11 @@
     const reason = pick('aReason', L.contractReason(c.law, c.lawDtl), '나라장터 근거법률');
     const team = pick('aTeam', m.dept, '감독부서');
     // 차수마다 고른 구분(memo.chgKind[차수번호]) > 자동(금액 바뀜 설계변경, 준공일 바뀜 기간연장). 해당 없음은 뺌
-    const plan = g.chgRows ? L.chgPlan(g.chgRows, m.chgKind) : null;
+    const plan = ch ? L.chgPlan(ch.rows, m.chgKind) : null;
     const ends = plan ? plan.ext.map((r) => ({ date: r.date, from: r.prevEnd || '', to: r.end })) : (g.endChanges || []);
-    const SRC = '나라장터 변경이력';
+    const SRC = ch ? ch.src : '나라장터 변경이력';
     // 기간 연장: 직접 넣은 값, 없으면 연장으로 고른 차수
-    const extOrig = pick('aExtOrig', ends.length ? (g.origEnd || ends[0].from) : '', SRC);
+    const extOrig = pick('aExtOrig', ends.length ? ((ch && ch.origEnd) || g.origEnd || ends[0].from) : '', SRC);
     const extDate = pick('aExtDate', ends.map((e) => e.date).join('\n'), SRC);
     // 설계변경: 직접 넣은 값이 있으면 한 번, 없으면 설계변경으로 고른 차수마다
     let chg = plan ? plan.design.map((r) => ({ date: r.date, amount: r.amount, diff: r.diff || 0 })) : (g.amtChanges || []).map((a) => ({ date: a.date, amount: a.amount, diff: a.diff }));

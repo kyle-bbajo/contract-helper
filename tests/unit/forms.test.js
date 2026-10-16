@@ -210,3 +210,19 @@ test('변경이력 차수마다 고르기: 자동 기본값, 둘 다, 해당 없
   r = F.rowOf({ ...c1, memo: { chgKind: { [N + '-01']: 'both' } } });
   assert.equal(r.chg.length, 1); assert.equal(r.chg[0].amount, 50000000); assert.equal(r.extDate, '20261102'); assert.equal(r.extOrig, '');
 });
+
+test('변경이력이 비어도 -00·-01 차수 계약으로 차수 표·서식 값', () => {
+  const N = 'R25TA00935659';
+  const c = { key: 'k', name: '같은 이름 용역', type: '용역', amount: 52000000, g2b: { st: { chg: 'none' } },
+    ords: { 0: L.ordSnap({ no: N + '00', ord: 0, amount: 48000000, endDate: '2026-09-30', contractDate: '2026-05-28' }),
+      1: L.ordSnap({ no: N + '01', ord: 1, amount: 52000000, endDate: '2026-11-30', chgDt: '2026-09-15 10:00:00', contractDate: '2026-05-28' }) } };
+  const ch = L.changesOf(c);
+  assert.equal(ch.src, '나라장터 계약 차수');
+  assert.deepEqual(ch.rows.map((r) => [r.ord, r.auto]), [[0, 'orig'], [1, 'both']]);
+  let r = F.rowOf(c);
+  assert.equal(r.award, 48000000, '당초 계약금액은 -00');
+  assert.deepEqual(r.chg, [{ date: '20260915', amount: 52000000, diff: 4000000 }]);
+  assert.equal(r.extDate, '20260915'); assert.equal(r.extOrig, '20260930');
+  r = F.rowOf({ ...c, memo: { chgKind: { [N + '01']: 'ext' } } });
+  assert.deepEqual(r.chg, []); assert.equal(r.extDate, '20260915');
+});

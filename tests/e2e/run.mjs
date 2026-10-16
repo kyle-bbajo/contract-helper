@@ -410,6 +410,17 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   await page.screenshot({ path: join(SHOTS, '6-공고문.png') });
   step('신갈오거리 검색 → 조건 빈도 추천(하한율 87.745% 적용) + 첨부 한글 공고문 문장 추출·원문 보관');
 
+  // 나라장터에서 못 찾을 때: 내려받은 공고문을 직접 올려 배움(찾은 공고 목록에 '올림'으로 들어감, 빼면 원래대로)
+  await page.setInputFiles('#lUpload', { name: '사업장폐기물_입찰공고문.hwp', mimeType: 'application/octet-stream', buffer: Buffer.from(hwpBytes(noticeText({ name: '2026년 사업장폐기물 위탁처리 용역', org: '익산시', region: '전라북도 익산시', rate: '87.745' }))) });
+  await waitFor(() => page.$('.toast:has-text("공고문 1건을 읽었습니다")'), 15000, '공고문 올리기');
+  await page.click('details.bids[data-bidsbox] > summary');
+  assert.ok(await page.$('.bids tbody tr:first-child .tag:has-text("올림")'), '올린 공고문 표시');
+  assert.match(await page.textContent('.bids tbody tr:first-child'), /사업장폐기물 위탁처리 용역/);
+  assert.ok(readdirSync(join(data, '공고문', '참고')).some((f) => f.startsWith('올림_')), '올린 원문 보관');
+  await page.uncheck('[data-buse="0"]');
+  await page.click('details.bids[data-bidsbox] > summary');
+  step('나라장터에서 못 찾으면 내려받은 공고문(한글·PDF)을 직접 올려 배움 — 찾은 공고에 "올림"으로 들어가고 원문 보관');
+
   const draft = await page.$$eval('.draft textarea.dbody', (ps) => ps.map((p) => p.value).join('\n'));
   assert.match(draft, /전기공사업 등록업체/); assert.match(draft, /용인시에 있는 자/); assert.match(draft, /87\.745%/);
   // 공고문 전체를 배워 절이 모두 들어감(입찰보증금·입찰서 제출·낙찰자 결정·무효·계약 체결·기타)

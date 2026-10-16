@@ -338,3 +338,9 @@ test('공고명 검색어: 띄어쓰기 두 가지 + 낱말 하나로 넓게 찾
   const u = N.bidSearchUrl('용역', { bidNtceNm: '사업장 폐기물' }, '20261001', '20261016', 1, 100, 'k');
   assert.match(u, /bidNtceNm=%EC%82%AC%EC%97%85%EC%9E%A5%20%ED%8F%90/); assert.doesNotMatch(u, /\+/);
 });
+
+test('직접 올린 공고문: 공고명·기관·추정가격·하한율', () => {
+  const b = N.uploadedBid(['익산시 공고 제2026-1234호', '2026년 사업장폐기물 위탁처리 용역 입찰공고', '1. 입찰에 부치는 사항', '가. 용역명 : 2026년 사업장폐기물 위탁처리 용역', '나. 추정가격 : 금 45,000,000원(부가세 별도)', '낙찰하한율 : 87.745%', '적격심사', '2026. 9. 1.', '익산시장'], '공고문.hwp', '2026-10-16');
+  assert.equal(b.name, '2026년 사업장폐기물 위탁처리 용역'); assert.equal(b.org, '익산시'); assert.equal(b.price, 45000000); assert.equal(b.rate, '87.745'); assert.equal(b.uploaded, true);
+  assert.equal(N.uploadedBid(['아무 내용'], '서울 폐기물 공고.pdf').name, '서울 폐기물 공고');
+});

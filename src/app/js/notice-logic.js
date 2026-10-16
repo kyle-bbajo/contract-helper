@@ -215,6 +215,27 @@
     // 띄어쓰기는 %20으로(+는 그대로 '+' 글자로 읽는 서버가 있음)
     return `${BID_BASE}/${BID_OPS[kind] || BID_OPS.공사}?serviceKey=${L.keyParam(apiKey)}&${p.toString().replace(/\+/g, '%20')}`;
   }
+  // 직접 올린 공고문(나라장터에서 내려받은 한글·PDF) → 찾은 공고와 같은 모양. 공고명·기관·추정가격·하한율·지역·업종은 본문에서 찾음
+  function uploadedBid(lines, fileName, today) {
+    const L0 = (lines || []).map((x) => String(x || '').trim()).filter(Boolean);
+    const strip = (x) => x.replace(/^[\s\d.()가-하]{0,4}[.)]\s*/, '').trim();
+    const nameLine = L0.find((x) => /^(공\s*사\s*명|용\s*역\s*명|사\s*업\s*명|건\s*명|입찰\s*건명|계약\s*건명)\s*[:：]/.test(strip(x)));
+    let name = nameLine ? strip(nameLine).replace(/^[^:：]+[:：]\s*/, '').trim() : '';
+    if (!name) name = (L0.slice(0, 15).find((x) => /(공사|용역|구매|제조)/.test(x) && x.length <= 60 && !/공고\s*제/.test(x)) || '').replace(/\s*(입찰|견적)?\s*공고$/, '').trim();
+    if (!name) name = String(fileName || '공고문').replace(/\.[^.]+$/, '');
+    // 기관: 끝쪽 서명(익산시장, ○○공사 사장) 또는 "○○ 공고 제2026-12호"
+    let org = '';
+    for (const x of L0.slice(-20).reverse()) { const m = x.match(/^([가-힣]+(?:특별시|광역시|도|시|군|구|공사|공단|교육청|청|원|센터|재단))\s*(?:장|사장|이사장|교육감|청장|원장)?\s*$/); if (m && m[1].length >= 2) { org = m[1]; break; } }
+    if (!org) { const h = L0.slice(0, 10).map((x) => x.match(/([가-힣]+(?:시|군|구|공사|공단|교육청))\s*(?:공고|고시)\s*제/)).find(Boolean); if (h) org = h[1]; }
+    const all = L0.join('\n');
+    const price = money((all.match(/추정\s*가격[^\d\n]{0,20}([\d,]{5,})\s*원/) || [])[1] || (all.match(/(?:기초\s*금액|예정\s*가격|추정\s*금액)[^\d\n]{0,20}([\d,]{5,})\s*원/) || [])[1] || 0);
+    const rate = (all.match(/낙찰\s*하한율[^\d\n]{0,20}(\d{2}\.\d{1,3})\s*%/) || all.match(/(\d{2}\.\d{3})\s*%/) || [])[1] || '';
+    const d = today || new Date().toISOString().slice(0, 10);
+    return { no: 'UP' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ord: '000', name, org, demand: '', date: d, begin: '', close: '', open: '',
+      price, rate, method: (all.match(/(적격심사|최저가|협상에 의한 계약|2단계)/) || [])[1] || '', contract: (all.match(/(제한경쟁|일반경쟁|지명경쟁|수의계약)/) || [])[1] || '',
+      bidMethod: '', joint: '', regionDuty: /지역의무\s*공동도급/.test(all), briefing: false, site: '', mainWork: '', url: '', files: [],
+      regions: null, licenses: null, clauses: null, uploaded: true, fileName: fileName || '' };
+  }
   // 공고명 검색어: 나라장터는 띄어쓰기까지 그대로 찾으므로 "사업장 폐기물"·"사업장폐기물" 둘 다, 그래도 없으면 낱말 하나로 찾아 나머지 낱말로 거름
   const squash = (x) => String(x || '').replace(/[\s·ㆍ.,()\[\]]+/g, '');
   function nameQueries(s) {
@@ -1166,7 +1187,7 @@
   }
 
   const api = { SECTION_LABEL, leafParagraphs, spliceRuns, fillNoticeXml, fillNoticeHwpx, noticeKind, WORK_TYPES, workType, subWorks, worksOf, separateIn, licensePhrase, licenseSentence, splitList, jointBody, FIELDS, SECTIONS, labelOf, money, won, blank, applyRules,
-    BID_OPS, bidSearchUrl, nameQueries, nameHas, bidDetailUrl, slotify, learnSentences, learnedSections, aiPrompt, parseAi, AI_SYSTEM, STATUS, STATUS_ORDER, statusOf, parseBidNo, bidByNoUrl, normalizeBid, attachmentsOf, extractClauses, regionLabel, learn, mapMethod, mapContract,
+    BID_OPS, bidSearchUrl, nameQueries, nameHas, uploadedBid, bidDetailUrl, slotify, learnSentences, learnedSections, aiPrompt, parseAi, AI_SYSTEM, STATUS, STATUS_ORDER, statusOf, parseBidNo, bidByNoUrl, normalizeBid, attachmentsOf, extractClauses, regionLabel, learn, mapMethod, mapContract,
     localize, ourContacts, licenseExamples, isLicLine, licClause, TOPICS, topicVariants, topicPlace, applyPicks, pickOf, draft, draftFull, parseNotice, learnDocument, mergeWrapped, secKey, regionSentence, templateValues, fillHwpxXml, fillHwpx, zipStore, crc32, placeholdersIn, fmtDT };
   root.JH = root.JH || {};
   root.JH.notice = Object.assign(root.JH.notice || {}, { logic: api });

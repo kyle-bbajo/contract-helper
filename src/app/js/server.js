@@ -41,6 +41,7 @@
     hwp2pdf: (path) => call('POST', '/api/hwp2pdf', { path }),
     // 설치된 한글로 .hwp → .hwpx(공고문 양식을 그대로 채우려고)
     hwpConvert: (path, fmt) => call('POST', '/api/hwpconvert', { path, fmt }),
+    hwpSec: (apply) => call('GET', '/api/hwpsec', apply ? { apply: '1' } : {}),
     // AI(Claude) 중계 — 키는 이 PC 설정에만 있고, 연결 창구가 api.anthropic.com으로만 보냄
     ai: (body) => call('POST', '/api/ai', null, JSON.stringify(body)),
     // PC 안 AI(Ollama) 설치 상태·다시 설치 — AI 호출은 화면이 127.0.0.1:11434로 바로 함(JH.ai)

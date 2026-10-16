@@ -134,6 +134,14 @@
       const ordC = (c) => Math.max(c.ord == null ? -1 : c.ord, ...(c.nums || []).map((x) => L.ordOf(x) == null ? -1 : L.ordOf(x)));
       cs.sort((a, b) => docsOf(b.key).length - docsOf(a.key).length || ordC(b) - ordC(a));
       const keepC = cs[0], newest = [...cs].sort((a, b) => ordC(b) - ordC(a))[0];
+      const ords = {};
+      for (const c of cs) {
+        Object.assign(ords, c.ords || {});
+        const o = ordC(c); if (o < 0) continue;
+        const no = (c.nums || []).find((x) => L.ordOf(x) === o) || c.no || '';
+        ords[o] = ords[o] || L.ordSnap({ ...c, ord: o, no });
+      }
+      keepC.ords = ords;
       for (const o of cs.slice(1)) {
         db.docs.forEach((d) => { if (d.key === o.key) d.key = keepC.key; });
         keepC.nums = [...new Set([...(keepC.nums || []), ...(o.nums || [])])];
@@ -161,6 +169,7 @@
       for (const k of ['type', 'name', 'vendor', 'no', 'amount', 'contractDate', 'startDate', 'endDate', 'period', 'officer', 'dept', 'org', 'url', 'method', 'law', 'lawDtl', 'rep', 'bizno', 'ntceNo', 'untyNo', 'chgDt', 'corpRaw']) {
         if (!keep[k] && n[k] && (!older || !ex[k])) ex[k] = n[k];
       }
+      if (n.ord != null) ex.ords = { ...(ex.ords || {}), [n.ord]: L.ordSnap(n) };
       if (n.ord != null && (ex.ord == null || n.ord > ex.ord)) ex.ord = n.ord;
       if (n.budgetAuto) { ex.budgetAuto = n.budgetAuto; ex.budgetWhy = n.budgetWhy || ''; }
       ex.nums = [...new Set([...(ex.nums || []), ...(n.nums || [])])];
@@ -171,6 +180,7 @@
     let key = n.key || L.contractKey(n);
     while (db.contracts[key]) key += '_';
     const c = { originals: {}, paidDate: '', payMemo: '', archived: false, edited: {}, ...n, key, updatedAt: Date.now() };
+    if (n.ord != null) c.ords = { [n.ord]: L.ordSnap(n) };
     db.contracts[key] = c;
     return { c, created: true };
   }
@@ -382,7 +392,7 @@
   // ---------- 나라장터 계약 목록 ----------
   // full이 아니면 지난번에 불러온 달부터만(여럿이 인증키 하나를 같이 쓰므로 조회 횟수를 아낌)
   // 나라장터에서 받아 두는 항목이 늘면 올림 → 한 번은 기간 전체를 다시 받아 예전에 불러온 계약도 새 항목(계약방법·대표자·사업자번호·통합계약번호 등)을 채움
-  const FETCH_VER = 3; // 3: 업체목록을 화면 순서로도 읽음(업체명·대표자)
+  const FETCH_VER = 4; // 3: 업체목록을 화면 순서로도 읽음(업체명·대표자) · 4: 차수(-00, -01)별 금액·준공일 기억
   async function fetchContracts(full) {
     if (!cfg.apiKey || !cfg.insttNm) { toast('설정에서 인증키와 기관명을 먼저 넣어 주세요.', 'err'); JH.settings.open('nara'); return; }
     const stale = contracts().some((c) => c.source === 'api' && !c.untyNo && !c.method && !c.corpRaw);
@@ -896,7 +906,7 @@
   }
   // 나라장터 변경이력: 차수마다 설계변경·기간연장을 고름(기본값은 앞 차수와 비교한 자동 판단)
   function chgTable(c, m) {
-    const rows = (c.g2b && c.g2b.chgRows) || [];
+    const ch = L.changesOf(c), rows = ch ? ch.rows : [];
     if (!rows.length) return '';
     const picked = m.chgKind || {}, K = L.CHG_KINDS;
     const ordLabel = (r) => (r.first ? '원계약' : `${r.ord}차 변경`);
@@ -912,7 +922,7 @@
       }
       return `<tr${picked[r.no] === 'none' || (!picked[r.no] && r.auto === 'none') ? ' class="off"' : ''}><td>${esc(ordLabel(r))}<br><small class="muted">${esc(r.no)}</small></td><td>${esc(L.fmtDate(r.date))}</td><td class="num">${amt}</td><td>${end}</td><td>${sel}</td></tr>`;
     }).join('');
-    return `<div class="chgtbl"><div class="agroup">나라장터 변경이력 <small class="muted">차수마다 구분을 고르면 서식의 설계변경·공사기간 연장 칸에 들어갑니다. 해당 없음은 빠집니다</small></div>
+    return `<div class="chgtbl"><div class="agroup">${ch.src === '나라장터 계약 차수' ? '나라장터 계약 차수(-00, -01 …)' : '나라장터 변경이력'}${c.url ? ` <a class="link sm" href="${esc(c.url)}" target="_blank" rel="noopener">나라장터에서 보기</a>` : ''} <small class="muted">차수마다 구분을 고르면 서식의 설계변경·공사기간 연장 칸에 들어갑니다. 해당 없음은 빠집니다</small></div>
       <div class="tblwrap"><table><thead><tr><th>차수</th><th>변경일</th><th>계약금액(증감)</th><th>준공일</th><th>구분</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
   }
   function auditCard(c) {
@@ -1403,7 +1413,7 @@
   document.addEventListener('change', (e) => {
     const t = e.target.closest && e.target.closest('[data-chgkind]'); if (!t) return;
     const c = ui.sel && db.contracts[ui.sel]; if (!c) return;
-    const row = ((c.g2b && c.g2b.chgRows) || []).find((r) => r.no === t.dataset.chgkind);
+    const row = ((L.changesOf(c) || {}).rows || []).find((r) => r.no === t.dataset.chgkind);
     const ck = { ...((c.memo || {}).chgKind || {}) };
     if (!t.value || (row && t.value === row.auto)) delete ck[t.dataset.chgkind]; else ck[t.dataset.chgkind] = t.value;
     c.memo = { ...(c.memo || {}), chgKind: ck }; c.memoAt = new Date().toISOString();

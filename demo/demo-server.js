@@ -71,7 +71,7 @@
     }
     if (u.includes('BidPublicInfoService')) {
       const kw = (u.match(/bidNtceNm=([^&]+)/) || [])[1];
-      return api(kw ? BIDS.filter((b) => b.bidNtceNm.includes(kw.replace(/\+/g, ' '))) : BIDS);
+      return api(kw ? BIDS.filter((b) => b.bidNtceNm.includes(decodeURIComponent(kw.replace(/\+/g, ' ')))) : BIDS);
     }
     return api(u.includes('Cnstwk') ? 공사 : u.includes('Thng') ? 물품 : 용역);
   }
@@ -191,6 +191,7 @@
       return root.JH.notice.logic.zipStore([{ name: 'mimetype', data: enc.encode('application/hwp+zip') }, { name: 'Contents/section0.xml', data: enc.encode(sec) }]);
     },
     async hwpConvert() { throw new Error('시연판에는 한글 프로그램이 없습니다. 실제 프로그램은 설치된 한글로 .hwp를 바꿉니다. 시연판에서는 .hwpx를 올려 보세요'); },
+    async hwpSec() { return { ok: true, state: 'nodll', dll: '', folder: '한글보안모듈' }; },
     async hwp2pdf() { throw new Error('시연판에서는 한글→PDF 변환을 하지 않습니다. 실제 프로그램은 설치된 한글로 자동 변환합니다.'); },
     async open() { throw new Error('시연판에서는 폴더를 열 수 없습니다. 실제 프로그램은 탐색기로 엽니다.'); },
     async openFile(path) { await showFile(norm(path)); return { ok: true }; },

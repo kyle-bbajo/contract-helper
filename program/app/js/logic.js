@@ -315,6 +315,15 @@
     if (!out.chgRows[0].first && out.chgRows[0].ord > 0) { out.origAmount = 0; out.origEnd = ''; }
     return out;
   }
+  // 차수별 계약(같은 계약번호의 -00, -01 …)에서 본 값 → 변경이력과 같은 모양. 변경이력 응답이 비어도 차수 표를 만듦
+  const ordSnap = (n) => ({ no: n.no || '', amount: n.amount || 0, end: n.endDate || '', date: (n.ord > 0 ? n.chgDt || n.contractDate : n.contractDate) || '' });
+  function changesOf(c) {
+    const g = (c && c.g2b) || {}, ords = Object.values((c && c.ords) || {});
+    const fromOrds = ords.length > 1 ? summarizeChanges(ords.map((o) => ({ dcsnCntrctNo: o.no, totCntrctAmt: o.amount, ttalCcmpltDate: o.end, cntrctDate: o.date }))) : null;
+    if (g.chgRows && g.chgRows.length && (!fromOrds || g.chgRows.length >= fromOrds.chgRows.length)) return { rows: g.chgRows, origAmount: g.origAmount, origEnd: g.origEnd, src: '나라장터 변경이력' };
+    if (fromOrds) return { rows: fromOrds.chgRows, origAmount: fromOrds.origAmount, origEnd: fromOrds.origEnd, src: '나라장터 계약 차수' };
+    return null;
+  }
   // 앞 차수와 비교한 기본값: 금액 바뀜 → 설계변경, 준공일 바뀜 → 기간연장, 둘 다 → both, 그대로 → none
   function autoKind(r) {
     const amt = !!(r.amount && r.prevAmount && r.amount !== r.prevAmount), end = !!(r.end && r.prevEnd && r.end !== r.prevEnd);
@@ -672,7 +681,7 @@
     norm, uid, stem, extOf, kindOf, defaultChecklists, STAGES, ORIGINAL_SOURCES,
     classifyItem, guessType, findMeta, vendorCore, baseNo, contractScore, matchContract, contractKey,
     API_BASE, API_OPS, TYPES, apiUrl, keyParam, monthRanges, parseApiText, parseApiBody, parseCorpList, parseCorpRows, normalizeApiItem, detectExtFinance,
-    G2B, g2bUrl, scanAuditFields, summarizeChanges, chgPlan, autoKind, CHG_KINDS, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
+    G2B, g2bUrl, scanAuditFields, summarizeChanges, chgPlan, autoKind, CHG_KINDS, changesOf, ordSnap, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
     ordOf, itemsInName, isRecentItem, issuedTooEarly, matchCandidates, checklistStatus, holds, hasItem, classifyPages, classifyTitleLines, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail,
   };
   root.JH = root.JH || {};

@@ -160,8 +160,22 @@
     try { await JH.notice.uploadSlot(slotKind, f); } catch (err) { JH.app.toast('양식을 올리지 못했습니다: ' + err.message, 'err'); }
     renderSlots();
   };
+  // 한글 보안모듈(접근 허용 창 끄기)
+  const HWPSEC = { on: ['ok-t', '등록됨 — 한글이 더는 "접근 허용"을 묻지 않습니다'], ready: ['ok-t', '파일을 찾았습니다 — 다음에 한글 파일을 만들 때 자동으로 등록됩니다([다시 확인]을 누르면 지금 등록)'],
+    nodll: ['warn-t', '보안모듈 파일이 아직 없습니다 — 위 순서대로 넣어 주세요'], fail: ['warn-t', '등록하지 못했습니다 — 한글을 모두 닫고 [다시 확인]을 눌러 보세요. 계속 안 되면 한글 설치 폴더의 Hwp.exe를 한 번 실행한 뒤 다시 확인'] };
+  async function renderHwpSec(apply) {
+    const el = $('#hwpSec'); if (!el) return;
+    if (!S.online) { el.innerHTML = '<span class="muted">바탕화면 아이콘으로 실행하면 확인할 수 있습니다.</span>'; return; }
+    try {
+      const r = await S.hwpSec(apply);
+      const [cls, t] = HWPSEC[r.state] || ['muted', r.state];
+      el.innerHTML = `<span class="${cls}">${esc(t)}</span>${r.dll ? ` <span class="muted small">(${esc(r.dll)})</span>` : ''}`;
+    } catch (e) { el.innerHTML = `<span class="warn-t">${esc(e.message)}</span>`; }
+  }
+  $('#btnHwpSecDir').onclick = () => S.open('한글보안모듈').catch((e) => JH.app.toast(e.message, 'err'));
+  $('#btnHwpSecCheck').onclick = () => renderHwpSec(true);
   async function renderTpls() {
-    renderSlots();
+    renderSlots(); renderHwpSec(false);
     const ts = S.online ? await JH.notice.templates() : [];
     $('#tplFiles').innerHTML = ts.length ? ts.map((t) => `<div class="tpl-row"><span>${esc(t.path.split('/').pop())}</span><button type="button" class="link sm" data-tplopen="${esc(t.path)}">한글로 열기</button><button type="button" class="x" data-tpldel="${esc(t.path)}" aria-label="양식 빼기">✕</button></div>`).join('')
       : '<p class="muted">올린 양식이 없습니다.</p>';

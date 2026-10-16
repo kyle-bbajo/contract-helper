@@ -58,13 +58,16 @@
     const ranges = L.monthRanges(months);
     let bids = [];
     try {
+      const log = []; // 찾아 본 검색어마다 받은 건수(못 찾을 때 보여 줌, 진단 파일에도 남김)
       const fetchAll = async (q, k = kind, rs = ranges, pages = 3) => {
-        const got = [];
+        const got = []; const ent = { 구분: k, 검색어: q.bidNtceNm || '', 업종: q.indstrytyNm || '', 기관: q.ntceInsttNm || '전국', 금액: q.priceMin ? `${Math.round(q.priceMin)}~${Math.round(q.priceMax)}` : '', 건수: 0, 오류: '' }; log.push(ent);
         for (let i = 0; i < rs.length; i++) {
           app().progress(`비슷한 공고 찾는 중 (${rs[i][0].slice(0, 4)}.${rs[i][0].slice(4, 6)})`, i / rs.length * 0.6);
           for (let page = 1; page <= pages; page++) {
-            const r = L.parseApiBody(await S.nara(N.bidSearchUrl(k, q, rs[i][0], rs[i][1], page, 100, cfg.apiKey)));
-            got.push(...r.items.map(N.normalizeBid));
+            let r;
+            try { r = L.parseApiBody(await S.nara(N.bidSearchUrl(k, q, rs[i][0], rs[i][1], page, 100, cfg.apiKey))); }
+            catch (e) { ent.오류 = e.message; throw e; }
+            got.push(...r.items.map(N.normalizeBid)); ent.건수 += r.items.length;
             if (page * 100 >= r.total || !r.items.length) break;
           }
         }
@@ -74,7 +77,7 @@
       const byName = async (q, k = kind, rs = ranges) => {
         const nq = N.nameQueries(q.bidNtceNm); let got = [];
         for (const e of nq.exact) got.push(...await fetchAll({ ...q, bidNtceNm: e }, k, rs));
-        if (!got.length && nq.word) got = (await fetchAll({ ...q, bidNtceNm: nq.word }, k, rs, 5)).filter((b) => N.nameHas(b.name, q.bidNtceNm));
+        if (!got.length && nq.word) { got = (await fetchAll({ ...q, bidNtceNm: nq.word }, k, rs, 5)).filter((b) => N.nameHas(b.name, q.bidNtceNm)); log[log.length - 1].거른뒤 = got.length; }
         return got;
       };
       for (const q of tries) {
@@ -111,11 +114,17 @@
         app().progress(`첨부 공고문 읽는 중 ${i + 1}/${withFiles.length}`, i / withFiles.length);
         if (await readDoc(withFiles[i])) read++;
       }
-      n.learned = { at: new Date().toISOString(), scope, org: scope === 'org' ? org : '', months, keyword: keyword0 || '', total: bids.length, summary: N.learn(bids), bids, read };
+      S.writeJson('진단/공고검색.json', { at: new Date().toISOString(), 범위: scope, 기간개월: months, 찾아본것: log }).catch(() => {});
+      const mine0 = ((n.learned && n.learned.bids) || []).filter((b) => b.uploaded); // 직접 올린 공고문은 다시 찾아도 남김
+      bids = [...mine0, ...bids];
+      n.learned = { at: new Date().toISOString(), scope, org: scope === 'org' ? org : '', months, keyword: keyword0 || '', total: bids.length, summary: N.learn(bids), bids, read: read + mine0.length };
       n.updatedAt = Date.now(); save(true);
-      if (bids.length) app().toast(`비슷한 공고 ${bids.length}건에서 조건을 모았습니다.` + (withFiles.length ? ` 첨부 공고문 ${read}/${withFiles.length}건을 읽었습니다.` : '') + ' [찾은 공고]에서 참고할 공고만 고를 수 있습니다.', 'ok');
+      if (bids.length > mine0.length) app().toast(`비슷한 공고 ${bids.length - mine0.length}건에서 조건을 모았습니다.` + (withFiles.length ? ` 첨부 공고문 ${read}/${withFiles.length}건을 읽었습니다.` : '') + ' [찾은 공고]에서 참고할 공고만 고를 수 있습니다.', 'ok');
       else if (scope !== 'all') app().toast(`${org}의 비슷한 공고가 없습니다. 다른 기관(전국) 공고에서 찾아 볼까요?`, '', { label: '전국에서 찾기', run: () => learnSimilar('all', months, keyword0) });
-      else app().toast('비슷한 공고를 찾지 못했습니다. 기간을 1년으로 넓히거나 공고명 검색어(예: 폐기물)를 넣어 보세요.');
+      else {
+        const tried = log.filter((x) => x.검색어 || x.업종).map((x) => `'${x.검색어 || x.업종}' ${x.거른뒤 != null ? `${x.건수}건 중 ${x.거른뒤}건` : `${x.건수}건`}`).join(', ');
+        app().toast(`나라장터 ${kind} 공고에서 찾지 못했습니다${tried ? ` (찾아 본 것: ${tried})` : ''}. 나라장터에서 공고문을 내려받아 [공고문 파일 올리기]로 올리면 그 공고문으로 배웁니다.`, '', { label: '공고문 올리기', run: () => $('#lUpload') && $('#lUpload').click() });
+      }
     } catch (e) { console.error(e); app().toast(e.message, 'err'); }
     finally { app().progress(null); render(); }
   }
@@ -130,6 +139,35 @@
       const saved = await S.save('공고문/참고', `${b.no}_${L.safeName(f.name, 80)}`, bytes);
       b.savedPath = saved.path; b.savedName = f.name; delete b.fileError; return true;
     } catch (e) { console.warn('첨부 읽기 실패', b.no, e); b.fileError = e.message; return false; }
+  }
+  // 나라장터에서 못 찾을 때: 내려받은 공고문(한글·PDF)을 직접 올려 같은 방식으로 배움(원본은 데이터 폴더 공고문/참고에 보관)
+  async function uploadNotices(files) {
+    const n = cur(); if (!n || !files.length) return;
+    let ok = 0; const bad = [];
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        app().progress(`올린 공고문 읽는 중 ${i + 1}/${files.length}`, i / files.length);
+        if (!/\.(hwpx?|pdf)$/i.test(f.name)) { bad.push(`${f.name}(한글·PDF만)`); continue; }
+        try {
+          const bytes = new Uint8Array(await f.arrayBuffer());
+          const lines = await JH.readers.fullLines(bytes, L.kindOf(f.name));
+          if (!lines.length) throw new Error('글자를 읽지 못함(스캔본이면 한글 파일로 올려 주세요)');
+          const b = N.uploadedBid(lines, f.name);
+          b.clauses = N.extractClauses(lines); b.doc = N.parseNotice(lines);
+          if (S.online) { try { const sv = await S.save('공고문/참고', `올림_${L.safeName(f.name, 80)}`, bytes); b.savedPath = sv.path; b.savedName = f.name; } catch (_) { /* 보관 못 해도 읽은 내용은 씀 */ } }
+          n.learned = n.learned || { at: new Date().toISOString(), scope: 'upload', org: '', months: 0, keyword: '', total: 0, summary: null, bids: [], read: 0 };
+          n.learned.bids.unshift(b); ok++;
+        } catch (e) { bad.push(`${f.name}(${e.message})`); }
+      }
+    } finally { app().progress(null); }
+    if (n.learned) {
+      n.learned.total = n.learned.bids.length; n.learned.read = n.learned.bids.filter(isRead).length;
+      n.learned.summary = N.learn(used(n.learned)); n.updatedAt = Date.now(); save(true);
+    }
+    render();
+    if (ok) app().toast(`공고문 ${ok}건을 읽었습니다. 아래 [실제 공고문]과 문장 초안·공고마다 다른 문장에 반영했습니다.` + (bad.length ? ` 못 읽음: ${bad.join(', ')}` : ''), 'ok');
+    else app().toast('공고문을 읽지 못했습니다: ' + bad.join(', '), 'err');
   }
   // 찾은 공고 중 참고할 것만 고름(빼면 추천·배운 문장·업종 문장에서 빠짐)
   const openBids = new Set(); // 찾은 공고 목록을 펼쳐 둔 공고문(고르는 중엔 계속 펼침)
@@ -509,26 +547,27 @@
       </div>
       <section class="learn">
         <div class="learn-head"><h3>비슷한 공고에서 배우기</h3>
-          <span class="muted">${s ? `${esc(s.scope === 'mine' ? app().cfg.insttNm : s.scope === 'org' ? s.org : '전국(모든 기관)')} · 최근 ${s.months}개월 · ${s.total}건${used(s).length < s.bids.length ? ` 중 ${used(s).length}건 참고` : ''} · ${esc(L.fmtDate(s.at.slice(0, 10)))}` : '같은 업종·비슷한 금액의 나라장터 공고를 모아 조건별로 가장 많이 쓴 값을 추천합니다.'}</span>
+          <span class="muted">${s ? `${s.scope === 'upload' ? `직접 올린 공고문 ${s.total}건` : `${esc(s.scope === 'mine' ? app().cfg.insttNm : s.scope === 'org' ? s.org : '전국(모든 기관)')} · 최근 ${s.months}개월 · ${s.total}건`}${used(s).length < s.bids.length ? ` 중 ${used(s).length}건 참고` : ''} · ${esc(L.fmtDate(s.at.slice(0, 10)))}` : '같은 업종·비슷한 금액의 나라장터 공고를 모아 조건별로 가장 많이 쓴 값을 추천합니다.'}</span>
           <div class="learn-ctl">
             <input type="search" id="lKeyword" placeholder="공고명 검색어(선택), 예: 신갈오거리" value="${esc(s && s.keyword || '')}" aria-label="공고명 검색어">
             <select id="lScope" aria-label="범위"><option value="mine"${s && s.scope === 'mine' ? ' selected' : ''}>우리 기관</option><option value="all"${s && s.scope === 'all' ? ' selected' : ''}>전국(모든 기관)</option><option value="org"${s && s.scope === 'org' ? ' selected' : ''}>기관 지정</option></select>
             <input type="search" id="lOrg" placeholder="기관 이름, 예: 성남도시개발공사" value="${esc(s && s.org || '')}" aria-label="기관 이름"${s && s.scope === 'org' ? '' : ' hidden'}>
             <select id="lMonths" aria-label="기간"><option value="6"${s && s.months === 6 ? ' selected' : ''}>최근 6개월</option><option value="12"${s && s.months === 12 ? ' selected' : ''}>최근 1년</option></select>
             <button class="btn" data-nact="learn">${s ? '다시 찾기' : '찾기'}</button>
+            <label class="btn ghost" title="나라장터에서 내려받은 공고문(한글·PDF)을 올리면 그 공고문으로 배웁니다. 여러 개 한 번에 올려도 됩니다">공고문 파일 올리기<input type="file" id="lUpload" accept=".hwp,.hwpx,.pdf" multiple hidden></label>
           </div></div>
         ${s && s.bids.length ? `<details class="bids"${openBids.has(n.id) ? ' open' : ''} data-bidsbox><summary>찾은 공고 ${s.bids.length}건 — 참고할 공고 고르기 <span class="muted">(${used(s).length}건 고름 · 공고문 ${s.bids.filter(isRead).length}건 읽음)</span></summary>
           <div class="bids-ctl"><span class="muted small">체크를 빼면 추천·배운 문장·업종 문장에서 빠집니다. 다른 기관 공고도 골라 참고하세요.</span>
             <button type="button" class="link sm" data-nact="useall">모두 고르기</button><button type="button" class="link sm" data-nact="usenone">모두 빼기</button><button type="button" class="link sm" data-nact="usefile">공고문 있는 것만</button>
             ${used(s).some((b) => !isRead(b) && hasFile(b)) ? `<button type="button" class="btn sm primary" data-nact="readpicked">고른 공고의 공고문 읽기 (${Math.min(10, used(s).filter((b) => !isRead(b) && hasFile(b)).length)}건)</button>` : ''}</div>
           <div class="tbl-wrap"><table class="grid"><thead><tr><th class="c">참고</th><th>공고</th><th class="r">추정가격</th><th>지역</th><th class="r">하한율</th><th>낙찰방법</th><th>공고문</th></tr></thead><tbody>
-          ${s.bids.map((b, i) => `<tr class="${b.use === false ? 'off' : ''}"><td class="c"><input type="checkbox" data-buse="${i}"${b.use === false ? '' : ' checked'} aria-label="${esc(b.name)} 참고"></td><td><div class="nm">${b.url ? `<a href="${esc(b.url)}" target="_blank" rel="noopener">${esc(b.name)}</a>` : esc(b.name)}</div><div class="sub">${esc(b.org)} · ${esc(b.date.slice(0, 10))}</div></td>
-            <td class="r num">${esc(N.won(b.price))}</td><td>${esc(b.regions ? N.regionLabel(b.regions) : '-')}</td><td class="r num">${esc(b.rate ? b.rate + '%' : '-')}</td><td>${esc(b.method)}</td>
+          ${s.bids.map((b, i) => `<tr class="${b.use === false ? 'off' : ''}"><td class="c"><input type="checkbox" data-buse="${i}"${b.use === false ? '' : ' checked'} aria-label="${esc(b.name)} 참고"></td><td><div class="nm">${b.url ? `<a href="${esc(b.url)}" target="_blank" rel="noopener">${esc(b.name)}</a>` : esc(b.name)}</div><div class="sub">${b.uploaded ? '<span class="tag">올림</span> ' : ''}${esc(b.org || (b.uploaded ? '기관 모름' : ''))} · ${esc(b.date.slice(0, 10))}</div></td>
+            <td class="r num">${b.price ? esc(N.won(b.price)) : '-'}</td><td>${esc(b.regions ? N.regionLabel(b.regions) : '-')}</td><td class="r num">${esc(b.rate ? b.rate + '%' : '-')}</td><td>${esc(b.method)}</td>
             <td>${isRead(b) ? '<span class="ok-t small">읽음</span>' : b.fileError ? '<span class="warn-t small" title="' + esc(b.fileError) + '">못 읽음</span>' : hasFile(b) ? '<span class="muted small">첨부 있음</span>' : '<span class="muted small">-</span>'}</td></tr>`).join('')}
           </tbody></table></div></details>` : ''}
         ${s && refBids(s).length ? `<details class="bids"${refBids(s).some((b) => b.doc) ? '' : ' open'}><summary>실제 공고문 (${refBids(s).length}건) — 전체 초안의 바탕</summary>
           ${refBids(s).map((b, bi) => `<details class="ref"${bi === 0 ? ' open' : ''}>
-            <summary class="ref-head"><b>${esc(b.name)}</b><span class="muted">${esc(b.org)}${b.doc ? ` · ${b.doc.sections.length}개 절` : ''}</span>${b.savedPath ? `<button type="button" class="link sm" data-nact="openref" data-path="${esc(b.savedPath)}">원문 열기</button>` : ''}</summary>
+            <summary class="ref-head"><b>${esc(b.name)}</b><span class="muted">${esc(b.org || (b.uploaded ? '직접 올린 공고문' : ''))}${b.doc ? ` · ${b.doc.sections.length}개 절` : ''}</span>${b.savedPath ? `<button type="button" class="link sm" data-nact="openref" data-path="${esc(b.savedPath)}">원문 열기</button>` : ''}</summary>
             ${b.doc && b.doc.sections.length ? b.doc.sections.map((c, ci) => `<div class="dsec"><div class="dsec-head"><b>${c.no}. ${esc(c.head)}</b><button type="button" class="link sm" data-docsec="${bi}:${ci}">복사</button></div><pre>${esc(c.lines.join('\n'))}</pre></div>`).join('')
               : (b.clauses || []).map((c, ci) => `<div class="dsec"><div class="dsec-head"><b>${esc(c.title)}</b><button type="button" class="link sm" data-clause="${bi}:${ci}">복사</button></div><pre>${esc(c.text)}</pre></div>`).join('')}
           </details>`).join('')}</details>` : ''}
@@ -636,6 +675,8 @@
     if (f && f.type === 'money' && t.value) { const w = N.won(N.money(t.value)); if (w !== t.value) { t.value = w; setVal(f.key, w, true); refreshLive(); } }
   }
   const view = () => $('#view-notice');
+  // 찾은 공고 목록을 직접 접으면 다시 그려도 접힌 채로
+  view().addEventListener('toggle', (e) => { const d = e.target; if (!d.matches || !d.matches('[data-bidsbox]')) return; const n = cur(); if (!n) return; if (d.open) openBids.add(n.id); else openBids.delete(n.id); }, true);
   view().addEventListener('toggle', (e) => { const d = e.target; if (!d.matches || !d.matches('[data-msub]')) return; const n = cur(); if (!n) return; if (d.open) openSubs.add(n.id); else openSubs.delete(n.id); }, true);
   view().addEventListener('click', onClick);
   view().addEventListener('input', onInput);
@@ -647,6 +688,7 @@
       render(); const ta = $(`[data-picktext="${pk.dataset.pick}"]`); if (ta) ta.focus(); return; }
     const bu = e.target.closest('[data-buse]');
     if (bu) { const n = cur(); if (!n || !n.learned) return; openBids.add(n.id); const i = +bu.dataset.buse; setUse(n, (b, j) => (j === i ? bu.checked : null)); return; }
+    if (e.target.id === 'lUpload') { const fs = [...e.target.files]; e.target.value = ''; uploadNotices(fs); return; }
     if (e.target.id === 'lScope') { const o = $('#lOrg'); if (o) { o.hidden = e.target.value !== 'org'; if (!o.hidden) o.focus(); } return; }
     const t = e.target.closest('[data-mkey]'); if (!t) return;
     const n = cur(); if (!n) return;

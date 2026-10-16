@@ -10,7 +10,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '1.3.0'
+$Version = '1.4.0'
 $AppRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $WebRoot = Join-Path $AppRoot 'app'
 $LocalCfg = Join-Path $AppRoot 'local.json'
@@ -243,12 +243,36 @@ $script:Hwp = $null
 function Convert-HwpToPdf([string]$src, [string]$dst) {
   Convert-Hwp $src $dst 'PDF'
 }
+# 한글 보안 승인 창('접근 허용·모두 허용') 안 뜨게: 한컴 보안모듈(FilePathCheckerModuleExample.dll)을
+# 데이터 폴더\한글보안모듈(또는 프로그램 폴더)에 넣어 두면 레지스트리(HKCU\Software\HNC\HwpAutomation\Modules)에 등록하고 RegisterModule
+$script:HwpSec = ''   # on 등록됨 · nodll 파일 없음 · fail 등록 실패
+function Get-HwpSecDir { return (Join-Path $script:DataDir '한글보안모듈') }
+function Find-HwpSecDll {
+  foreach ($d in @((Get-HwpSecDir), $AppRoot, (Join-Path $AppRoot 'hwp'))) {
+    if (-not (Test-Path -LiteralPath $d)) { continue }
+    $f = Get-ChildItem -LiteralPath $d -Recurse -Depth 2 -Filter 'FilePathChecker*.dll' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($f) { return $f.FullName }
+  }
+  return $null
+}
+function Enable-HwpSec($h) {
+  $dll = Find-HwpSecDll
+  if (-not $dll) { $script:HwpSec = 'nodll'; return }
+  try {
+    $k = 'HKCU:\Software\HNC\HwpAutomation\Modules'
+    if (-not (Test-Path -LiteralPath $k)) { New-Item -Path $k -Force | Out-Null }
+    Set-ItemProperty -LiteralPath $k -Name 'FilePathCheckerModule' -Value $dll
+    $r = $false
+    if ($h) { $r = $h.RegisterModule('FilePathCheckDLL', 'FilePathCheckerModule') }
+    if ($r) { $script:HwpSec = 'on' } else { $script:HwpSec = 'fail' }
+  } catch { $script:HwpSec = 'fail' }
+}
 function Get-Hwp {
   if (-not $script:Hwp) {
     try { $script:Hwp = New-Object -ComObject 'HWPFrame.HwpObject' } catch { throw '이 PC에서 한글 프로그램을 찾지 못했습니다.' }
-    try { $null = $script:Hwp.RegisterModule('FilePathCheckDLL', 'FilePathCheckerModule') } catch {}
+    Enable-HwpSec $script:Hwp
     try { $script:Hwp.XHwpWindows.Item(0).Visible = $false } catch {}
-  }
+  } elseif ($script:HwpSec -ne 'on') { Enable-HwpSec $script:Hwp }  # 켜 둔 사이 파일을 넣었으면 다시 켜지 않아도 바로 등록
   return $script:Hwp
 }
 function Convert-Hwp([string]$src, [string]$dst, [string]$fmt) {
@@ -450,6 +474,17 @@ function Handle($stream, $req) {
       try { Convert-HwpToPdf $src $dst; Send-Json $stream 200 @{ ok = $true; path = (Get-RelPath $dst) } }
       catch { Send-Error $stream 500 $_.Exception.Message }
       return
+    }
+
+    '/api/hwpsec' {
+      # 한글 보안모듈 상태. apply=1이면 지금 등록해 봄(한글을 띄움)
+      $dir = Get-HwpSecDir; if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+      $dll = Find-HwpSecDll
+      if ($dll -and $q['apply'] -eq '1') { try { $null = Get-Hwp; Enable-HwpSec $script:Hwp } catch { $script:HwpSec = 'fail' } }
+      $state = $script:HwpSec
+      if (-not $dll) { $state = 'nodll' } elseif (-not $state -or $state -eq 'nodll') { $state = 'ready' }
+      $dllName = ''; if ($dll) { $dllName = [IO.Path]::GetFileName($dll) }
+      Send-Json $stream 200 @{ ok = $true; state = $state; dll = $dllName; folder = '한글보안모듈' }; return
     }
 
     '/api/hwpconvert' {
