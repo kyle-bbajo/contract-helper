@@ -42,7 +42,7 @@
     ],
     용역: [
       { g: '환경·폐기물', name: '생활폐기물 수집·운반', license: '폐기물수집·운반업(생활폐기물)', law: '폐기물관리법', act: '허가', q: '생활폐기물' },
-      { g: '환경·폐기물', name: '사업장폐기물 수집·운반', license: '폐기물수집·운반업(사업장배출시설계폐기물)', law: '폐기물관리법', act: '허가', q: '폐기물 수집' },
+      { g: '환경·폐기물', name: '사업장폐기물 수집·운반', license: '폐기물수집·운반업(사업장배출시설계폐기물)', law: '폐기물관리법', act: '허가', q: '사업장폐기물' },
       { g: '환경·폐기물', name: '지정폐기물 수집·운반', license: '폐기물수집·운반업(지정폐기물)', law: '폐기물관리법', act: '허가', q: '지정폐기물' },
       { g: '환경·폐기물', name: '폐기물 처리(처분·재활용)', license: '폐기물중간처분업', law: '폐기물관리법', act: '허가', q: '폐기물 처리' },
       { g: '환경·폐기물', name: '건설폐기물 처리', license: '건설폐기물중간처리업', law: '건설폐기물의 재활용촉진에 관한 법률', act: '허가', q: '건설폐기물' },
@@ -212,8 +212,20 @@
     if (q.prtcptLmtRgnNm) p.set('prtcptLmtRgnNm', q.prtcptLmtRgnNm);
     if (q.priceMin) p.set('presmptPrceBgn', String(Math.round(q.priceMin)));
     if (q.priceMax) p.set('presmptPrceEnd', String(Math.round(q.priceMax)));
-    return `${BID_BASE}/${BID_OPS[kind] || BID_OPS.공사}?serviceKey=${L.keyParam(apiKey)}&${p.toString()}`;
+    // 띄어쓰기는 %20으로(+는 그대로 '+' 글자로 읽는 서버가 있음)
+    return `${BID_BASE}/${BID_OPS[kind] || BID_OPS.공사}?serviceKey=${L.keyParam(apiKey)}&${p.toString().replace(/\+/g, '%20')}`;
   }
+  // 공고명 검색어: 나라장터는 띄어쓰기까지 그대로 찾으므로 "사업장 폐기물"·"사업장폐기물" 둘 다, 그래도 없으면 낱말 하나로 찾아 나머지 낱말로 거름
+  const squash = (x) => String(x || '').replace(/[\s·ㆍ.,()\[\]]+/g, '');
+  function nameQueries(s) {
+    const t = String(s || '').replace(/\s+/g, ' ').trim(); if (!t) return { exact: [], word: '' };
+    const exact = [...new Set([t, t.replace(/\s+/g, '')])];
+    // 낱말이 여럿이면 가장 긴 낱말(같으면 뒤쪽 — "사업장 폐기물"이면 폐기물)
+    const words = t.split(/[\s·]+/).filter((w) => w.length >= 2);
+    const word = words.length > 1 ? words.reduce((a, b) => (b.length >= a.length ? b : a)) : '';
+    return { exact, word };
+  }
+  const nameHas = (name, s) => String(s || '').split(/[\s·]+/).filter(Boolean).every((w) => squash(name).includes(squash(w)));
   // 공고문 진행 상태: 작성 중 → 작성 완료(한글 파일 만듦·직접 표시). 나라장터 등록은 사람이 직접 하므로 따로 묶지 않음
   const STATUS = {
     draft: { label: '작성 중', cls: 'late' },
@@ -1154,7 +1166,7 @@
   }
 
   const api = { SECTION_LABEL, leafParagraphs, spliceRuns, fillNoticeXml, fillNoticeHwpx, noticeKind, WORK_TYPES, workType, subWorks, worksOf, separateIn, licensePhrase, licenseSentence, splitList, jointBody, FIELDS, SECTIONS, labelOf, money, won, blank, applyRules,
-    BID_OPS, bidSearchUrl, bidDetailUrl, slotify, learnSentences, learnedSections, aiPrompt, parseAi, AI_SYSTEM, STATUS, STATUS_ORDER, statusOf, parseBidNo, bidByNoUrl, normalizeBid, attachmentsOf, extractClauses, regionLabel, learn, mapMethod, mapContract,
+    BID_OPS, bidSearchUrl, nameQueries, nameHas, bidDetailUrl, slotify, learnSentences, learnedSections, aiPrompt, parseAi, AI_SYSTEM, STATUS, STATUS_ORDER, statusOf, parseBidNo, bidByNoUrl, normalizeBid, attachmentsOf, extractClauses, regionLabel, learn, mapMethod, mapContract,
     localize, ourContacts, licenseExamples, isLicLine, licClause, TOPICS, topicVariants, topicPlace, applyPicks, pickOf, draft, draftFull, parseNotice, learnDocument, mergeWrapped, secKey, regionSentence, templateValues, fillHwpxXml, fillHwpx, zipStore, crc32, placeholdersIn, fmtDT };
   root.JH = root.JH || {};
   root.JH.notice = Object.assign(root.JH.notice || {}, { logic: api });

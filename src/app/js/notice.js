@@ -58,16 +58,37 @@
     const ranges = L.monthRanges(months);
     let bids = [];
     try {
-      for (const q of tries) {
-        for (let i = 0; i < ranges.length; i++) {
-          app().progress(`비슷한 공고 찾는 중 (${ranges[i][0].slice(0, 4)}.${ranges[i][0].slice(4, 6)})`, i / ranges.length * 0.6);
-          for (let page = 1; page <= 3; page++) {
-            const r = L.parseApiBody(await S.nara(N.bidSearchUrl(kind, q, ranges[i][0], ranges[i][1], page, 100, cfg.apiKey)));
-            bids.push(...r.items.map(N.normalizeBid));
+      const fetchAll = async (q, k = kind, rs = ranges, pages = 3) => {
+        const got = [];
+        for (let i = 0; i < rs.length; i++) {
+          app().progress(`비슷한 공고 찾는 중 (${rs[i][0].slice(0, 4)}.${rs[i][0].slice(4, 6)})`, i / rs.length * 0.6);
+          for (let page = 1; page <= pages; page++) {
+            const r = L.parseApiBody(await S.nara(N.bidSearchUrl(k, q, rs[i][0], rs[i][1], page, 100, cfg.apiKey)));
+            got.push(...r.items.map(N.normalizeBid));
             if (page * 100 >= r.total || !r.items.length) break;
           }
         }
+        return got;
+      };
+      // 공고명 검색: 띄어쓴 것·붙여 쓴 것 둘 다 → 없으면 낱말 하나로 넓게 찾아 나머지 낱말로 거름
+      const byName = async (q, k = kind, rs = ranges) => {
+        const nq = N.nameQueries(q.bidNtceNm); let got = [];
+        for (const e of nq.exact) got.push(...await fetchAll({ ...q, bidNtceNm: e }, k, rs));
+        if (!got.length && nq.word) got = (await fetchAll({ ...q, bidNtceNm: nq.word }, k, rs, 5)).filter((b) => N.nameHas(b.name, q.bidNtceNm));
+        return got;
+      };
+      for (const q of tries) {
+        bids.push(...(q.bidNtceNm ? await byName(q) : await fetchAll(q)));
         if (bids.length && !subs.length) break; // 복합공사는 공종마다 찾아 합침
+      }
+      // 검색어로 찾았는데 이 구분(공사/용역)에 없으면 다른 구분에 있는지 최근 3달만 살펴 알려 줌
+      if (!bids.length && keyword0) {
+        const other = kind === '용역' ? '공사' : '용역';
+        const peek = await byName({ ntceInsttNm: org, bidNtceNm: keyword0 }, other, ranges.slice(0, 3));
+        if (peek.length) {
+          app().toast(`'${keyword0}' 공고는 ${kind}에는 없고 ${other}에 ${peek.length}건 있습니다. 구분을 ${other}(으)로 바꾸고 다시 찾아 보세요.`, '', { label: `${other}(으)로 바꾸기`, run: () => { setVal('구분', other, true); render(); } });
+          return;
+        }
       }
       const seen = new Set();
       bids = bids.filter((b) => b.no && !seen.has(b.no + b.ord) && seen.add(b.no + b.ord)).sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 40);

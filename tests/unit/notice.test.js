@@ -328,3 +328,13 @@ test('문장 고르기 → 초안 자리 찾기', () => {
   assert.deepEqual(N.topicPlace(S, '지역', {}), { si: 2, li: 1 });
   assert.equal(N.topicPlace(S, '하도급', {}), null);
 });
+
+test('공고명 검색어: 띄어쓰기 두 가지 + 낱말 하나로 넓게 찾아 거르기, 띄어쓰기는 %20', () => {
+  assert.deepEqual(N.nameQueries('사업장 폐기물'), { exact: ['사업장 폐기물', '사업장폐기물'], word: '폐기물' });
+  assert.deepEqual(N.nameQueries('폐기물'), { exact: ['폐기물'], word: '' });
+  assert.ok(N.nameHas('2026년 사업장폐기물(일반) 위탁처리 용역', '사업장 폐기물'));
+  assert.ok(N.nameHas('사업장 일반 폐기물 처리 용역', '사업장 폐기물'));
+  assert.ok(!N.nameHas('생활폐기물 수집 운반 용역', '사업장 폐기물'));
+  const u = N.bidSearchUrl('용역', { bidNtceNm: '사업장 폐기물' }, '20261001', '20261016', 1, 100, 'k');
+  assert.match(u, /bidNtceNm=%EC%82%AC%EC%97%85%EC%9E%A5%20%ED%8F%90/); assert.doesNotMatch(u, /\+/);
+});
