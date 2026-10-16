@@ -53,9 +53,31 @@
     try {
       const [b, e] = L.monthRanges(1)[0];
       const r = L.parseApiBody(await S.nara(L.apiUrl(L.API_OPS.공사, c, b, e, 1, 1)));
-      note(`연결됐습니다. 이번 달 ${c.insttNm} 공사 계약이 ${r.total}건 조회됩니다.`, 'ok');
+      note(`연결됐습니다. 이번 달 ${c.insttNm} 공사 계약이 ${r.total}건 조회됩니다. 세부 정보 서비스도 확인합니다…`, 'ok');
+      await testServices(c.apiKey);
       return true;
-    } catch (err) { note(err.message, 'err'); return false; }
+    } catch (err) { note(err.message, 'err'); await testServices(c.apiKey); return false; }
+  }
+  // 세부 정보(감사·검사 자료·공고문 배우기)에 쓰는 서비스마다 활용신청이 됐는지 — 같은 인증키로 하나씩 조회해 봄
+  async function testServices(key) {
+    const el = $('#naraSvc'); if (!el) return;
+    const cs = Object.values((JH.app.db && JH.app.db.contracts) || {});
+    const pick = (f) => (cs.find((x) => x[f]) || {})[f];
+    const svc = [
+      ['계약정보서비스(변경이력)', L.g2bUrl('chg', '공사', pick('untyNo') || 'R26TE00000000', key), '감사 자료의 당초 금액·설계변경·기간연장'],
+      ['입찰공고정보서비스', L.g2bUrl('bid', '공사', pick('ntceNo') || 'R26BK00000000', key), '예산액, 공고문 작성의 비슷한 공고 찾기'],
+      ['낙찰정보서비스', L.g2bUrl('scsbid', '공사', pick('ntceNo') || 'R26BK00000000', key), '예정가격·기초금액·낙찰률·업체 주소'],
+      ['사용자정보서비스', L.g2bUrl('corp', '공사', pick('bizno') || '1234567890', key), '업체 주소·대표자'],
+    ];
+    el.innerHTML = svc.map(([n, , use]) => `<li><b>${esc(n)}</b> <span class="muted">확인 중…</span><small>${esc(use)}</small></li>`).join('');
+    const out = [];
+    for (const [n, url, use] of svc) {
+      let ok = true, why = '';
+      try { L.parseApiBody(await S.nara(url)); } catch (e) { ok = false; why = e.message; }
+      out.push(`<li class="${ok ? 'ok' : 'bad'}"><b>${esc(n)}</b> ${ok ? '<span class="ok-t">사용 가능</span>' : `<span class="bad-t">안 됨</span> <span class="why">${esc(why)}</span>`}<small>${esc(use)}</small></li>`);
+      el.innerHTML = out.join('') + svc.slice(out.length).map(([n2, , u2]) => `<li><b>${esc(n2)}</b> <span class="muted">확인 중…</span><small>${esc(u2)}</small></li>`).join('');
+    }
+    if (out.some((x) => x.includes('class="bad"'))) el.insertAdjacentHTML('beforeend', '<li class="hint">안 되는 서비스는 공공데이터포털(data.go.kr)에서 "조달청_나라장터 ○○서비스"를 찾아 같은 계정으로 [활용신청]하면 됩니다. 승인 뒤 1~2시간 지나 다시 확인하세요.</li>');
   }
 
   // 서류 목록 편집

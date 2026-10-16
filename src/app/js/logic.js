@@ -189,6 +189,8 @@
 
   // ---------- 나라장터 계약정보 API ----------
   const API_BASE = 'https://apis.data.go.kr/1230000/ao/CntrctInfoService';
+  // 인증키: 공공데이터포털의 '인코딩' 키(%2B 등이 이미 든 것)를 넣어도 두 번 바꾸지 않음
+  const keyParam = (k) => { const t = String(k || '').trim(); return /%[0-9A-Fa-f]{2}/.test(t) ? t : encodeURIComponent(t); };
   const API_OPS = { 공사: 'getCntrctInfoListCnstwkPPSSrch', 용역: 'getCntrctInfoListServcPPSSrch', 물품: 'getCntrctInfoListThngPPSSrch' };
   const TYPES = ['공사', '용역', '물품'];
   // 계약 한 건을 더 자세히: 변경이력(설계변경·기간연장), 입찰공고(예산), 개찰 예비가격(예정가격·기초금액), 낙찰(낙찰률·업체 주소), 조달업체 기본정보(주소·대표자)
@@ -210,7 +212,7 @@
     else if (kind === 'prepar') { q.set('inqryDiv', '2'); q.set('bidNtceNo', bareNtce(arg)); }
     else if (kind === 'scsbid') { q.set('inqryDiv', '4'); q.set('bidNtceNo', bareNtce(arg)); }
     else if (kind === 'corp') { q.set('inqryDiv', '3'); q.set('bizno', String(arg).replace(/\D/g, '')); }
-    return `${g.base}/${g.op(type)}?serviceKey=${encodeURIComponent(String(apiKey || '').trim())}&${q.toString()}`;
+    return `${g.base}/${g.op(type)}?serviceKey=${keyParam(apiKey)}&${q.toString()}`;
   }
   const num = (v) => { const n = Number(String(v == null ? '' : v).replace(/[^\d.-]/g, '')); return isFinite(n) && String(v || '').trim() !== '' ? n : 0; };
   const ymd8 = (s) => { const m = String(s || '').match(/(\d{4})[-.\/]?(\d{2})[-.\/]?(\d{2})/); return m ? m[1] + m[2] + m[3] : ''; };
@@ -267,7 +269,7 @@
       pageNo: String(page), numOfRows: String(rows || 100), type: 'json',
     });
     if (cfg.insttCd) q.set('insttCd', cfg.insttCd); else if (cfg.insttNm) q.set('insttNm', cfg.insttNm);
-    return `${API_BASE}/${op}?serviceKey=${encodeURIComponent(String(cfg.apiKey || '').trim())}&${q.toString()}`;
+    return `${API_BASE}/${op}?serviceKey=${keyParam(cfg.apiKey)}&${q.toString()}`;
   }
   // 조회 기간을 한 달 단위로 쪼갬
   function monthRanges(months, today) {
@@ -292,6 +294,7 @@
   };
   function parseApiText(text) {
     const t = String(text || '').trim();
+    if (/^(Forbidden|Unauthorized)\b/i.test(t)) throw new Error('이 서비스를 쓸 권한이 없습니다(403). 공공데이터포털에서 같은 인증키로 활용신청했는지 확인하세요.');
     if (t.startsWith('{')) return JSON.parse(t);
     const m = t.match(/<returnAuthMsg>([^<]+)<\/returnAuthMsg>/) || t.match(/<resultMsg>([^<]+)<\/resultMsg>/) || t.match(/<errMsg>([^<]+)<\/errMsg>/);
     const code = m ? m[1].trim() : '';
@@ -333,7 +336,8 @@
     if (!s) return [];
     const rows = String(s).split(/\]\s*,?\s*\[/).map((e) => e.replace(/^\[|\]$/g, '').split('^').map((x) => x.trim())).map((f) => {
       const bizno = (f.find((x) => /^\d{3}-?\d{2}-?\d{5}$/.test(x)) || '').replace(/\D/g, '');
-      return { role: f[1] || '', name: f[3] || '', rep: /^[가-힣A-Za-z ,·]{2,30}$/.test(f[4] || '') && !/대한민국|한국/.test(f[4]) ? f[4] : '', bizno };
+      // 대표자명은 가려져 올 수 있음(예: 홍*동) — 그대로 받음
+      return { role: f[1] || '', name: f[3] || '', rep: /^[가-힣A-Za-z ,·*○●]{2,30}$/.test(f[4] || '') && /[가-힣A-Za-z]/.test(f[4]) && !/대한민국|한국/.test(f[4]) ? f[4] : '', bizno };
     }).filter((r) => r.name);
     rows.sort((a, b) => (/주계약|대표/.test(b.role) ? 1 : 0) - (/주계약|대표/.test(a.role) ? 1 : 0));
     return rows;
@@ -542,7 +546,7 @@
   const api = {
     norm, uid, stem, extOf, kindOf, defaultChecklists, STAGES, ORIGINAL_SOURCES,
     classifyItem, guessType, findMeta, vendorCore, baseNo, contractScore, matchContract, contractKey,
-    API_BASE, API_OPS, TYPES, apiUrl, monthRanges, parseApiText, parseApiBody, parseCorpList, parseCorpRows, normalizeApiItem, detectExtFinance,
+    API_BASE, API_OPS, TYPES, apiUrl, keyParam, monthRanges, parseApiText, parseApiBody, parseCorpList, parseCorpRows, normalizeApiItem, detectExtFinance,
     G2B, g2bUrl, scanAuditFields, summarizeChanges, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
     checklistStatus, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail,
   };

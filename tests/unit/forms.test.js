@@ -130,3 +130,9 @@ test('나라장터가 기준: 값은 직접 > 나라장터 > 서류, 서류 값�
   const ck2 = L.verifyFacts({ ...c, amount: 30000000, g2b: {} }, [{ itemId: 'c-contract', name: 'a', facts }]);
   assert.equal(ck2.find((k) => k.key === 'amount').ok, false, '나라장터와 다른 금액');
 });
+
+test('인증키: 인코딩 키는 두 번 바꾸지 않음, 403 글자 응답은 활용신청 안내', () => {
+  assert.match(L.g2bUrl('chg', '공사', 'R26TE1', 'ab+c/d=='), /serviceKey=ab%2Bc%2Fd%3D%3D&/);
+  assert.match(L.g2bUrl('chg', '공사', 'R26TE1', 'ab%2Bc%2Fd%3D%3D'), /serviceKey=ab%2Bc%2Fd%3D%3D&/);
+  assert.throws(() => L.parseApiText('Forbidden'), /활용신청/);
+});

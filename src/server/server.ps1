@@ -401,9 +401,30 @@ function Handle($stream, $req) {
       try {
         $wc = New-Object System.Net.WebClient
         $wc.Encoding = $Utf8
+        $wc.Headers.Add('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) JichulHelper')
+        $wc.Headers.Add('Accept', 'application/json, text/xml, */*')
         $bytes = $wc.DownloadData($uri)
         Send-Bytes $stream 200 'text/plain; charset=utf-8' $bytes $null
-      } catch { Send-Error $stream 502 ("나라장터 연결 실패: " + $_.Exception.Message) }
+      } catch {
+        # 공공데이터포털이 HTTP 오류(403 권한 없음 등)로 답하면 상태 코드와 본문을 읽어 알기 쉬운 말로 돌려줌
+        $ex = $_.Exception
+        while ($ex -and -not ($ex -is [System.Net.WebException])) { $ex = $ex.InnerException }
+        $code = 0; $body = ''
+        if ($ex -and $ex.Response) {
+          try { $code = [int]([System.Net.HttpWebResponse]$ex.Response).StatusCode } catch {}
+          try { $sr = New-Object System.IO.StreamReader($ex.Response.GetResponseStream(), $Utf8); $body = $sr.ReadToEnd(); $sr.Close() } catch {}
+        }
+        $b = ([string]$body).Trim()
+        if ($b.StartsWith('<') -or $b.StartsWith('{')) { Send-Bytes $stream 200 'text/plain; charset=utf-8' ($Utf8.GetBytes($b)) $null; return }
+        $why = switch ($code) {
+          401 { '인증키를 확인하세요(401). 공공데이터포털의 일반 인증키(Decoding)를 그대로 넣어 주세요.' }
+          403 { '이 서비스를 쓸 권한이 없습니다(403). 공공데이터포털에서 같은 인증키로 이 서비스를 활용신청했는지 확인하세요(승인 직후면 1~2시간 뒤에 됩니다).' }
+          404 { '서비스 주소를 찾지 못했습니다(404).' }
+          429 { '조회 횟수를 넘었습니다(429). 잠시 뒤나 내일 다시 하세요.' }
+          default { if ($code -ge 500) { "나라장터(공공데이터포털) 서버 오류($code). 잠시 뒤 다시 하세요." } elseif ($ex) { $ex.Message } else { $_.Exception.Message } }
+        }
+        Send-Error $stream 502 ('나라장터 연결 실패: ' + $why)
+      }
       return
     }
 

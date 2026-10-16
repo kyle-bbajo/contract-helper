@@ -212,7 +212,7 @@
     if (q.prtcptLmtRgnNm) p.set('prtcptLmtRgnNm', q.prtcptLmtRgnNm);
     if (q.priceMin) p.set('presmptPrceBgn', String(Math.round(q.priceMin)));
     if (q.priceMax) p.set('presmptPrceEnd', String(Math.round(q.priceMax)));
-    return `${BID_BASE}/${BID_OPS[kind] || BID_OPS.공사}?serviceKey=${encodeURIComponent(String(apiKey || '').trim())}&${p.toString()}`;
+    return `${BID_BASE}/${BID_OPS[kind] || BID_OPS.공사}?serviceKey=${L.keyParam(apiKey)}&${p.toString()}`;
   }
   // 공고문 진행 상태: 작성 중 → 작성 완료(한글 파일 만듦·직접 표시). 나라장터 등록은 사람이 직접 하므로 따로 묶지 않음
   const STATUS = {
@@ -230,9 +230,9 @@
   }
   const BID_BY_NO = { 공사: 'getBidPblancListInfoCnstwk', 용역: 'getBidPblancListInfoServc' };
   const bidByNoUrl = (kind, no, apiKey) =>
-    `${BID_BASE}/${BID_BY_NO[kind] || BID_BY_NO.공사}?serviceKey=${encodeURIComponent(String(apiKey || '').trim())}&inqryDiv=2&bidNtceNo=${encodeURIComponent(no)}&pageNo=1&numOfRows=10&type=json`;
+    `${BID_BASE}/${BID_BY_NO[kind] || BID_BY_NO.공사}?serviceKey=${L.keyParam(apiKey)}&inqryDiv=2&bidNtceNo=${encodeURIComponent(no)}&pageNo=1&numOfRows=10&type=json`;
   const bidDetailUrl = (op, no, ord, apiKey) =>
-    `${BID_BASE}/${op}?serviceKey=${encodeURIComponent(String(apiKey || '').trim())}&inqryDiv=2&bidNtceNo=${encodeURIComponent(no)}&bidNtceOrd=${encodeURIComponent(ord || '000')}&pageNo=1&numOfRows=20&type=json`;
+    `${BID_BASE}/${op}?serviceKey=${L.keyParam(apiKey)}&inqryDiv=2&bidNtceNo=${encodeURIComponent(no)}&bidNtceOrd=${encodeURIComponent(ord || '000')}&pageNo=1&numOfRows=20&type=json`;
 
   function normalizeBid(x) {
     const d = (s) => String(s || '').slice(0, 16);
