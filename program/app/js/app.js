@@ -155,13 +155,24 @@
     const ordC = (c) => Math.max(c.ord == null ? -1 : c.ord, ...(c.nums || []).map((x) => L.ordOf(x) == null ? -1 : L.ordOf(x)), ...Object.keys(c.ords || {}).map(Number));
     cs = [...new Set(cs)].filter(Boolean); if (cs.length < 2) return 0;
     cs.sort((a, b) => (b === prefer) - (a === prefer) || docsOf(b.key).length - docsOf(a.key).length || ordC(b) - ordC(a));
-    const keepC = cs[0], newest = [...cs].sort((a, b) => ordC(b) - ordC(a))[0];
+    const keepC = cs[0];
+    // 차수를 모르는 계약(번호가 없거나 직접 추가)은 날짜 순서로 차수를 매김: 아는 차수가 있으면 그 뒤에, 없으면 0부터
+    const ordMap = new Map(cs.map((c) => [c, ordC(c)]));
+    const dateOf = (c) => String(c.chgDt || c.contractDate || c.startDate || '').replace(/\D/g, '').slice(0, 12);
+    const known = cs.filter((c) => ordMap.get(c) >= 0), unknown = cs.filter((c) => ordMap.get(c) < 0).sort((a, b) => dateOf(a).localeCompare(dateOf(b)) || (a.updatedAt || 0) - (b.updatedAt || 0));
+    let nextOrd = known.length ? Math.max(...known.map((c) => ordMap.get(c)), ...known.flatMap((c) => Object.keys(c.ords || {}).map(Number))) + 1 : 0;
+    for (const c of unknown) ordMap.set(c, nextOrd++);
+    const newest = [...cs].sort((a, b) => ordMap.get(b) - ordMap.get(a))[0];
     const ords = {};
     for (const c of cs) {
       Object.assign(ords, c.ords || {});
-      const o = ordC(c); if (o < 0) continue;
+      const o = ordMap.get(c);
+      if (ordC(c) < 0) { // 차수를 모르는 계약: 금액·준공일이 있고 이미 있는 차수와 다를 때만 차수 표에 넣음
+        if (!(c.amount || c.endDate)) continue;
+        if (Object.values(ords).some((x) => x.amount === (c.amount || 0) && x.end === (c.endDate || ''))) continue;
+      }
       const no = (c.nums || []).find((x) => L.ordOf(x) === o) || c.no || '';
-      ords[o] = ords[o] || L.ordSnap({ ...c, ord: o, no });
+      ords[o] = ords[o] || L.ordSnap({ ...c, ord: o, no, untyNo: c.untyNo || keepC.untyNo || keepC.key });
     }
     keepC.ords = ords;
     let merged = 0;
@@ -177,8 +188,9 @@
       if (ui.sel === o.key) ui.sel = keepC.key;
       delete db.contracts[o.key]; merged++;
     }
-    if (newest !== keepC) for (const k of ['no', 'amount', 'endDate', 'period', 'chgDt']) if (newest[k] && !(keepC.edited || {})[k]) keepC[k] = newest[k];
-    keepC.ord = ordC(newest) >= 0 ? ordC(newest) : keepC.ord;
+    // 금액·준공일 등은 최신 차수 값으로(직접 고른 합치기는 이 계약 값을 두고 빈 칸만 채움)
+    if (newest !== keepC) for (const k of ['no', 'amount', 'endDate', 'period', 'chgDt']) if (newest[k] && !(keepC.edited || {})[k] && (!prefer || !keepC[k])) keepC[k] = newest[k];
+    keepC.ord = Math.max(...cs.map((c) => ordMap.get(c)));
     keepC.updatedAt = Date.now();
     return merged;
   }

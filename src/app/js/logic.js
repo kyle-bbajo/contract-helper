@@ -316,7 +316,7 @@
     return out;
   }
   // 차수별 계약(같은 계약번호의 -00, -01 …)에서 본 값 → 변경이력과 같은 모양. 변경이력 응답이 비어도 차수 표를 만듦
-  const ordSnap = (n) => ({ no: n.no || '', amount: n.amount || 0, end: n.endDate || '', date: (n.ord > 0 ? n.chgDt || n.contractDate : n.contractDate) || '' });
+  const ordSnap = (n) => ({ no: n.no || `${String(n.untyNo || n.key || '').toUpperCase()}-${String(n.ord == null ? 0 : n.ord).padStart(2, '0')}`, amount: n.amount || 0, end: n.endDate || '', date: (n.ord > 0 ? n.chgDt || n.contractDate : n.contractDate) || '' });
   function changesOf(c) {
     const g = (c && c.g2b) || {}, ords = Object.values((c && c.ords) || {});
     const fromOrds = ords.length > 1 ? summarizeChanges(ords.map((o) => ({ dcsnCntrctNo: o.no, totCntrctAmt: o.amount, ttalCcmpltDate: o.end, cntrctDate: o.date }))) : null;
@@ -324,10 +324,11 @@
     if (fromOrds) return { rows: fromOrds.chgRows, origAmount: fromOrds.origAmount, origEnd: fromOrds.origEnd, src: '나라장터 계약 차수' };
     return null;
   }
-  // 앞 차수와 비교한 기본값: 금액 바뀜 → 설계변경, 준공일 바뀜 → 기간연장, 둘 다 → both, 그대로 → none
+  // 앞 차수와 비교한 기본값: 금액이 바뀌었으면 설계변경(준공일도 바뀌었으면 둘 다), 금액이 그대로면 기간연장
+  // (변경 차수가 있다는 건 무언가 바뀐 것이므로, 금액이 같으면 준공일을 못 읽었어도 기간연장으로 둠)
   function autoKind(r) {
     const amt = !!(r.amount && r.prevAmount && r.amount !== r.prevAmount), end = !!(r.end && r.prevEnd && r.end !== r.prevEnd);
-    return amt && end ? 'both' : amt ? 'design' : end ? 'ext' : 'none';
+    return amt && end ? 'both' : amt ? 'design' : 'ext';
   }
   const CHG_KINDS = { design: '설계변경', ext: '기간연장', both: '둘 다', none: '해당 없음' };
   // 차수마다 고른 값(chgKind[차수번호]) > 자동. 원계약은 빼고, 해당 없음·모름도 뺌

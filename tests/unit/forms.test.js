@@ -226,3 +226,14 @@ test('변경이력이 비어도 -00·-01 차수 계약으로 차수 표·서식 
   r = F.rowOf({ ...c, memo: { chgKind: { [N + '01']: 'ext' } } });
   assert.deepEqual(r.chg, []); assert.equal(r.extDate, '20260915');
 });
+
+test('변경 차수 기본값: 금액 바뀜 → 설계변경, 금액 그대로면(준공일을 못 읽어도) 기간연장, 둘 다 바뀜 → 둘 다', () => {
+  assert.equal(L.autoKind({ amount: 100, prevAmount: 100, end: '20261010', prevEnd: '20260930' }), 'ext');
+  assert.equal(L.autoKind({ amount: 100, prevAmount: 100, end: '', prevEnd: '20260930' }), 'ext', '준공일 모름');
+  assert.equal(L.autoKind({ amount: 100, prevAmount: 100, end: '20260930', prevEnd: '20260930' }), 'ext', '둘 다 그대로여도 변경 차수가 있으면 기간연장');
+  assert.equal(L.autoKind({ amount: 120, prevAmount: 100, end: '20260930', prevEnd: '20260930' }), 'design');
+  assert.equal(L.autoKind({ amount: 120, prevAmount: 100, end: '20261010', prevEnd: '20260930' }), 'both');
+  // 직접 추가한 계약처럼 번호가 없어도 차수 표에 들어갈 번호를 만듦
+  assert.equal(L.ordSnap({ key: 'r25ta00935659', ord: 1, amount: 1 }).no, 'R25TA00935659-01');
+  assert.equal(L.ordSnap({ untyNo: 'R25TA00935659', ord: 0, amount: 1 }).no, 'R25TA00935659-00');
+});
