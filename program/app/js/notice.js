@@ -112,6 +112,7 @@
   }
   // 찾은 공고 중 참고할 것만 고름(빼면 추천·배운 문장·업종 문장에서 빠짐)
   const openBids = new Set(); // 찾은 공고 목록을 펼쳐 둔 공고문(고르는 중엔 계속 펼침)
+  const openSubs = new Set(); // '함께 들어가는 공고' 칸을 펼쳐 둔 공고문
   const used = (s) => (s && s.bids ? s.bids.filter((b) => b.use !== false) : []);
   const lv = (n) => (n.learned ? { ...n.learned, bids: used(n.learned) } : null);
   const isRead = (b) => !!((b.doc && b.doc.sections && b.doc.sections.length) || (b.clauses && b.clauses.length));
@@ -156,10 +157,16 @@
   const refBids = (s) => used(s).filter(isRead);
   const hasLearned = (n) => used(n.learned).some(isRead);
   const modeOf = (n) => (n.dmode === 'ai' && n.ai ? 'ai' : n.dmode === 'basic' || !hasLearned(n) ? 'basic' : 'learned');
-  function sectionsOf(n) {
+  // 문장 초안: 고른 종류(배운 문장·기본·AI)에 담당자가 초안에서 직접 고친 절을 덮어씀
+  const editKey = (n, d) => `${modeOf(n)}|${d.title}`;
+  function baseSections(n) {
     const m = modeOf(n);
     if (m === 'ai') return n.ai.sections;
     return m === 'basic' ? N.draft(n.v) : N.draft(n.v, lv(n));
+  }
+  function sectionsOf(n) {
+    const ed = n.edits || {};
+    return baseSections(n).map((d) => { const e = ed[editKey(n, d)]; return e != null ? { ...d, body: e, edited: true } : d; });
   }
   // AI: PC 안 AI(설치 때 함께 깔림)가 기본, 설정에 키를 넣으면 Gemini·Claude (JH.ai)
   let aiWho = null; // 지금 쓸 수 있는 AI('local'|'gemini'|'claude'|null) — 화면을 그릴 때 확인해 바뀌면 다시 그림
@@ -339,8 +346,13 @@
     const label = `<span class="flabel">${esc(f.label || f.key)}${f.hint ? `<small>${esc(f.hint)}</small>` : ''}${f.auto ? (auto ? '<em class="auto">자동</em>' : `<button type="button" class="link sm" data-reauto="${esc(f.key)}">자동으로</button>`) : ''}</span>`;
     let input;
     const attrs = `data-key="${esc(f.key)}" id="nf-${esc(f.key)}"`;
-    if (f.type === 'select') {
-      const opts = f.optsFrom === 'work' ? (N.WORK_TYPES[n.v.구분] || []).map((w) => w.name) : f.opts;
+    if (f.type === 'select' && f.optsFrom === 'work') {
+      // 공종: 묶음(전문공사·종합공사, 환경·폐기물·건물 관리·기술용역 등)으로 나눠 고름
+      const ws = N.WORK_TYPES[n.v.구분] || [], groups = [...new Set(ws.map((w) => w.g || ''))];
+      const opt = (w) => `<option value="${esc(w.name)}"${w.name === v ? ' selected' : ''}>${esc(w.name)}${w.license ? ` — ${esc(w.license)}` : ''}</option>`;
+      input = `<select ${attrs}>${groups.map((g) => (g ? `<optgroup label="${esc(g)}">${ws.filter((w) => w.g === g).map(opt).join('')}</optgroup>` : ws.filter((w) => !w.g).map(opt).join(''))).join('')}${v && !ws.some((w) => w.name === v) ? `<option selected>${esc(v)}</option>` : ''}</select>`;
+    } else if (f.type === 'select') {
+      const opts = f.opts;
       input = `<select ${attrs}>${opts.map((o) => `<option${o === v ? ' selected' : ''}>${esc(o)}</option>`).join('')}${v && !opts.includes(v) ? `<option selected>${esc(v)}</option>` : ''}</select>`;
     } else if (f.type === 'combo') {
       const learned = (n.learned && n.learned.summary[f.key] && n.learned.summary[f.key].top.map((t) => suggestionFor(f.key, t))) || [];
@@ -348,9 +360,13 @@
       input = `<input type="text" ${attrs} value="${esc(v)}" list="dl-${esc(f.key)}" autocomplete="off"><datalist id="dl-${esc(f.key)}">${opts.map((o) => `<option value="${esc(o)}">`).join('')}</datalist>`;
     } else if (f.type === 'multi') {
       // 복합공사: 주공종 말고 함께 들어가는 공종을 고름
-      const opts = (N.WORK_TYPES[n.v.구분] || []).map((w) => w.name).filter((x) => x !== n.v.공종 && x !== '기타');
-      const on = N.splitList(v);
-      input = `<div class="multi" id="nf-${esc(f.key)}" role="group" aria-label="${esc(f.label || f.key)}">${opts.map((o) => `<label class="mchip${on.includes(o) ? ' on' : ''}"><input type="checkbox" data-mkey="${esc(f.key)}" value="${esc(o)}"${on.includes(o) ? ' checked' : ''}>${esc(o)}</label>`).join('')}</div>`;
+      const ws = (N.WORK_TYPES[n.v.구분] || []).filter((w) => w.name !== n.v.공종 && w.name !== '기타');
+      const on = N.splitList(v), groups = [...new Set(ws.map((w) => w.g || ''))];
+      const chip = (o) => `<label class="mchip${on.includes(o) ? ' on' : ''}"><input type="checkbox" data-mkey="${esc(f.key)}" value="${esc(o)}"${on.includes(o) ? ' checked' : ''}>${esc(o)}</label>`;
+      // 복합공사일 때만 쓰므로 접어 둠(고른 게 있거나 펼쳐 둔 공고문은 펼침)
+      const open = on.length || openSubs.has(n.id);
+      input = `<details class="msub" data-msub${open ? ' open' : ''}><summary>${on.length ? `<b>${esc(on.join(', '))}</b>` : '<span class="muted">없음 — 복합공사일 때 펼쳐서 고르기</span>'}</summary>
+        <div class="multi" id="nf-${esc(f.key)}" role="group" aria-label="${esc(f.label || f.key)}">${groups.map((g) => `${g && groups.length > 1 ? `<div class="mgroup">${esc(g)}</div>` : ''}${ws.filter((w) => (w.g || '') === g).map((w) => chip(w.name)).join('')}`).join('')}</div></details>`;
       const sep = N.separateIn(n.v);
       if (on.length && sep.length) input += `<div class="learn-hint warn">${esc(sep.join('·'))}는 법에 따라 따로 발주(분리발주)하는 것이 원칙입니다(전기공사업법 제11조, 정보통신공사업법 제25조, 소방시설공사업법 제21조). 함께 발주해도 되는 예외인지 확인하세요.</div>`;
       else if (on.length) input += `<div class="learn-hint">업종제한을 "${esc(N.worksOf(n.v).map((w) => w.license).join(' + '))} 모두 등록 또는 분담이행 공동도급"으로, 공동도급을 분담이행으로 자동으로 바꿨습니다.</div>`;
@@ -484,8 +500,8 @@
           <p class="muted small draft-note">${dm === 'ai' ? `AI 초안${stale ? ' · <b class="warn-t">항목을 바꿨습니다. 반영하려면 [AI로 다시 쓰기]</b>' : ''} — 지어낸 내용이 없는지 꼭 확인하세요.` : dm === 'learned' ? (used(n.learned).some((b) => b.doc && b.doc.sections && b.doc.sections.length >= 3)
               ? `비슷한 공고 ${used(n.learned).filter((b) => b.doc && b.doc.sections && b.doc.sections.length >= 3).length}건의 공고문 전체를 읽어, 가장 전형적인 공고의 절·문장을 이번 공고 값(공고명·업종·지역·하한율)으로 바꿨습니다. 일정·금액은 이번 값으로 씁니다.`
               : `비슷한 공고 ${used(n.learned).filter((b) => b.clauses && b.clauses.length).length}건의 실제 문장에서 배웠습니다. 왼쪽 값을 바꾸면 바로 반영됩니다.`) : '왼쪽 값을 바꾸면 바로 반영됩니다. 위에서 [비슷한 공고 찾기]를 하면 실제 공고 문장으로 배웁니다.'}</p>
-          ${draft.map((d, i) => `<div class="dsec"><div class="dsec-head"><b>${esc(d.title)}</b>${d.learned ? `<span class="lbadge" title="비슷한 공고 ${d.learned}건에 있는 절 — 실제 공고 문장을 이번 값으로 바꿈">공고 ${d.learned}건</span>` : ''}${d.check ? `<span class="lbadge warn" title="다른 공고의 금액·날짜 자리를 ○○로 비워 둠">○○ ${d.check}곳 확인</span>` : ''}<button type="button" class="link sm" data-copy="${i}">복사</button></div><pre>${esc(d.body)}</pre></div>`).join('')}
-          <p class="muted small">초안입니다. 회사 표준 공고문과 관계 법령에 맞는지 확인한 뒤 사용하세요.</p>
+          ${draft.map((d, i) => `<div class="dsec${d.edited ? ' edited' : ''}"><div class="dsec-head"><b>${esc(d.title)}</b>${d.learned ? `<span class="lbadge" title="비슷한 공고 ${d.learned}건에 있는 절 — 실제 공고 문장을 이번 값으로 바꿈">공고 ${d.learned}건</span>` : ''}${d.check && !d.edited ? `<span class="lbadge warn" title="다른 공고의 금액·날짜 자리를 ○○로 비워 둠">○○ ${d.check}곳 확인</span>` : ''}${d.edited ? `<span class="lbadge ok" title="초안에서 직접 고친 절 — 왼쪽 값을 바꿔도 그대로">고침</span><button type="button" class="link sm" data-dreset="${i}" title="고친 것을 버리고 자동 초안으로">되돌리기</button>` : ''}<button type="button" class="link sm" data-copy="${i}">복사</button></div><textarea class="dbody" data-dedit="${i}" spellcheck="false" rows="${Math.min(30, Math.max(2, d.body.split('\n').length + Math.ceil(d.body.length / 60)))}" aria-label="${esc(d.title)} 고치기">${esc(d.body)}</textarea></div>`).join('')}
+          <p class="muted small">초안입니다. 각 절을 눌러 바로 고칠 수 있고(고친 절은 왼쪽 값을 바꿔도 그대로), [복사]·[문장 초안 전체 복사]에 고친 대로 들어갑니다. 한글 파일은 회사 양식 문장에 값만 바꾸므로, 양식 문장 자체를 바꾸려면 [공고마다 다른 문장 고르기]를 쓰세요. 회사 표준 공고문과 관계 법령에 맞는지 확인한 뒤 사용하세요.</p>
         </aside>
       </div>`;
   }
@@ -495,7 +511,7 @@
     for (const f of N.FIELDS) { const el = $(`#nf-${CSS.escape(f.key)}`); if (el && document.activeElement !== el && f.auto) el.value = n.v[f.key] || ''; }
     if (modeOf(n) === 'ai') { const note = $('.draft-note'); if (note && !note.querySelector('.warn-t')) render(); return; } // AI 문장은 그대로, 다시 쓰라는 안내만
     const draft = sectionsOf(n);
-    $$('.draft .dsec pre').forEach((p, i) => { if (draft[i]) p.textContent = draft[i].body; });
+    $$('.draft .dsec textarea.dbody').forEach((t, i) => { if (draft[i] && !draft[i].edited && document.activeElement !== t) t.value = draft[i].body; });
     const t = $(`.citem[data-nid="${n.id}"] .nm`); if (t) t.textContent = n.v.공고명 || '제목 없는 공고문';
     const h = $('#nTitle'); if (h) { if (n.v.공고명) h.textContent = n.v.공고명; else h.innerHTML = '<span class="muted">새 공고문 — 아래 [기본]의 공고명부터 넣으세요</span>'; }
     const nm = $('#nf-공고명'); if (nm) nm.classList.toggle('need', !n.v.공고명);
@@ -507,6 +523,8 @@
     const it = e.target.closest('[data-nid]');
     if (it) { sel = it.dataset.nid; render(); return; }
     const n = cur();
+    const dr = e.target.closest('[data-dreset]');
+    if (dr && n) { const d = baseSections(n)[+dr.dataset.dreset]; if (d && n.edits) { delete n.edits[editKey(n, d)]; n.updatedAt = Date.now(); save(true); render(); } return; }
     if (ap) { setVal(ap.dataset.apply, ap.dataset.val, true); render(); return; }
     if (ra) { n.manual[ra.dataset.reauto] = false; setVal(ra.dataset.reauto, n.v[ra.dataset.reauto], false); render(); return; }
     if (cp) { const d = sectionsOf(n)[+cp.dataset.copy]; await copy(d.title + '\n' + d.body); return; }
@@ -551,6 +569,11 @@
     catch (_) { app().toast('복사하지 못했습니다. 초안을 직접 선택해 복사해 주세요.', 'err'); }
   }
   function onInput(e) {
+    const de = e.target.closest('[data-dedit]');
+    if (de) { const n = cur(); if (!n) return; const d = baseSections(n)[+de.dataset.dedit]; if (!d) return;
+      n.edits = { ...(n.edits || {}), [editKey(n, d)]: de.value }; n.updatedAt = Date.now(); save();
+      const box = de.closest('.dsec'); if (box && !box.classList.contains('edited')) { box.classList.add('edited'); const h = box.querySelector('.dsec-head'); if (h && !h.querySelector('[data-dreset]')) h.querySelector('[data-copy]').insertAdjacentHTML('beforebegin', `<span class="lbadge ok">고침</span><button type="button" class="link sm" data-dreset="${de.dataset.dedit}">되돌리기</button>`); }
+      return; }
     const pt = e.target.closest('[data-picktext]');
     if (pt) { const tp = topics[+pt.dataset.picktext]; if (tp) { setPick(tp.key, pt.value); tp.current = pt.value; refreshLive(); } return; }
     const t = e.target.closest('[data-key]'); if (!t || !t.closest('#noticeMain')) return;
@@ -565,6 +588,7 @@
     if (f && f.type === 'money' && t.value) { const w = N.won(N.money(t.value)); if (w !== t.value) { t.value = w; setVal(f.key, w, true); refreshLive(); } }
   }
   const view = () => $('#view-notice');
+  view().addEventListener('toggle', (e) => { const d = e.target; if (!d.matches || !d.matches('[data-msub]')) return; const n = cur(); if (!n) return; if (d.open) openSubs.add(n.id); else openSubs.delete(n.id); }, true);
   view().addEventListener('click', onClick);
   view().addEventListener('input', onInput);
   view().addEventListener('focusout', onBlur);

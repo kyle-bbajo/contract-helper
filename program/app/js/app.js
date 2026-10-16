@@ -155,7 +155,7 @@
         const kind = L.kindOf(f.name);
         const { lines, ocr } = await R.read(bytes, kind, f.type);
         recs.push({
-          id: L.uid(), name: f.name, kind, size: f.size, mime: f.type, bytes, ocr,
+          id: L.uid(), name: f.name, kind, size: f.size, mime: f.type, bytes, ocr, lines,
           meta: L.findMeta(lines), text: L.norm(lines.join(' ')).slice(0, 6000), title: L.norm(lines.slice(0, 8).join(' ')).slice(0, 300),
           dates: L.extractDates(lines),
         });
@@ -176,7 +176,7 @@
         if (c) r.key = c.key;
       }
       // 3) 나머지 서류는 내용으로 계약 찾기 → 서류 종류 → 저장
-      const byContract = {}; let inbox = 0;
+      const byContract = {}, auditLines = {}; let inbox = 0;
       for (let i = 0; i < recs.length; i++) {
         const r = recs[i];
         progress(`정리하는 중 ${i + 1}/${recs.length}`, i / recs.length);
@@ -191,13 +191,18 @@
           size: r.size, mime: r.mime, addedAt: new Date().toISOString(), ocr: r.ocr, meta: r.meta, text: r.text, title: r.title, dates: r.dates, manual: !!forced,
         });
         if (c) { byContract[c.key] = (byContract[c.key] || 0) + 1; c.updatedAt = Date.now(); } else inbox++;
+        if (c && item && AUDIT_DOC.test(item.id)) (auditLines[c.key] = auditLines[c.key] || []).push(r.lines);
       }
+      // 3-1) 견적서·설계내역서·사업자등록증 등에서 감사·검사 칸(예정가격·설계금액·주소·대표자)을 바로 채움(비어 있을 때만)
+      let auditFilled = 0;
+      for (const [k, ls] of Object.entries(auditLines)) auditFilled += fillAuditFrom(db.contracts[k], ls);
       await saveDb(true);
       // 4) 알림
       const parts = Object.entries(byContract).map(([k, n]) => `${db.contracts[k].name} ${n}`);
       if (inbox) parts.push(`미분류 ${inbox}`);
       let msg = `${recs.length}개 정리했습니다` + (parts.length ? ` — ${parts.join(', ')}` : '') + '.';
       if (newContracts) msg += ` 계약서에서 새 계약 ${newContracts}건을 만들었습니다.`;
+      if (auditFilled) msg += ` 서류에서 감사·검사 칸 ${auditFilled}개를 채웠습니다.`;
       if (skipped) msg += ` 이미 있는 파일 ${skipped}개는 건너뛰었습니다.`;
       if (R.ocrBroken) msg += ' 스캔본 글자 인식을 시작하지 못해 일부는 미분류로 갔습니다.';
       toast(msg, inbox ? '' : 'ok', inbox ? { label: '미분류 보기', run: () => setView('inbox') } : null);
@@ -773,6 +778,20 @@
   // 서류 글자 → 감사 칸(정규식으로 먼저, 남은 칸은 PC 안 AI)
   const AUDIT_DOC = /-(estimate|related|req|contract|finish|inspect)$/;
   const AUDIT_AI_SYSTEM = '너는 공공기관 계약 서류에서 값을 찾아 JSON으로만 답한다. 서류에 적혀 있지 않은 값은 null로 둔다. 추측하거나 계산하지 않는다. 금액은 원 단위 정수(쉼표 없이)로 쓴다.';
+  const AUDIT_MAP = { budget: 'aBudget', design: 'aDesign', est: 'aEst', addr: 'aAddr', rep: 'aRep' };
+  // 서류 글자(줄 묶음 여러 개)에서 글자 규칙으로 찾은 값을 빈 감사 칸에만 넣음. 넣은 칸 수를 돌려줌(저장은 부른 쪽에서)
+  function fillAuditFrom(c, lineSets) {
+    if (!c) return 0;
+    const found = {};
+    for (const ls of lineSets) for (const [k, v] of Object.entries(L.scanAuditFields(ls || []))) if (!found[k]) found[k] = v;
+    const cur = formRow(c); let n = 0;
+    for (const [k, mk] of Object.entries(AUDIT_MAP)) {
+      if (!found[k] || String(memoOf(c)[mk] || '').trim() || cur[k]) continue;
+      c.memo = { ...(c.memo || {}), [mk]: String(found[k]) }; n++;
+    }
+    if (n) c.memoAt = new Date().toISOString();
+    return n;
+  }
   async function fillFromDocs(c, quiet) {
     const docs = docsOf(c.key).filter((d) => AUDIT_DOC.test(d.itemId || '') && d.kind !== 'other');
     if (!docs.length) { if (!quiet) toast('이 계약에 견적서·설계내역서·계약 관련서류(사업자등록증 등)가 아직 없습니다.', 'err'); return 0; }
@@ -784,7 +803,7 @@
     }
     const found = {};
     for (const t of texts) for (const [k, v] of Object.entries(L.scanAuditFields(t.lines))) if (!found[k]) found[k] = v;
-    const MAP = { budget: 'aBudget', design: 'aDesign', est: 'aEst', addr: 'aAddr', rep: 'aRep' };
+    const MAP = AUDIT_MAP;
     const cur = formRow(c);
     const empty = (k) => !String(memoOf(c)[MAP[k]] || '').trim() && !cur[k];
     let by = '서류';
@@ -851,14 +870,11 @@
       </tbody></table>` : '';
     $('#fmMake').disabled = !on.length;
   }
-  async function formsMake() {
-    const o = formsOpts(); const rows = formsRows(o).filter((r) => !fm.skip.has(r.key));
-    if (!rows.length) return;
-    cfg.forms = { ...(cfg.forms || {}), from: o.from, to: o.to, types: o.types, min: o.min, skip: [...fm.skip] };
-    await saveCfg();
+  // 서식 파일 만들기(대화상자·현황판 바로 받기 공용)
+  async function formsBuild(kind, o, rows) {
     const stamp = ymd();
     let name, bytes, preview;
-    if (fm.kind === 'audit') {
+    if (kind === 'audit') {
       const opt = { min: o.min, types: o.types };
       bytes = JH.forms.auditHwpx(rows, opt);
       name = `행정사무감사_수의계약현황(${JH.forms.manLabel(o.min).replace(/,/g, '')}이상)_${stamp}.hwpx`;
@@ -870,10 +886,49 @@
       preview = [{ name: sheet.name, cols: INSPECT_PREVIEW_COLS.map((h) => ({ h })), rows: rows.map((r) => [r.type, r.name, JH.forms.kfmt(r.budget), JH.forms.kfmt(r.design), JH.forms.kfmt(r.est), JH.forms.kfmt(r.award), r.rate == null ? '' : r.rate.toFixed(3), JH.forms.dShort(r.start), JH.forms.dShort(r.due), JH.forms.dShort(r.actual), (r.chg || []).map((x) => `${JH.forms.dShort(x.date)} ${JH.forms.signed(x.diff)}`).join(' '), r.method, r.vendor]) }];
     }
     const saved = await S.save('감사자료', name, bytes);
+    return { name, preview, saved };
+  }
+  async function formsDone(r, extra) {
+    if (S.showTable) { S.showTable(r.name, r.preview); return; }
+    toast(`${r.name}을(를) 만들었습니다 (감사자료 폴더).${extra || ''} 내용을 확인한 뒤 제출하세요.`, 'ok', { label: '폴더 열기', run: () => S.open('감사자료') });
+    try { await S.openFile(r.saved.path); } catch (_) { /* 프로그램이 없으면 폴더에서 열면 됨 */ }
+  }
+  async function formsMake() {
+    const o = formsOpts(); const rows = formsRows(o).filter((r) => !fm.skip.has(r.key));
+    if (!rows.length) return;
+    cfg.forms = { ...(cfg.forms || {}), from: o.from, to: o.to, types: o.types, min: o.min, skip: [...fm.skip] };
+    await saveCfg();
+    const r = await formsBuild(fm.kind, o, rows);
     $('#dlgForms').close();
-    if (S.showTable) { S.showTable(name, preview); return; }
-    toast(`${name}을(를) 만들었습니다 (감사자료 폴더). 내용을 확인한 뒤 제출하세요.`, 'ok', { label: '폴더 열기', run: () => S.open('감사자료') });
-    try { await S.openFile(saved.path); } catch (_) { /* 프로그램이 없으면 폴더에서 열면 됨 */ }
+    await formsDone(r);
+  }
+  // 현황판 [행정사무감사 서식]·[종합검사 서식]: 지난번 고른 기간·구분(처음이면 올해 1월 1일~오늘, 전부)으로
+  // 나라장터 세부 정보 받기 → 서류에서 빈칸 채우기 → 파일까지 한 번에
+  async function quickForms(kind) {
+    const f = cfg.forms || {}, y = new Date().getFullYear();
+    const o = { from: f.from || `${y}-01-01`, to: f.to || isoOf8(ymd()), types: f.types || ['공사', '용역', '물품'], min: f.min || 10000000 };
+    const prevKind = fm.kind; fm.kind = kind;
+    const skip = new Set(f.skip || []);
+    const pick = () => formsRows(o).filter((r) => !skip.has(r.key));
+    try {
+      let rows = pick();
+      if (!rows.length) { toast(`${o.from} ~ ${o.to}에 ${kind === 'audit' ? '수의계약(1천만 원 이상)' : '계약'}이 없습니다. 기간을 바꾸려면 [고르기]를 누르세요.`, 'err', { label: '고르기', run: () => openForms(kind) }); return; }
+      if (cfg.apiKey) {
+        progress('나라장터에서 예산·예정가격·변경이력·업체 주소 받는 중', .1);
+        try { await enrichContracts(contracts().filter((c) => rows.some((r) => r.key === c.key)), false); } catch (e) { console.warn('세부 정보 받기 실패', e); }
+      }
+      const blank = pick().filter((r) => JH.forms.missingOf(r, kind).length);
+      let docN = 0;
+      for (let i = 0; i < blank.length; i++) { progress(`서류에서 빈칸 채우는 중 ${i + 1}/${blank.length}`, .4 + .5 * i / blank.length); try { docN += await fillFromDocs(db.contracts[blank[i].key], true); } catch (_) { /* 다음 계약 */ } }
+      progress('파일 만드는 중', .95);
+      rows = pick();
+      const left = rows.filter((r) => JH.forms.missingOf(r, kind).length).length;
+      const r = await formsBuild(kind, o, rows);
+      progress(null);
+      await formsDone(r, ` ${rows.length}건${docN ? `, 서류에서 빈칸 ${docN}개 채움` : ''}${left ? ` · 아직 빈칸 있는 계약 ${left}건` : ''}.`);
+      if (left) toast(`빈칸 있는 계약 ${left}건은 [고르기]에서 계약을 열어 직접 넣을 수 있습니다.`, '', { label: '고르기', run: () => openForms(kind) });
+    } catch (e) { progress(null); toast('서식을 만들지 못했습니다: ' + e.message, 'err'); }
+    finally { fm.kind = prevKind; }
   }
   const INSPECT_PREVIEW_COLS = ['구분', '사업명', '예산액', '설계금액', '예정가격', '낙찰금액', '낙찰률(%)', '착공일자', '준공기한', '실제준공일', '설계변경', '계약방법', '도급자'];
   $('#fmKind').addEventListener('click', (e) => { const b = e.target.closest('[data-fk]'); if (b) formsKind(b.dataset.fk); });
@@ -922,7 +977,7 @@
       <div class="board-head"><h2>현황판</h2><span class="sub">${ui.officer ? `담당 ${esc(ui.officer)}` : '담당자 전체'}${ui.type ? ` · ${esc(ui.type)}` : ''}${cfg.lastFetch ? ` · 나라장터 ${esc(L.fmtDate(cfg.lastFetch.slice(0, 10)))} 기준` : ''}</span>
         <div class="right"><select id="bOfficer" aria-label="담당자">${$('#fOfficer').innerHTML}</select>
           <button class="btn" data-act="excel" title="지금 보이는 계약을 엑셀 파일로 저장하고 엽니다"${rows.length ? '' : ' disabled'}>${XLS_ICON}엑셀로 받기 <span class="num">${rows.length}건</span></button>
-          <button class="btn" data-act="forms" title="종합검사 계약집행 현황(엑셀), 행정사무감사 수의계약 현황(한글)">감사·검사 서식</button></div></div>
+          <span class="btn-group" role="group" aria-label="감사·검사 서식 받기"><button class="btn" data-act="quickform" data-fk="audit" title="행정사무감사 「수의계약 현황(1,000만원 이상)」 한글 파일 — 나라장터·서류에서 채워 바로 받기">행정사무감사 서식</button><button class="btn" data-act="quickform" data-fk="inspect" title="종합검사 「계약집행 현황(총괄)」 엑셀 — 나라장터·서류에서 채워 바로 받기">종합검사 서식</button><button class="btn ghost" data-act="forms" title="기간·구분·기준 금액·넣을 계약을 고르고 빈칸 확인">고르기</button></span></div></div>
       <div class="chips">${chip('', '전체')}${chip('missing', '서류 미비')}${chip('ready', '지출 대기')}${chip('late', '준공 지남·미지출', true)}${chip('paid', '지출 완료')}</div>
       ${rows.length ? `<table class="grid"><thead><tr><th>계약</th><th>구분</th><th>준공일</th><th>서류</th><th class="r">원본</th><th>지출</th><th>상태</th></tr></thead><tbody>
         ${rows.map(({ c, st }) => `<tr data-key="${esc(c.key)}">
@@ -1027,6 +1082,7 @@
       } else if (act === 'budgetauto') { delete c.budget; c.updatedAt = Date.now(); render(); await saveDb(true);
       } else if (act === 'excel') { await exportExcel(t.dataset.from === 'list' ? filtered().map((x) => ({ c: x, st: statusOf(x) })) : boardRows());
       } else if (act === 'searchall') { ui.officer = ''; ui.officerTouched = true; ui.type = ''; ui.state = ''; $$('#fState button').forEach((b) => b.classList.toggle('on', !b.dataset.state)); render();
+      } else if (act === 'quickform') { await quickForms(t.dataset.fk);
       } else if (act === 'forms') { openForms();
       } else if (act === 'auditdocs') { await fillFromDocs(c); render();
       } else if (act === 'g2bre') {

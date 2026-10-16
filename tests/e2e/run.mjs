@@ -83,6 +83,7 @@ const browser = await chromium.launch({ executablePath: CHROME });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 920 }, acceptDownloads: true, permissions: ['clipboard-read', 'clipboard-write'] });
 const page = await ctx.newPage();
 const errors = [];
+const draftText = () => page.$$eval('.draft textarea.dbody', (ts) => ts.map((t) => t.value).join('\n'));
 page.on('pageerror', (e) => errors.push(String(e)));
 page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
 // 실패한 요청은 주소로 판단: 한글 변환·한글 양식 채우기는 시험 PC에 한글이 없어 실패가 정상(대체 방법으로 처리됨)
@@ -308,6 +309,12 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   for (const t of ['시청사 옥상 방수공사', '(주)다해토건', '홍길동', '경기도 용인시 처인구 중부대로 1199', '95.77', '체육관 시설 청소 용역', '해당 없음'])
     assert.ok(ho.t.includes(t), t);
   assert.ok(ho.t.includes('지방계약법 시행령 제25조 제1항 제5호 가목 (추정가격 2억원 이하 종합공사)'));
+  // 현황판에서 한 번에 받기(지난번 고른 기간으로, 나라장터·서류에서 채워 바로 파일)
+  await page.click('[data-act="quickform"][data-fk="audit"]');
+  await waitFor(() => readdirSync(xdir).filter((f) => f.endsWith('.hwpx')).length >= 2, 20000, '행정사무감사 바로 받기');
+  await page.click('[data-act="quickform"][data-fk="inspect"]');
+  await waitFor(() => readdirSync(xdir).filter((f) => f.endsWith('.xlsx')).length >= 2, 20000, '종합검사 바로 받기');
+  step('현황판 [행정사무감사 서식]·[종합검사 서식] 누르면 나라장터·서류에서 채운 파일을 바로 받음');
   await page.click('.views [data-view="contracts"]');
   step('감사·검사 자료: 나라장터 변경이력·업체 주소 자동 + 직접 넣은 값 → 종합검사 엑셀(양식 그대로) · 행정사무감사 한글(받은 양식에 채움)');
 
@@ -355,15 +362,19 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   assert.equal(await page.inputValue('#nf-지역제한'), '용인시');
   step('자동 규칙: 전기공사 → 업종제한, 금액 → 부가세·상생결제(기준 5천만 원 미만 → 미적용), 기본 지역 용인시');
   // 복합공사: 함께 들어가는 공종을 고르면 업종제한·공동도급이 바뀌고, 분리발주 대상이면 알림 → 빼면 원래대로
+  assert.equal(await page.$eval('[data-msub]', (d) => d.open), false, '함께 들어가는 공종은 접혀 있음');
+  assert.deepEqual(await page.$$eval('#nf-공종 optgroup', (g) => g.map((x) => x.label)), ['전문공사', '종합공사', '다른 법에 따른 공사', '기타']);
+  await page.click('[data-msub] > summary');
   await page.check('[data-mkey="부공종"][value="정보통신공사"]');
-  await page.waitForSelector('#nf-부공종 ~ .learn-hint.warn:has-text("분리발주")');
+  await page.waitForSelector('.learn-hint.warn:has-text("분리발주")');
   assert.match(await page.inputValue('#nf-업종제한'), /전기공사업.*정보통신공사업.*모두 등록한 자 또는/);
   assert.equal(await page.inputValue('#nf-공동도급'), '허용(분담이행)');
   assert.ok(await page.$('#nf-주공종금액'), '주공종 추정가격 칸');
   await page.uncheck('[data-mkey="부공종"][value="정보통신공사"]');
   await page.waitForSelector('#nf-주공종금액', { state: 'detached' });
   assert.equal(await page.inputValue('#nf-업종제한'), '「전기공사업법」에 따른 전기공사업 등록업체'); assert.equal(await page.inputValue('#nf-공동도급'), '불허');
-  step('복합공사: 함께 들어가는 공종 → 업종제한(모두 등록 또는 분담이행)·공동도급 자동, 분리발주 대상 알림, 빼면 원래대로');
+  assert.equal(await page.$eval('[data-msub]', (d) => d.open), true, '펼쳐 둔 채로');
+  step('복합공사: 함께 들어가는 공종(접어 둠, 펼쳐서 고름) → 업종제한(모두 등록 또는 분담이행)·공동도급 자동, 분리발주 대상 알림, 빼면 원래대로');
 
   await page.fill('#lKeyword', '신갈오거리');
   await page.click('[data-nact="learn"]');
@@ -378,7 +389,7 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   await page.screenshot({ path: join(SHOTS, '6-공고문.png') });
   step('신갈오거리 검색 → 조건 빈도 추천(하한율 87.745% 적용) + 첨부 한글 공고문 문장 추출·원문 보관');
 
-  const draft = await page.$$eval('.dsec pre', (ps) => ps.map((p) => p.textContent).join('\n'));
+  const draft = await page.$$eval('.draft textarea.dbody', (ps) => ps.map((p) => p.value).join('\n'));
   assert.match(draft, /전기공사업 등록업체/); assert.match(draft, /용인시에 있는 자/); assert.match(draft, /87\.745%/);
   // 공고문 전체를 배워 절이 모두 들어감(입찰보증금·입찰서 제출·낙찰자 결정·무효·계약 체결·기타)
   const heads = await page.$$eval('.draft .dsec-head b', (b) => b.map((x) => x.textContent));
@@ -398,7 +409,7 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   await page.fill('#aiPasteText', '네, 정리했습니다.\n```json\n{"sections":[{"title":"2. 입찰참가자격","body":"  가. 붙여 넣은 답 문장"}]}\n```');
   await page.click('#aiPasteGo');
   await page.waitForSelector('.seg.dmode [data-dmode="ai"].on', { timeout: 5000 });
-  assert.match(await page.textContent('.draft'), /붙여 넣은 답 문장/);
+  assert.match(await draftText(), /붙여 넣은 답 문장/);
   // AI로 쓰기: 설정에 키를 넣고 → 연결 창구(/api/ai)로 비슷한 공고 문장과 항목 값을 보냄(시험에서는 응답을 흉내 냄)
   let aiReq = null;
   await page.route('**/api/ai', async (r) => { aiReq = JSON.parse(r.request().postData()); await r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ modelVersion: 'gemini-2.5-flash', candidates: [{ content: { role: 'model', parts: [{ text: '{"sections":[{"title":"2. 입찰참가자격","body":"  가. AI가 정리한 참가자격 문장"}]}' }] } }] }) }); });
@@ -410,7 +421,7 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   await page.keyboard.press('Escape');
   await page.click('[data-nact="ai"]');
   await page.waitForSelector('.seg.dmode [data-dmode="ai"].on', { timeout: 10000 });
-  assert.match(await page.textContent('.draft'), /AI가 정리한 참가자격 문장/);
+  assert.match(await draftText(), /AI가 정리한 참가자격 문장/);
   assert.equal(aiReq.key, 'gemini-test-key'); assert.equal(aiReq.provider, 'gemini'); assert.equal(aiReq.model, 'gemini-2.5-flash'); assert.match(aiReq.prompt, /신갈오거리 보안등 정비 전기공사/); assert.match(aiReq.system, /지어내지 않습니다/);
   assert.ok(!('aiKey' in (JSON.parse(readFileSync(join(data, '설정.json'), 'utf8')).notice || {})) || true);
   await page.click('.seg.dmode [data-dmode="learned"]');
@@ -437,12 +448,25 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   assert.match(await page.inputValue('.pick.set textarea'), /전기공사업/);
   await page.fill('.pick.set textarea', '「전기공사업법」에 따른 전기공사업 등록업체로서 고친 문장인 자');
   await page.waitForTimeout(200);
-  assert.match(await page.textContent('.draft'), /고친 문장인 자/);
+  assert.match(await draftText(), /고친 문장인 자/);
   await page.screenshot({ path: join(SHOTS, '6c-공고문-문장고르기.png') });
   await page.locator('.pick.set input[type=radio]').first().click();
   await page.waitForTimeout(200);
-  assert.doesNotMatch(await page.textContent('.draft'), /고친 문장인 자/);
+  assert.doesNotMatch(await draftText(), /고친 문장인 자/);
   step('찾은 공고 중 참고할 공고 고르기(빼면 추천에서 빠짐) + 공고마다 다른 문장(업종 등) 골라 고쳐 쓰기 → 초안 반영, 되돌리기');
+  // 문장 초안에서 바로 고치기: 고친 절은 값이 바뀌어도 그대로, 복사에 들어감, 되돌리기
+  const d0 = page.locator('.draft textarea.dbody').nth(1);
+  await d0.fill('직접 고친 절입니다. 설계서 열람장소: 용인도시공사 건설사업1팀');
+  await page.waitForSelector('.draft .dsec.edited [data-dreset]');
+  const site0 = await page.inputValue('#nf-현장');
+  await page.fill('#nf-현장', '용인시 기흥구 다른 곳'); await page.waitForTimeout(200);
+  assert.match(await draftText(), /직접 고친 절입니다/);
+  await page.click('[data-nact="copyall"]');
+  assert.match(await page.evaluate(() => navigator.clipboard.readText()), /직접 고친 절입니다/);
+  await page.click('.draft .dsec.edited [data-dreset]');
+  assert.doesNotMatch(await draftText(), /직접 고친 절입니다/);
+  await page.fill('#nf-현장', site0);
+  step('문장 초안에서 절을 바로 고치기(값을 바꿔도 유지, 전체 복사에 반영), 되돌리기');
 
   // 한글 양식 올리고 채우기(시험 PC엔 한글이 없어 HWPX 직접 채우기로 처리)
   await page.click('#btnSettings');

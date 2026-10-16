@@ -278,14 +278,14 @@ test('공고마다 다른 문장 고르기: 주제별 문장 모으기, 고르�
     { name: '가시 폐기물 처리 용역', org: '가시', doc: doc(['가. 「폐기물관리법」에 따른 폐기물 수집·운반업 허가를 받은 업체', '나. 공고일 전일부터 경기도에 본점 소재지를 둔 업체'], '가. 공동도급은 허용하지 않습니다.') },
     { name: '나시 생활폐기물 용역', org: '나시', doc: doc(['가. 「폐기물관리법」에 따른 폐기물 수집·운반업(생활폐기물) 허가를 받은 업체'], '가. 공동이행방식에 의한 공동도급을 허용합니다.') },
   ];
-  const v = N.applyRules({ ...N.blank({}), 구분: '용역', 공종: '폐기물 수집·운반·처리', 지역제한: '용인시' }, {}, {});
+  const v = N.applyRules({ ...N.blank({}), 구분: '용역', 공종: '생활폐기물 수집·운반', 지역제한: '용인시' }, {}, {});
   const ts = N.topicVariants({ bids }, [], v, 'x');
   const up = ts.find((t) => t.key === '업종'), jt = ts.find((t) => t.key === '공동도급'), rg = ts.find((t) => t.key === '지역');
   assert.equal(up.variants.length, 2, '업종 문장 2가지(다른 기관 공고)');
   assert.match(up.variants[0].text, /폐기물 수집·운반업/);
   assert.equal(jt.variants.length, 2);
   assert.match(rg.variants[0].shown, /용인시/, '지역 문장은 이번 지역으로 바꿔 보여 줌');
-  assert.ok(N.WORK_TYPES.용역.some((w) => w.name === '폐기물 수집·운반·처리'));
+  assert.ok(N.WORK_TYPES.용역.some((w) => w.name === '생활폐기물 수집·운반'));
   // 고른 문장 → 초안
   const v2 = { ...v, 업종문장: up.variants[1].text, 고른문장: { 공동도급: jt.variants[1].shown } };
   const body = N.draft(v2).map((x) => x.body).join('\n');
@@ -310,4 +310,14 @@ test('다른 기관 공고 문장은 우리 것으로: 기관명·관내 지역�
   const body = N.draft({ ...N.blank({}), ...v, 구분: '용역' }, { bids: [{ ...b, doc }] }).map((x) => x.body).join('\n');
   assert.doesNotMatch(body, /익산/);
   assert.match(body, /용인도시공사 회계과에서 계약을 체결/);
+});
+
+test('배운 초안의 설계서 열람장소·문의 줄은 이번 공고 부서·연락처로', () => {
+  const v = { 기관명: '용인도시공사', 담당부서: '재무관리처 계약팀', 연락처: '031-330-3972', 사업부서: '건설사업1팀', 사업부서연락처: '070-8833-1935' };
+  assert.equal(N.ourContacts('설계서 열람장소 : 익산시 도로과(☎ 063-859-0000)', v), '설계서 열람장소 : 용인도시공사 건설사업1팀 (☎ 070-8833-1935)');
+  assert.equal(N.ourContacts('- 계약에 관한 사항 : 회계과(063-859-1111)', v), '- 계약에 관한 사항 : 재무관리처 계약팀 (☎ 031-330-3972)');
+  assert.equal(N.ourContacts('- 공사에 관한 사항 : 도로과', { ...v, 사업부서: '' }), '- 공사에 관한 사항 : ○○(사업부서)');
+  assert.equal(N.ourContacts('입찰은 전자입찰로 합니다.', v), '입찰은 전자입찰로 합니다.');
+  assert.ok(N.WORK_TYPES.용역.length >= 30 && new Set(N.WORK_TYPES.용역.map((w) => w.g)).size >= 4, '용역 공종 묶음별');
+  assert.equal(N.licenseSentence([N.workType('용역', '생활폐기물 수집·운반')]), '「폐기물관리법」에 따른 폐기물수집·운반업(생활폐기물) 허가업체');
 });

@@ -564,3 +564,17 @@ details.adv > summary { cursor: pointer; color: var(--ink-2); font-size: 13px; f
 body.resizing { cursor: col-resize; user-select: none; }
 /* 목록을 넓히면 긴 계약명도 두 줄까지 보여 줌 */
 .view.wide-list .citem .nm { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+/* 함께 들어가는 공종: 접어 둠 */
+.msub { border: 1px solid var(--rule-soft); border-radius: 7px; background: var(--sheet); }
+.msub > summary { cursor: pointer; padding: 7px 10px; font-size: 13.5px; }
+.msub[open] > summary { border-bottom: 1px solid var(--rule-soft); }
+.msub .multi { padding: 10px; max-height: 260px; overflow: auto; }
+.msub .mgroup { flex-basis: 100%; font-size: 12px; font-weight: 700; color: var(--muted); margin-top: 4px; }
+.msub .mgroup:first-child { margin-top: 0; }
+/* 문장 초안: 절을 눌러 바로 고치기 */
+.dsec textarea.dbody { display: block; width: 100%; margin: 4px 0 0; padding: 4px 6px; border: 1px solid transparent; border-radius: 6px; background: transparent; resize: vertical; white-space: pre-wrap; font: 13.5px/1.7 "Pretendard", "Malgun Gothic", sans-serif; color: var(--text); field-sizing: content; min-height: 2.6em; }
+.dsec textarea.dbody:hover { border-color: var(--rule-soft); background: var(--sheet); }
+.dsec textarea.dbody:focus { outline: none; border-color: var(--ink-2); background: var(--sheet); box-shadow: 0 0 0 3px var(--ink-soft); }
+.dsec.edited textarea.dbody { border-color: var(--rule); background: var(--ok-soft); }
+.lbadge.ok { background: var(--ok-soft); color: var(--ok); }
+.btn-group { display: inline-flex; gap: 6px; flex-wrap: wrap; }

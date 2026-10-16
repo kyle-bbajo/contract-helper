@@ -10,43 +10,73 @@
 
   // ---------- 공종 → 업종(면허) ----------
   // 업종명은 2022년 전문건설업 대업종 개편 기준. 회사 기준과 다르면 공고문 화면에서 바로 고칠 수 있음
+  // g: 고르는 목록의 묶음, license: 나라장터 업종명(업종으로 비슷한 공고 찾기·업종제한 문장), act: 등록/허가/신고, q: 공고명 검색어
+  // 용역 업종명은 나라장터 입찰공고의 업종 이름 기준(2026). 회사 기준과 다르면 공고문 화면에서 바로 고칠 수 있음
+  const GEN = '건설산업기본법';
   const WORK_TYPES = {
     공사: [
-      { name: '전기공사', license: '전기공사업', law: '전기공사업법' },
-      { name: '정보통신공사', license: '정보통신공사업', law: '정보통신공사업법' },
-      { name: '소방시설공사', license: '소방시설공사업', law: '소방시설공사업법' },
-      { name: '기계설비공사', license: '기계설비·가스공사업', law: '건설산업기본법' },
-      { name: '실내건축공사', license: '실내건축공사업', law: '건설산업기본법' },
-      { name: '도장·방수공사', license: '도장·습식·방수·석공사업', law: '건설산업기본법' },
-      { name: '금속·창호·지붕공사', license: '금속창호·지붕건축물조립공사업', law: '건설산업기본법' },
-      { name: '철근·콘크리트공사', license: '철근·콘크리트공사업', law: '건설산업기본법' },
-      { name: '지반조성·포장공사', license: '지반조성·포장공사업', law: '건설산업기본법' },
-      { name: '해체·비계공사', license: '구조물해체·비계공사업', law: '건설산업기본법' },
-      { name: '상·하수도설비공사', license: '상·하수도설비공사업', law: '건설산업기본법' },
-      { name: '조경식재·시설물공사', license: '조경식재·시설물공사업', law: '건설산업기본법' },
-      { name: '조경공사', license: '조경공사업', law: '건설산업기본법' },
-      { name: '건축공사(종합)', license: '건축공사업', law: '건설산업기본법' },
-      { name: '토목공사(종합)', license: '토목공사업', law: '건설산업기본법' },
-      { name: '토목건축공사(종합)', license: '토목건축공사업', law: '건설산업기본법' },
-      { name: '기타', license: '', law: '' },
+      { g: '전문공사', name: '실내건축공사', license: '실내건축공사업', law: GEN },
+      { g: '전문공사', name: '도장·방수공사', license: '도장·습식·방수·석공사업', law: GEN },
+      { g: '전문공사', name: '금속·창호·지붕공사', license: '금속창호·지붕건축물조립공사업', law: GEN },
+      { g: '전문공사', name: '철근·콘크리트공사', license: '철근·콘크리트공사업', law: GEN },
+      { g: '전문공사', name: '지반조성·포장공사', license: '지반조성·포장공사업', law: GEN },
+      { g: '전문공사', name: '해체·비계공사', license: '구조물해체·비계공사업', law: GEN },
+      { g: '전문공사', name: '상·하수도설비공사', license: '상·하수도설비공사업', law: GEN },
+      { g: '전문공사', name: '조경식재·시설물공사', license: '조경식재·시설물공사업', law: GEN },
+      { g: '전문공사', name: '기계설비공사', license: '기계설비·가스공사업', law: GEN },
+      { g: '전문공사', name: '가스난방공사', license: '가스난방공사업', law: GEN },
+      { g: '전문공사', name: '철강구조물공사', license: '철강구조물공사업', law: GEN },
+      { g: '전문공사', name: '승강기·삭도공사', license: '승강기·삭도공사업', law: GEN },
+      { g: '전문공사', name: '수중·준설공사', license: '수중·준설공사업', law: GEN },
+      { g: '전문공사', name: '철도·궤도공사', license: '철도·궤도공사업', law: GEN },
+      { g: '종합공사', name: '토목공사(종합)', license: '토목공사업', law: GEN },
+      { g: '종합공사', name: '건축공사(종합)', license: '건축공사업', law: GEN },
+      { g: '종합공사', name: '토목건축공사(종합)', license: '토목건축공사업', law: GEN },
+      { g: '종합공사', name: '조경공사', license: '조경공사업', law: GEN },
+      { g: '종합공사', name: '산업·환경설비공사', license: '산업·환경설비공사업', law: GEN },
+      { g: '다른 법에 따른 공사', name: '전기공사', license: '전기공사업', law: '전기공사업법' },
+      { g: '다른 법에 따른 공사', name: '정보통신공사', license: '정보통신공사업', law: '정보통신공사업법' },
+      { g: '다른 법에 따른 공사', name: '소방시설공사', license: '소방시설공사업', law: '소방시설공사업법' },
+      { g: '다른 법에 따른 공사', name: '문화유산 수리', license: '문화유산수리업', law: '문화유산의 수리 등에 관한 법률', q: '보수' },
+      { g: '기타', name: '기타', license: '', law: '' },
     ],
     용역: [
-      { name: '폐기물 수집·운반·처리', license: '', law: '폐기물관리법', q: '폐기물' },
-      { name: '시설물 유지관리', license: '', law: '', q: '유지관리' },
-      { name: '청소·경비 등 단순노무', license: '', law: '', q: '청소' },
-      { name: '소독·방역', license: '', law: '감염병의 예방 및 관리에 관한 법률', q: '방역' },
-      { name: '승강기 유지관리', license: '승강기유지관리업', law: '승강기 안전관리법', q: '승강기' },
-      { name: '소방시설 점검·관리', license: '소방시설관리업', law: '소방시설 설치 및 관리에 관한 법률', q: '소방시설' },
-      { name: '안전진단·점검', license: '', law: '시설물의 안전 및 유지관리에 관한 특별법', q: '안전점검' },
-      { name: '수목·조경 관리', license: '', law: '', q: '수목' },
-      { name: '측량', license: '측량업', law: '공간정보의 구축 및 관리 등에 관한 법률', q: '측량' },
-      { name: '설계·감리 등 기술용역', license: '', law: '', q: '설계' },
-      { name: '학술·연구', license: '', law: '', q: '연구' },
-      { name: '정보화(SW)', license: '소프트웨어사업자', law: '소프트웨어 진흥법', q: '시스템' },
-      { name: '행사·홍보', license: '', law: '', q: '행사' },
-      { name: '기타', license: '', law: '' },
+      { g: '환경·폐기물', name: '생활폐기물 수집·운반', license: '폐기물수집·운반업(생활폐기물)', law: '폐기물관리법', act: '허가', q: '생활폐기물' },
+      { g: '환경·폐기물', name: '사업장폐기물 수집·운반', license: '폐기물수집·운반업(사업장배출시설계폐기물)', law: '폐기물관리법', act: '허가', q: '폐기물 수집' },
+      { g: '환경·폐기물', name: '지정폐기물 수집·운반', license: '폐기물수집·운반업(지정폐기물)', law: '폐기물관리법', act: '허가', q: '지정폐기물' },
+      { g: '환경·폐기물', name: '폐기물 처리(처분·재활용)', license: '폐기물중간처분업', law: '폐기물관리법', act: '허가', q: '폐기물 처리' },
+      { g: '환경·폐기물', name: '건설폐기물 처리', license: '건설폐기물중간처리업', law: '건설폐기물의 재활용촉진에 관한 법률', act: '허가', q: '건설폐기물' },
+      { g: '환경·폐기물', name: '정화조(개인하수처리시설) 관리', license: '개인하수처리시설관리업', law: '하수도법', q: '정화조' },
+      { g: '환경·폐기물', name: '소독·방역', license: '소독업', law: '감염병의 예방 및 관리에 관한 법률', act: '신고', q: '방역' },
+      { g: '환경·폐기물', name: '저수조 청소', license: '저수조청소업', law: '수도법', act: '신고', q: '저수조' },
+      { g: '건물·시설 관리', name: '청소(건물위생관리)', license: '건물위생관리업', law: '공중위생관리법', act: '신고', q: '청소' },
+      { g: '건물·시설 관리', name: '시설경비', license: '시설경비업', law: '경비업법', act: '허가', q: '경비' },
+      { g: '건물·시설 관리', name: '시설물 유지관리', license: '', law: '', q: '유지관리' },
+      { g: '건물·시설 관리', name: '승강기 유지관리', license: '승강기유지관리업', law: '승강기 안전관리법', q: '승강기' },
+      { g: '건물·시설 관리', name: '소방시설 점검·관리', license: '소방시설관리업', law: '소방시설 설치 및 관리에 관한 법률', q: '소방시설' },
+      { g: '건물·시설 관리', name: '기계설비 성능점검', license: '기계설비성능점검업', law: '기계설비법', q: '성능점검' },
+      { g: '건물·시설 관리', name: '전기안전관리 대행', license: '', law: '전기안전관리법', q: '전기안전관리' },
+      { g: '건물·시설 관리', name: '안전진단·점검', license: '', law: '시설물의 안전 및 유지관리에 관한 특별법', q: '안전점검' },
+      { g: '건물·시설 관리', name: '수목·조경 관리', license: '', law: '', q: '수목' },
+      { g: '기술용역', name: '건설엔지니어링(설계·감리)', license: '건설엔지니어링업', law: '건설기술 진흥법', q: '설계' },
+      { g: '기술용역', name: '엔지니어링(기술용역)', license: '엔지니어링사업', law: '엔지니어링산업 진흥법', act: '신고', q: '기술용역' },
+      { g: '기술용역', name: '건축 설계·감리', license: '', law: '건축사법', q: '건축설계' },
+      { g: '기술용역', name: '전기 설계·감리', license: '', law: '전력기술관리법', q: '전기 감리' },
+      { g: '기술용역', name: '정보통신 설계·감리', license: '정보통신용역업', law: '정보통신공사업법', q: '정보통신 감리' },
+      { g: '기술용역', name: '소방 설계·감리', license: '', law: '소방시설공사업법', q: '소방 감리' },
+      { g: '기술용역', name: '측량', license: '측량업', law: '공간정보의 구축 및 관리 등에 관한 법률', q: '측량' },
+      { g: '정보·연구·일반', name: '정보화(SW 개발·유지보수)', license: '소프트웨어사업자(컴퓨터관련서비스사업)', law: '소프트웨어 진흥법', act: '신고', q: '시스템' },
+      { g: '정보·연구·일반', name: '학술·연구', license: '학술.연구용역', law: '', q: '연구용역' },
+      { g: '정보·연구·일반', name: '행사·홍보', license: '', law: '', q: '행사' },
+      { g: '정보·연구·일반', name: '광고·디자인·인쇄', license: '', law: '', q: '디자인' },
+      { g: '정보·연구·일반', name: '위탁운영·교육', license: '', law: '', q: '위탁' },
+      { g: '정보·연구·일반', name: '근로자 파견', license: '근로자파견사업', law: '파견근로자 보호 등에 관한 법률', act: '허가', q: '파견' },
+      { g: '정보·연구·일반', name: '차량·장비 임차', license: '', law: '', q: '임차' },
+      { g: '기타', name: '기타', license: '', law: '' },
     ],
   };
+  // 업종제한 문장의 끝말: "등록업체", 폐기물 수집·운반업처럼 허가면 "허가업체"
+  const actOf = (w) => (w && w.act) || '등록';
   const workType = (kind, name) => (WORK_TYPES[kind] || []).find((w) => w.name === name) || null;
   // 복합공사: 주공종 + 함께 들어가는 공종(부공종, "조경공사, 포장공사"처럼 쉼표로)
   const splitList = (s) => String(s || '').split(/\s*[,·、]\s*/).map((x) => x.trim()).filter(Boolean);
@@ -64,8 +94,8 @@
   }
   function licenseSentence(ws) {
     if (!ws.length) return '';
-    if (ws.length === 1) return `「${ws[0].law}」에 따른 ${ws[0].license} 등록업체`;
-    return `${licensePhrase(ws)}을 모두 등록한 자 또는 ${ws.map((w) => w.license + ' 등록업체').join('와 ')}가 분담이행방식으로 공동수급체를 구성한 자`;
+    if (ws.length === 1) return `${ws[0].law ? `「${ws[0].law}」에 따른 ` : ''}${ws[0].license} ${actOf(ws[0])}업체`;
+    return `${licensePhrase(ws)}을 모두 ${ws.every((w) => actOf(w) === actOf(ws[0])) ? actOf(ws[0]) : '등록·허가'}한 자 또는 ${ws.map((w) => `${w.license} ${actOf(w)}업체`).join('와 ')}가 분담이행방식으로 공동수급체를 구성한 자`;
   }
 
   // ---------- 항목 ----------
@@ -151,7 +181,7 @@
       set('업종제한', licenseSentence(ws));
       set('공동도급', '허용(분담이행)'); // 복합공사는 각 업종 등록업체끼리 분담이행 공동도급이 일반적
     } else {
-      if (w) set('업종제한', w.license ? `「${w.law}」에 따른 ${w.license} 등록업체` : out.업종제한 || '');
+      if (w) set('업종제한', w.license ? licenseSentence([w]) : out.업종제한 || '');
       if (!m.공동도급 && out.공동도급 === '허용(분담이행)' && !subs.length) out.공동도급 = '불허';
       if (!subs.length) out.주공종금액 = m.주공종금액 ? out.주공종금액 : '';
     }
@@ -459,6 +489,18 @@
     });
     return x.replace(/(https?:\/\/)?www\.[a-z0-9.-]+\.(go|or|co|re)\.kr(\/[^\s)」]*)?/gi, (u) => (/g2b|law\.go|ftc\.go|mois\.go|pps\.go|kca\.go/.test(u) ? u : '○○'));
   }
+  // 설계서 열람장소·계약 문의·공사 문의 줄은 다른 공고 것이 아니라 이번 공고의 부서·연락처로
+  function ourContacts(t, v) {
+    const m = String(t).match(/^(.{0,30}?(열람\s*장소|문의\s*처?|에\s*관한\s*사항|담당\s*부서)[^:：]{0,12}[:：]\s*)(.+)$/);
+    if (!m || !v) return t;
+    const label = m[1];
+    const contract = `${v.담당부서 || '○○'}${v.연락처 ? ` (☎ ${v.연락처})` : ''}`;
+    const biz = v.사업부서 ? `${v.기관명 ? v.기관명 + ' ' : ''}${v.사업부서}${v.사업부서연락처 ? ` (☎ ${v.사업부서연락처})` : ''}` : '○○(사업부서)';
+    if (/열람/.test(label)) return label + biz;
+    if (/계약|입찰/.test(label)) return label + contract;
+    if (/공사|용역|사업|기술|설계|과업|감독/.test(label)) return label + biz;
+    return t;
+  }
   function learnSentences(bids, v) {
     const by = {}; let n = 0;
     for (const b of bids || []) {
@@ -661,7 +703,8 @@
       const { mark, body } = bulletOf(l);
       const key = slotify(swap(body, b));
       if (sec === '입찰서 제출·개찰' && /\{날짜\}|\{시각\}/.test(key)) return null; // 일정은 이번 값으로 따로 씀
-      const text = fillSlots(key, v); if (!text) return null;
+      const t0 = fillSlots(key, v); if (!t0) return null;
+      const text = ourContacts(t0, v);
       return { mark, text, common: cnt(lineKey(sec, l)) >= Math.max(2, min), check: /○○/.test(text) };
     };
     const uniq = (ls) => { const seenT = new Set(); return ls.filter((x) => x && !seenT.has(x.text) && seenT.add(x.text)); };
@@ -1096,7 +1139,7 @@
 
   const api = { SECTION_LABEL, leafParagraphs, spliceRuns, fillNoticeXml, fillNoticeHwpx, noticeKind, WORK_TYPES, workType, subWorks, worksOf, separateIn, licensePhrase, licenseSentence, splitList, jointBody, FIELDS, SECTIONS, labelOf, money, won, blank, applyRules,
     BID_OPS, bidSearchUrl, bidDetailUrl, slotify, learnSentences, learnedSections, aiPrompt, parseAi, AI_SYSTEM, STATUS, STATUS_ORDER, statusOf, parseBidNo, bidByNoUrl, normalizeBid, attachmentsOf, extractClauses, regionLabel, learn, mapMethod, mapContract,
-    localize, licenseExamples, isLicLine, licClause, TOPICS, topicVariants, applyPicks, pickOf, draft, draftFull, parseNotice, learnDocument, mergeWrapped, secKey, regionSentence, templateValues, fillHwpxXml, fillHwpx, zipStore, crc32, placeholdersIn, fmtDT };
+    localize, ourContacts, licenseExamples, isLicLine, licClause, TOPICS, topicVariants, applyPicks, pickOf, draft, draftFull, parseNotice, learnDocument, mergeWrapped, secKey, regionSentence, templateValues, fillHwpxXml, fillHwpx, zipStore, crc32, placeholdersIn, fmtDT };
   root.JH = root.JH || {};
   root.JH.notice = Object.assign(root.JH.notice || {}, { logic: api });
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
