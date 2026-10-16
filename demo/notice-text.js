@@ -44,5 +44,52 @@ function noticeText({ name = '신갈오거리 보안등 정비 전기공사', or
     `다. 기타 자세한 사항은 ${org} 계약팀(☎ 031-000-0000)으로 문의하시기 바랍니다.`,
   ];
 }
-if (typeof module !== 'undefined' && module.exports) module.exports = { noticeText };
-if (typeof window !== 'undefined') window.JH_NOTICE_TEXT = noticeText;
+// 회사 양식처럼 생긴 입찰공고·견적공고 한글 본문(XML) — 시험·시연용(가상의 값)
+// 이름표와 값이 다른 글자 조각, A값 표(이름 칸 아래 값), 평가대상업종 표, 연락처 줄, [업종(코드)] 포함
+function templateXml(kind = '입찰공고') {
+  const x = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const P = (t) => { const m = String(t).match(/^(.*?:\s*)(.+)$/); return m && m[1].length < 30 ? `<hp:p><hp:run charPrIDRef="20"><hp:t>${x(m[1])}</hp:t></hp:run><hp:run charPrIDRef="21"><hp:t>${x(m[2])}</hp:t></hp:run><hp:linesegarray><hp:lineseg/></hp:linesegarray></hp:p>` : `<hp:p><hp:run charPrIDRef="20"><hp:t>${x(t)}</hp:t></hp:run></hp:p>`; };
+  const cell = (t, c, r) => `<hp:tc><hp:subList>${String(t).split('\n').map((l) => `<hp:p><hp:run><hp:t>${x(l)}</hp:t></hp:run></hp:p>`).join('')}</hp:subList><hp:cellAddr colAddr="${c}" rowAddr="${r}"/></hp:tc>`;
+  const table = (rows) => `<hp:p><hp:run><hp:tbl>${rows.map((row, r) => `<hp:tr>${row.map((t, c) => cell(t, c, r)).join('')}</hp:tr>`).join('')}</hp:tbl><hp:t/></hp:run></hp:p>`;
+  const quote = kind === '견적공고';
+  const body = [
+    P('가상도시공사 공고 제2026 - 101호'),
+    P(quote ? '공사 견적제출 안내 공고' : '입찰공고'),
+    P(quote ? '1. 견적에 부치는 사항' : '1. 입찰에 부치는 사항'),
+    P('가. 공 사 명 : 가상동 소공원 정비공사'),
+    P('나. 공사현장 : 경기도 용인시 처인구 가상동 1-1번지 일원'),
+    P('다. 공사개요 : 산책로 포장, 수목 식재 등'),
+    P('라. 공사기간 : 착공일로부터 90일'),
+    quote ? P('마. 공사예정금액 : 금110,000,000원') : P('마. 추정금액 : 금110,000,000원(추정가격 금100,000,000원 + 부가가치세 금10,000,000원)'),
+    ...(quote ? [P('(추정가격 금100,000,000원 + 부가가치세 금10,000,000원)')] : [P('◦ 평가대상업종 및 평가비율(추정가격)'), table([['업종', '추정가격', '비율'], ['조경공사업', '100,000,000원', '100%']])]),
+    P('바. 기초금액 : 금110,000,000원'),
+    P(quote ? '2. 견적서 제출 및 계약방식' : '2. 입찰 및 계약방식'),
+    P(`나. 입찰방법은 총액입찰, 지역제한(경기도), ${quote ? '' : '적격심사, '}청렴계약 대상 공사입니다.`),
+    P('라. 본 계약은 공동수급을 불허합니다.'),
+    P(quote ? '3. 견적서 제출 및 개찰' : '3. 전자입찰서 제출 및 개찰'),
+    P('가. 입찰서 제출기간 : 2026. 3. 2. 09:00 ~ 2026. 3. 6. 12:00까지'),
+    P('나. 개찰일시 : 2026. 3. 6. 13:00 이후 / 입찰집행관 PC'),
+    P(quote ? '4. 견적참가자격' : '4. 입찰참가자격'),
+    P('가. 지방자치단체를 당사자로 하는 계약에 관한 법률 시행령 제13조의 규정에 의거 소정의 자격을 갖추고, 다음의 자격을 모두 갖추어야 합니다.'),
+    P('1) 건설산업기본법령에 따른 종합공사업 중 [조경공사업(0000)] 면허를 등록한 업체이어야 합니다.'),
+    P('2) 공고일 전일부터 개찰일까지 법인등기부상 본점 소재지가 경기도 관내로 당해 참가자격을 계속 유지하여야 합니다.'),
+    P('5. 현장설명'),
+    P('나. 설계서 열람장소 : 가상도시공사 공원사업팀 (☏ 070-0000-1111)'),
+    P('9. 예정가격 및 낙찰자 결정방법'),
+    P('나. 예정가격 이하로서 낙찰하한율(87.745%) 이상으로 입찰한 자 순으로 계약상대자를 결정합니다.'),
+    P('※ 순공사원가(재료비·노무비·경비·부가가치세 합계액) : 금95,000,000원'),
+    P('10. 국민건강보험료 등 사후정산에 관한 사항'),
+    P('가. 국민건강보험료(금1,000,000원), 국민연금보험료(금1,200,000원)는 사후 정산을 하게 됩니다.'),
+    table([['국민건강\n보험료', '국민연금\n보험료', '노인장기요양\n보험료'], ['1,000,000원', '1,200,000원', '130,000원']]),
+    P('A값: 2,330,000원'),
+    P('15. 기 타'),
+    P('바. 본 입찰 건과 관련하여 부당한 요구를 할 경우 행동강령책임관(감사실 031-000-9999)에게 신고하여 주시기 바랍니다.'),
+    P('- 계약에 관한 사항 : 재무관리처 회계팀(☏031-000-2222)'),
+    P('- 공사에 관한 사항 : 가상도시공사 공원사업팀(☏ 070-0000-1111)'),
+    P('2026년 2월 27일'),
+    P('가상도시공사 재무관'),
+  ];
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?><hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">' + body.join('') + '</hs:sec>';
+}
+if (typeof module !== 'undefined' && module.exports) module.exports = { noticeText, templateXml };
+if (typeof window !== 'undefined') { window.JH_NOTICE_TEXT = noticeText; window.JH_TEMPLATE_XML = templateXml; }

@@ -183,3 +183,36 @@ test('복합공사(토목 + 조경): 업종제한·분담이행 공동도급 자
   assert.equal(N.licensePhrase(N.worksOf(e)), '「건설산업기본법」에 따른 건축공사업과 조경공사업 및 「전기공사업법」에 따른 전기공사업');
   assert.deepEqual(N.separateIn(e), ['전기공사']);
 });
+
+test('한글 양식 그대로 채우기: 이름표·표(오른쪽/아래)·괄호 금액·A값·연락처·업종코드·지역·공고일, 글자 모양 유지', () => {
+  const { templateXml } = require('../../demo/notice-text.js');
+  const xml = templateXml('입찰공고');
+  let v = N.applyRules({ ...N.blank({ insttNm: '가상도시공사', notice: { region: '용인시', dept: '재무관리처 계약팀', phone: '031-000-3333' } }),
+    공고명: '○○동 주거환경개선사업', 공고번호: '2026 - 310', 공종: '토목공사(종합)', 부공종: '조경공사', 현장: '용인시 처인구 ○○동 일원', 기간: '착공일로부터 180일', 개요: '도로 정비',
+    추정가격: '200,000,000', 기초금액: '220,000,000', 낙찰하한율: '89.745%', 입찰시작: '2026-11-02T09:00', 입찰마감: '2026-11-06T12:00', 개찰일시: '2026-11-06T13:00',
+    국민건강보험료: '2,000,000', 국민연금보험료: '2,500,000', 사업부서: '도시재생팀', 사업부서연락처: '070-1234-5678', 공고일: '2026-10-30', 연락처: '031-000-3333' }, {}, {});
+  const r = N.fillNoticeXml(xml, v);
+  const t = r.xml.replace(/<\/hp:p>/g, '\n').replace(/<[^>]+>/g, '');
+  assert.match(t, /공고 제2026 - 310호/);
+  assert.match(t, /가\. 공 사 명 : ○○동 주거환경개선사업\n/); assert.match(t, /공사현장 : 용인시 처인구 ○○동 일원/); assert.match(t, /공사기간 : 착공일로부터 180일/); assert.match(t, /공사개요 : 도로 정비/);
+  assert.match(t, /추정금액 : 금220,000,000원\(추정가격 금200,000,000원 \+ 부가가치세 금20,000,000원\)/);
+  assert.match(t, /입찰서 제출기간 : 2026\. 11\. 2\. 09:00 ~ 2026\. 11\. 6\. 12:00까지/); assert.match(t, /개찰일시 : 2026\. 11\. 6\. 13:00 이후/);
+  assert.match(t, /지역제한\(용인시\)/); assert.match(t, /본점 소재지가 용인시 관내/); assert.match(t, /낙찰하한율\(89\.745%\)/);
+  assert.match(t, /\[토목공사업\(○○○○\)\], \[조경공사업\(0000\)\]/, '같은 업종 코드는 그대로, 새 업종은 ○○○○');
+  assert.match(t, /설계서 열람장소 : 가상도시공사 도시재생팀 \(☏ 070-1234-5678\)/);
+  assert.match(t, /계약에 관한 사항 : 재무관리처 계약팀\(☏031-000-3333\)/); assert.match(t, /공사에 관한 사항 : 가상도시공사 도시재생팀\(☏ 070-1234-5678\)/);
+  assert.match(t, /감사실 031-000-9999/, '감사실 전화는 그대로');
+  assert.match(t, /국민건강보험료\(금2,000,000원\), 국민연금보험료\(금2,500,000원\)/);
+  assert.match(t, /2,000,000원\n2,500,000원\n○○○원/, 'A값 표: 이름 칸 아래 값, 이번 값이 없으면 ○○○');
+  assert.match(t, /A값: 4,500,000원/); assert.match(t, /순공사원가[^\n]*: 금○○○원/);
+  assert.match(t, /2026년 10월 30일/);
+  assert.match(t, /이 입찰은 분담이행방식의 공동계약을 허용합니다/);
+  // 평가대상업종 표: 공종이 둘이면 확인할 것으로
+  assert.ok(r.notes.some((x) => /평가대상업종/.test(x))); assert.ok(r.notes.some((x) => /토목공사업 업종코드/.test(x)));
+  assert.ok(r.notes.some((x) => /노인장기요양보험료/.test(x)) && r.notes.some((x) => /순공사원가/.test(x)));
+  // 이름표 글자 조각(charPrIDRef=20)은 그대로, 값은 값 조각(21)에
+  assert.match(r.xml, /<hp:run charPrIDRef="20"><hp:t>가\. 공 사 명 : <\/hp:t><\/hp:run><hp:run charPrIDRef="21"><hp:t>○○동 주거환경개선사업<\/hp:t>/);
+  assert.doesNotMatch(r.xml, /linesegarray/);
+  // 견적공고 종류는 계약방법으로
+  assert.equal(N.noticeKind({ 계약방법: '수의계약(2인 이상 견적)' }), '견적공고'); assert.equal(N.noticeKind({ 계약방법: '제한경쟁' }), '입찰공고');
+});

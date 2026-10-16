@@ -343,8 +343,10 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   await page.waitForSelector('#view-home.on');
   await page.click('.door[data-view="notice"]');
   await page.click('[data-nact="new"] >> nth=0');
-  await page.waitForSelector('#nTitle');
-  await page.fill('#nTitle', '신갈오거리 보안등 정비 전기공사');
+  await page.waitForSelector('#nf-공고명.need');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'nf-공고명', '새 공고문은 공고명 칸부터');
+  await page.fill('#nf-공고명', '신갈오거리 보안등 정비 전기공사');
+  await page.waitForSelector('#nTitle:has-text("신갈오거리 보안등 정비 전기공사")');
   await page.fill('#nf-추정가격', '32000000'); await page.press('#nf-추정가격', 'Tab');
   const v1 = await page.evaluate(() => JH.notice.logic && document.querySelector('#nf-업종제한').value);
   assert.equal(v1, '「전기공사업법」에 따른 전기공사업 등록업체');
@@ -430,6 +432,30 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   assert.match(xml, /용인도시공사 공고/); assert.match(xml, /「신갈오거리 보안등 정비 전기공사」/); assert.match(xml, /추정가격 32,000,000원, 지역 용인시, 하한율 87\.745%/);
   step('한글 양식(HWPX)의 {{항목}} 채워 새 파일 생성(쪼개진 표시 포함)');
 
+  // 입찰공고 양식(표시 없는 회사 양식)을 올리면 그 모양 그대로 이번 값으로 채움
+  const { templateXml } = require('../../demo/notice-text.js');
+  const N0 = require('../../src/app/js/notice-logic.js');
+  const tplBytes = Buffer.from(N0.zipStore([{ name: 'mimetype', data: Buffer.from('application/hwp+zip') }, { name: 'Contents/section0.xml', data: Buffer.from(templateXml('입찰공고')) }]));
+  await page.click('#btnSettings');
+  await page.click('#dlgSettings .dlg-tabs button[data-tab="notice"]');
+  await page.waitForSelector('[data-slotup="입찰공고"]');
+  const [slotFc] = await Promise.all([page.waitForEvent("filechooser"), page.click("[data-slotup=\"입찰공고\"]")]);
+  await slotFc.setFiles({ name: "ipchal.hwpx", mimeType: 'application/octet-stream', buffer: tplBytes });
+  await waitFor(() => page.$('.toast:has-text("입찰공고 양식을 올렸습니다")'), 10000, '입찰공고 양식 올리기');
+  assert.match(await page.textContent('.tpl-slot.on'), /바꿀 자리: 공고명/);
+  await page.screenshot({ path: join(SHOTS, '7b-설정-공고문양식.png') });
+  await page.keyboard.press('Escape');
+  assert.match(await page.textContent('[data-nact="hwp"]'), /입찰공고 양식/);
+  await page.click('[data-nact="hwp"]');
+  await waitFor(() => page.$('.toast:has-text("입찰공고 한글 파일을 만들었습니다")'), 20000, '입찰공고 한글 파일');
+  const outs = readdirSync(join(data, '공고문', '작성')).filter((f) => f.includes('입찰공고'));
+  const xml2 = execFileSync('python3', ['-c', 'import zipfile,sys;z=zipfile.ZipFile(sys.argv[1]);print(z.read("Contents/section0.xml").decode())', join(data, '공고문', '작성', outs[0])]).toString().replace(/<\/hp:p>/g, '\n').replace(/<[^>]+>/g, '');
+  assert.match(xml2, /공 사 명 : 신갈오거리 보안등 정비 전기공사/); assert.match(xml2, /지역제한\(용인시\)/); assert.match(xml2, /낙찰하한율\(87\.745%\)/);
+  assert.match(xml2, /\[전기공사업\(○○○○\)\]/);
+  await page.waitForSelector('.hreport.warn .hcheck li');
+  await page.screenshot({ path: join(SHOTS, '7c-공고문-한글결과.png') });
+  step('입찰공고 양식(표시 없는 회사 양식) 올림 → 그 모양 그대로 공고명·지역·하한율·업종 등 채운 한글 파일 + 확인할 것 표시');
+
   // 진행 상태: 한글 양식을 만들면 작성 완료 → 나라장터 입찰공고번호를 넣으면 등록(잠금) → 복사해서 새로 쓰기는 작성 중
   assert.match(await page.textContent('.lgroup'), /작성 완료/);
   assert.match(await page.textContent('.nstep.on'), /작성 완료/);
@@ -438,12 +464,12 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   await waitFor(() => page.$('.toast:has-text("나라장터에서 확인했습니다")'), 20000, '나라장터 공고 확인');
   assert.match(await page.textContent('.g2b.posted'), /R26BK09999999-000[\s\S]*개찰 2026-10-28 11:00/);
   assert.ok(await page.$eval('.nsec', (f) => f.disabled), '등록된 공고문 잠금');
-  assert.ok(await page.$eval('#nTitle', (t) => t.readOnly));
+  assert.ok(await page.$eval('#nf-공고명', (t) => t.closest('fieldset').disabled));
   assert.match(await page.textContent('.lgroup'), /나라장터 등록/);
   await page.screenshot({ path: join(SHOTS, '8-공고문-등록.png') });
   await page.click('[data-nact="dup"]');
   assert.match(await page.textContent('.nstep.on'), /작성 중/);
-  assert.equal(await page.$eval('#nTitle', (t) => t.readOnly), false);
+  assert.equal(await page.$eval('#nf-공고명', (t) => t.closest('fieldset').disabled), false);
   assert.deepEqual(await page.$$eval('.lgroup span', (s) => s.map((x) => x.textContent)), ['작성 중', '나라장터 등록']);
   step('진행 상태: 한글 양식 → 작성 완료, 나라장터 공고번호 → 등록(확인·잠금), 복사해서 새로 쓰기 → 작성 중');
 

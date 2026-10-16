@@ -116,7 +116,28 @@
     for (const t of Object.keys(draft)) draft[t] = draft[t].filter((x) => x.name);
     await JH.app.setChecklists(draft); JH.app.render(); JH.app.toast('서류 목록을 저장했습니다.', 'ok');
   };
+  // 입찰공고·견적공고 기본 양식 칸
+  let slotKind = null;
+  async function renderSlots() {
+    const el = $('#tplSlots'); if (!el) return;
+    if (!S.online) { el.innerHTML = '<p class="muted">바탕화면 아이콘으로 실행하면 양식을 올릴 수 있습니다.</p>'; return; }
+    const xs = await JH.notice.slotInfo();
+    el.innerHTML = xs.map((x) => `<div class="tpl-slot${x.has ? ' on' : ''}">
+      <div class="ts-head"><b>${esc(x.kind)} 양식</b>${x.has ? `<span class="ok-t">올림</span>` : '<span class="warn-t">아직 없음</span>'}</div>
+      <div class="ts-body">${x.has ? `${esc(x.name || '')}${x.at ? ` <span class="muted">· ${esc(L.fmtDate(x.at))}</span>` : ''}${x.found && x.found.length ? `<div class="muted small">바꿀 자리: ${esc(x.found.map((k) => ({ 현장: '장소', 입찰기간: '제출 기간', 지역제한: '지역', 업종제한: '업종', 낙찰하한율: '하한율' }[k] || k)).join('·'))}</div>` : ''}` : `<span class="muted">${x.kind === '견적공고' ? '수의계약(2인 이상 견적)' : '경쟁입찰'} 공고문에 씁니다</span>`}</div>
+      <div class="ts-acts"><button type="button" class="btn sm${x.has ? '' : ' primary'}" data-slotup="${esc(x.kind)}">${x.has ? '바꾸기' : '올리기'}</button>${x.has ? `<button type="button" class="link sm" data-tplopen="${esc(x.path)}">한글로 열기</button>` : ''}</div></div>`).join('');
+  }
+  $('#tplSlots').addEventListener('click', (e) => {
+    const u = e.target.closest('[data-slotup]'); if (u) { slotKind = u.dataset.slotup; $('#tplSlotIn').click(); return; }
+    const o = e.target.closest('[data-tplopen]'); if (o) S.openFile(o.dataset.tplopen).catch((err) => JH.app.toast(err.message, 'err'));
+  });
+  $('#tplSlotIn').onchange = async (e) => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f || !slotKind) return;
+    try { await JH.notice.uploadSlot(slotKind, f); } catch (err) { JH.app.toast('양식을 올리지 못했습니다: ' + err.message, 'err'); }
+    renderSlots();
+  };
   async function renderTpls() {
+    renderSlots();
     const ts = S.online ? await JH.notice.templates() : [];
     $('#tplFiles').innerHTML = ts.length ? ts.map((t) => `<div class="tpl-row"><span>${esc(t.path.split('/').pop())}</span><button type="button" class="link sm" data-tplopen="${esc(t.path)}">한글로 열기</button><button type="button" class="x" data-tpldel="${esc(t.path)}" aria-label="양식 빼기">✕</button></div>`).join('')
       : '<p class="muted">올린 양식이 없습니다.</p>';

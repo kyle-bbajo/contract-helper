@@ -183,14 +183,20 @@
         </div>
       </div>
       <div class="dlg-actions"><button type="button" class="btn primary" id="btnSaveNotice">저장</button></div>
-      <h3 class="sub-h">한글 양식</h3>
-      <p class="help">회사 공고문 한글 파일에서 바뀌는 자리에 <b>{{공고명}}</b>처럼 적어 저장한 뒤 올리세요. [한글 양식으로 만들기]를 누르면 그 자리에 값이 들어간 새 파일을 만듭니다. 아래 이름을 누르면 복사됩니다.</p>
-      <div class="ph-keys" id="phKeys"></div>
-      <div class="tpl-list" id="tplFiles"></div>
-      <div class="dlg-actions">
-        <input type="file" id="tplIn" accept=".hwp,.hwpx" hidden>
-        <button type="button" class="btn" id="btnAddTpl">양식 올리기</button>
-      </div>
+      <h3 class="sub-h">공고문 한글 양식</h3>
+      <p class="help">회사에서 쓰는 <b>입찰공고</b>·<b>견적공고</b> 한글 파일을 그대로 올리세요(지난 공고문도 됩니다, .hwp·.hwpx). 공고문 화면의 [한글 파일로 만들기]를 누르면 그 양식 모양 그대로 공고명·장소·기간·금액·일정·공고번호와 참가자격의 업종·지역·하한율·연락처를 이번 값으로 바꾼 새 한글 파일을 만듭니다. 양식이 바뀌면 다시 올리면 됩니다.</p>
+      <div class="tpl-slots" id="tplSlots"></div>
+      <input type="file" id="tplSlotIn" accept=".hwp,.hwpx" hidden>
+      <details class="adv">
+        <summary>바꿀 자리를 직접 표시하고 싶을 때 ({{항목}})</summary>
+        <p class="help">양식의 원하는 자리에 <b>{{공고명}}</b>처럼 적어 두면 그 자리에도 값이 들어갑니다. 아래 이름을 누르면 복사됩니다.</p>
+        <div class="ph-keys" id="phKeys"></div>
+        <div class="tpl-list" id="tplFiles"></div>
+        <div class="dlg-actions">
+          <input type="file" id="tplIn" accept=".hwp,.hwpx" hidden>
+          <button type="button" class="btn" id="btnAddTpl">그 밖의 양식 올리기</button>
+        </div>
+      </details>
     </div>
     <div class="tab" data-pane="ai">
       <p class="help">PC 안 AI는 설치할 때 함께 깔리며 인터넷 없이 이 PC에서만 돕니다. 서류에서 빈칸(예정가격·주소 등)을 읽을 때는 PC 안 AI만 씁니다. 공고문 문장은 키를 넣으면 Gemini(무료)로 더 빨리 쓸 수 있습니다. Gemini 무료 키는 입력이 Google 개선에 쓰일 수 있으니 공개되는 공고문 문장에만 씁니다.</p>

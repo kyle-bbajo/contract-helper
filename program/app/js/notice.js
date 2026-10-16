@@ -24,7 +24,7 @@
     const cfg = app().cfg;
     const n = { id: L.uid(), status: 'draft', v: N.applyRules(N.blank(cfg), {}, cfg), manual: {}, learned: null, createdAt: Date.now(), updatedAt: Date.now() };
     store.notices.unshift(n); sel = n.id; save(true); render();
-    setTimeout(() => { const t = $('#nTitle'); if (t) t.focus(); }, 0);
+    setTimeout(() => { const t = $('#nf-공고명'); if (t) t.focus(); }, 0);
   }
   function setVal(key, val, manual) {
     const n = cur(); if (!n) return;
@@ -222,6 +222,80 @@
   }
   const fillHwpxBytes = (bytes, values) => N.fillHwpx(root.CFB, bytes, values);
 
+  // ---------- 입찰공고·견적공고 기본 양식(설정에서 올림, {{ }} 표시 없이 그대로 채움) ----------
+  const SLOT_DIR = '공고문/양식/기본';
+  const KINDS = ['입찰공고', '견적공고'];
+  const slotPath = (kind) => `${SLOT_DIR}/${kind}.hwpx`;
+  async function slotInfo() {
+    let files = []; try { files = (await S.list(SLOT_DIR, false)).files; } catch (_) { /* 아직 없음 */ }
+    const meta = (await S.readJson(`${SLOT_DIR}/양식정보.json`).catch(() => null)) || {};
+    return KINDS.map((k) => ({ kind: k, path: slotPath(k), has: files.some((f) => f.path === slotPath(k)), ...(meta[k] || {}) }));
+  }
+  // 양식에서 바꿀 수 있는 자리 미리 보기(모든 값을 넣어 시험으로 채워 봄)
+  function probeTemplate(bytes) {
+    const v = { ...N.blank(app().cfg), 공고명: '시험 공고명', 공고번호: '0000', 현장: '시험', 기간: '시험', 추정가격: '1,000,000', 추정금액: '1,100,000', 기초금액: '1,000,000',
+      입찰시작: '2030-01-01T10:00', 입찰마감: '2030-01-02T10:00', 개찰일시: '2030-01-02T11:00', 낙찰하한율: '88.000%', 지역제한: '용인시', 연락처: '031-000-0000', 현장설명: '없음' };
+    v.업종제한 = N.applyRules(v, {}, app().cfg).업종제한;
+    return N.fillNoticeHwpx(root.CFB, bytes, v, N.draft(v));
+  }
+  const LABEL = { 공고명: '공고명', 현장: '장소', 기간: '기간', 추정가격: '추정가격', 추정금액: '추정금액', 기초금액: '기초금액', 입찰기간: '제출 기간', 개찰일시: '개찰일시', 공고번호: '공고번호', 낙찰하한율: '하한율', 지역제한: '지역', 업종제한: '업종', 연락처: '연락처', 현장설명: '현장설명', 하자담보책임기간: '하자담보', '{{항목}}': '{{항목}} 표시' };
+  const doneText = (keys) => keys.map((k) => LABEL[k] || k).join('·');
+  async function uploadSlot(kind, file) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let hwpx = bytes;
+    app().progress(`${kind} 양식 올리는 중`, .4);
+    try {
+      if (/\.hwp$/i.test(file.name)) {
+        // .hwp는 설치된 한글로 .hwpx로 바꿔 둠(원본도 보관)
+        const src = `${SLOT_DIR}/${kind}.hwp`;
+        await S.writeBytes(src, bytes);
+        try { await S.remove(slotPath(kind)); } catch (_) { /* 처음 */ }
+        try { await S.hwpConvert(src, 'HWPX'); }
+        catch (e) { throw new Error(`한글 프로그램으로 .hwp를 바꾸지 못했습니다(${e.message}). 한글에서 [다른 이름으로 저장 → 파일 형식 HWPX]로 저장해 올려 주세요.`); }
+        hwpx = await S.readBytes(slotPath(kind));
+      } else if (/\.hwpx$/i.test(file.name)) await S.writeBytes(slotPath(kind), bytes);
+      else throw new Error('한글 파일(.hwp, .hwpx)만 올릴 수 있습니다.');
+      const probe = probeTemplate(hwpx);
+      const meta = (await S.readJson(`${SLOT_DIR}/양식정보.json`).catch(() => null)) || {};
+      meta[kind] = { name: file.name, at: new Date().toISOString(), found: probe.done };
+      await S.writeJson(`${SLOT_DIR}/양식정보.json`, meta);
+      app().toast(probe.done.length ? `${kind} 양식을 올렸습니다. 바꿀 자리를 찾았습니다: ${doneText(probe.done)}${probe.missed.length ? ` (못 찾음: ${probe.missed.join(', ')})` : ''}` : `${kind} 양식을 올렸지만 바꿀 자리(공사명: … 같은 이름표)를 찾지 못했습니다. 양식을 보내 주시면 맞춰 드립니다.`, probe.done.length ? 'ok' : 'err');
+    } finally { app().progress(null); }
+  }
+  // 최근 만든 한글 파일: 바꾼 자리와 확인할 것
+  function reportPanel(n) {
+    const r = n.lastReport; if (!r || !n.lastFile) return '';
+    const items = [...(r.missed || []).map((x) => `양식에서 "${x}" 자리를 찾지 못함`), ...(r.notes || [])];
+    return `<div class="hreport${items.length ? ' warn' : ''}" role="status"><div><b>${esc(r.kind)} 한글 파일</b> <span class="muted">${esc(L.fmtDate(r.at))}</span>
+      <button type="button" class="link sm" data-nact="openlast">열기</button></div>
+      <div class="muted small">바꾼 자리: ${esc(doneText(r.done || []))}</div>
+      ${items.length ? `<div class="hcheck"><b>확인할 것</b><ul>${items.map((x) => `<li>${esc(x)}</li>`).join('')}</ul><span class="muted small">○○로 비운 곳은 한글에서 직접 채우세요. 위 칸(공종·금액·A값 등)에 넣고 다시 만들면 자동으로 들어갑니다.</span></div>` : ''}</div>`;
+  }
+  async function makeHwp(n) {
+    const kind = N.noticeKind(n.v);
+    const info = (await slotInfo()).find((x) => x.kind === kind);
+    if (!info || !info.has) {
+      const old = await templates();
+      if (old.length) { const tpl = old.length === 1 ? old[0].path : await pickTemplate(old); if (tpl) fillTemplate(tpl); return; }
+      app().toast(`먼저 설정 → 공고문에서 [${kind} 양식]에 회사 ${kind} 한글 파일을 올려 주세요. 지난 공고문을 그대로 올려도 됩니다.`, 'err', { label: '설정 열기', run: () => JH.settings.open('notice') });
+      return;
+    }
+    app().progress(`${kind} 양식에 이번 공고 내용을 채우는 중`, .5);
+    try {
+      const bytes = await S.readBytes(info.path);
+      const out = N.fillNoticeHwpx(root.CFB, bytes, n.v, sectionsOf(n));
+      if (!out.count) throw new Error(`${kind} 양식에서 바꿀 자리를 찾지 못했습니다. 양식 파일을 보내 주시면 맞춰 드립니다.`);
+      const name = `${L.safeName(n.v.공고명 || '공고문', 60)}_${kind}.hwpx`;
+      const r = await S.save(OUT_DIR, name, out.bytes);
+      const moved = N.statusOf(n) === 'draft' || !n.status;
+      n.lastFile = r.path; if (moved) n.status = 'done';
+      n.lastReport = { at: new Date().toISOString(), kind, done: out.done, missed: out.missed, notes: out.notes };
+      n.updatedAt = Date.now(); save(true);
+      app().toast(`${kind} 한글 파일을 만들었습니다.${out.notes.length || out.missed.length ? ' 화면의 "확인할 것"을 꼭 보세요.' : ''}${moved ? ' 작성 완료로 옮겼습니다.' : ''}`, out.notes.length ? '' : 'ok', { label: '한글로 열기', run: () => S.openFile(r.path) });
+    } catch (e) { app().toast(e.message, 'err'); }
+    finally { app().progress(null); render(); }
+  }
+
   // ---------- 화면 ----------
   function field(f, n) {
     const v = n.v[f.key] == null ? '' : n.v[f.key];
@@ -246,7 +320,7 @@
       else if (on.length) input += `<div class="learn-hint">업종제한을 "${esc(N.worksOf(n.v).map((w) => w.license).join(' + '))} 모두 등록 또는 분담이행 공동도급"으로, 공동도급을 분담이행으로 자동으로 바꿨습니다.</div>`;
     } else if (f.type === 'date') input = `<input type="date" ${attrs} value="${esc(v)}">`;
     else if (f.type === 'datetime') input = `<input type="datetime-local" ${attrs} value="${esc(v)}">`;
-    else input = `<input type="text" ${attrs} value="${esc(v)}"${f.type === 'money' ? ' inputmode="numeric" class="num"' : ''} placeholder="${esc(f.ph || '')}">`;
+    else input = `<input type="text" ${attrs} value="${esc(v)}"${f.type === 'money' ? ' inputmode="numeric" class="num"' : f.key === '공고명' && !v ? ' class="need"' : ''} placeholder="${esc(f.ph || '')}">`;
     // 유사 공고에서 배운 추천
     let hint = '';
     const s = n.learned && n.learned.summary[f.key];
@@ -296,15 +370,15 @@
     }
     const s = n.learned;
     const st = N.statusOf(n), locked = st === 'posted';
-    const secs = N.SECTIONS.map((sec) => `<fieldset class="nsec"${locked ? ' disabled' : ''}><legend>${esc(sec)}</legend><div class="ngrid">${N.FIELDS.filter((f) => f.sec === sec && f.key !== '공고명' && (!f.showIf || f.showIf(n.v))).map((f) => field(f, n)).join('')}</div>
+    const secs = N.SECTIONS.map((sec) => `<fieldset class="nsec"${locked ? ' disabled' : ''}><legend>${esc(N.SECTION_LABEL[sec] || sec)}</legend><div class="ngrid">${N.FIELDS.filter((f) => f.sec === sec && (!f.showIf || f.showIf(n.v))).map((f) => field(f, n)).join('')}</div>
       ${sec === '일정' && s && s.summary.입찰기간일수 ? `<div class="learn-hint">비슷한 공고는 입찰서 제출 기간이 보통 <b>${s.summary.입찰기간일수}일</b>입니다. <button type="button" class="link sm" data-nact="schedule">공고일 기준으로 일정 채우기</button> <span class="muted">법정 공고기간을 꼭 확인하세요.</span></div>` : ''}</fieldset>`).join('');
     const draft = sectionsOf(n), dm = modeOf(n);
     const stale = dm === 'ai' && n.vAt && n.vAt > n.ai.at;
     el.innerHTML = `
       <div class="nhead">
-        <input id="nTitle" class="ntitle" data-key="공고명" value="${esc(n.v.공고명)}" placeholder="공고명을 입력하세요" aria-label="공고명"${locked ? ' readonly' : ''}>
+        <h2 class="ntitle" id="nTitle">${n.v.공고명 ? esc(n.v.공고명) : '<span class="muted">새 공고문 — 아래 [기본]의 공고명부터 넣으세요</span>'}</h2>
         <div class="actions">
-          <button class="btn${locked ? '' : ' primary'}" data-nact="hwp">${n.lastFile ? '한글 양식으로 다시 만들기' : '한글 양식으로 만들기'}</button>
+          <button class="btn${locked ? '' : ' primary'}" data-nact="hwp">${n.lastFile ? `한글 파일로 다시 만들기` : `한글 파일로 만들기`} <small class="kind">${esc(N.noticeKind(n.v))} 양식</small></button>
           <button class="btn" data-nact="copyall">문장 초안 전체 복사</button>
           ${n.lastFile ? `<button class="btn ghost" data-nact="openlast">최근 만든 파일 열기</button>` : ''}
           <span class="spacer"></span>
@@ -313,6 +387,7 @@
           <button class="btn ghost" data-nact="dup">복사해서 새로 쓰기</button>
           <button class="btn ghost danger" data-nact="del">삭제</button>
         </div>
+        ${reportPanel(n)}
         ${statusPanel(n, st)}
       </div>
       <section class="learn"${locked ? ' hidden' : ''}>
@@ -361,6 +436,8 @@
     const draft = sectionsOf(n);
     $$('.draft .dsec pre').forEach((p, i) => { if (draft[i]) p.textContent = draft[i].body; });
     const t = $(`.citem[data-nid="${n.id}"] .nm`); if (t) t.textContent = n.v.공고명 || '제목 없는 공고문';
+    const h = $('#nTitle'); if (h) { if (n.v.공고명) h.textContent = n.v.공고명; else h.innerHTML = '<span class="muted">새 공고문 — 아래 [기본]의 공고명부터 넣으세요</span>'; }
+    const nm = $('#nf-공고명'); if (nm) nm.classList.toggle('need', !n.v.공고명);
   }
 
   async function onClick(e) {
@@ -396,12 +473,7 @@
     else if (act === 'g2bcheck') await checkBid(n);
     else if (act === 'unpost') { if (confirm('입찰공고번호 연결을 풀고 작성 완료로 되돌릴까요? (나라장터의 실제 공고는 그대로입니다)')) { delete n.g2b; setStatus(n, 'done'); } }
     else if (act === 'del') { if (confirm('이 공고문을 삭제할까요? 만든 한글 파일은 남습니다.')) { store.notices = store.notices.filter((x) => x !== n); sel = null; save(true); render(); } }
-    else if (act === 'hwp') {
-      const ts = await templates();
-      if (!ts.length) { app().toast('먼저 설정 → 공고문에서 한글 양식을 올려 주세요. 양식 안의 바꿀 자리에 {{공고명}}처럼 적어 두면 됩니다.', 'err', { label: '설정 열기', run: () => JH.settings.open('notice') }); return; }
-      const tpl = ts.length === 1 ? ts[0].path : await pickTemplate(ts);
-      if (tpl) fillTemplate(tpl);
-    }
+    else if (act === 'hwp') await makeHwp(n);
   }
   function pickTemplate(ts) {
     return new Promise((res) => {
@@ -443,7 +515,7 @@
 
   root.JH.notice = Object.assign(root.JH.notice, {
     async show() { await load(); render(); },
-    create, templates, TPL_DIR,
+    create, templates, TPL_DIR, slotInfo, uploadSlot, slotPath, KINDS,
     stats() {
       const by = { draft: 0, done: 0, posted: 0 }; store.notices.forEach((n) => by[N.statusOf(n)]++);
       return { count: store.notices.length, recent: store.notices[0] ? store.notices[0].v.공고명 : '', ...by };

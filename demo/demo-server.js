@@ -190,6 +190,7 @@
       const sec = '<?xml version="1.0" encoding="UTF-8"?><hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">' + lines.map((l) => `<hp:p><hp:run><hp:t>${x(l)}</hp:t></hp:run></hp:p>`).join('') + '</hs:sec>';
       return root.JH.notice.logic.zipStore([{ name: 'mimetype', data: enc.encode('application/hwp+zip') }, { name: 'Contents/section0.xml', data: enc.encode(sec) }]);
     },
+    async hwpConvert() { throw new Error('시연판에는 한글 프로그램이 없습니다. 실제 프로그램은 설치된 한글로 .hwp를 바꿉니다. 시연판에서는 .hwpx를 올려 보세요'); },
     async hwp2pdf() { throw new Error('시연판에서는 한글→PDF 변환을 하지 않습니다. 실제 프로그램은 설치된 한글로 자동 변환합니다.'); },
     async open() { throw new Error('시연판에서는 폴더를 열 수 없습니다. 실제 프로그램은 탐색기로 엽니다.'); },
     async openFile(path) { await showFile(norm(path)); return { ok: true }; },
@@ -209,6 +210,14 @@
     files.clear();
     await server.writeJson('설정.json', { officer: ME, notice: { dept: '계약팀', phone: '031-000-0000', winwinMin: 50000000, aiKey: '시연용' },
       forms: { dept: '경영기획본부', committee: '도시건설위원회', confirmer: { pos: '재무관리처장' }, writer: { pos: '회계팀장' } } });
+    // 입찰공고·견적공고 기본 양식(예시 — 회사 양식처럼 생긴 가상의 공고문)
+    for (const k of ['입찰공고', '견적공고']) {
+      const z = root.CFB.utils.cfb_new();
+      root.CFB.utils.cfb_add(z, '/mimetype', enc.encode('application/hwp+zip'));
+      root.CFB.utils.cfb_add(z, '/Contents/section0.xml', enc.encode(root.JH_TEMPLATE_XML(k)));
+      files.set(`공고문/양식/기본/${k}.hwpx`, new Uint8Array(root.CFB.write(z, { type: 'array', fileType: 'zip' })));
+    }
+    await server.writeJson('공고문/양식/기본/양식정보.json', { 입찰공고: { name: '입찰공고 양식(예시).hwpx', at: new Date().toISOString() }, 견적공고: { name: '견적공고 양식(예시).hwpx', at: new Date().toISOString() } });
     const tpl = new Uint8Array(await (await fetch('samples/공고문양식.hwpx')).arrayBuffer());
     files.set('공고문/양식/공고문양식.hwpx', tpl);
     const now = Date.now();
