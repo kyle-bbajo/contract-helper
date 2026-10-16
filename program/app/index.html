@@ -77,7 +77,7 @@
         <div class="items" id="contractList" role="list"></div>
         <div class="list-foot">
           <span id="listCount"></span>
-          <button type="button" class="link" id="btnNewContract">계약 직접 추가</button>
+          <span class="foot-acts"><button type="button" class="link" data-act="excel" data-from="list" title="왼쪽 목록에 보이는 계약을 엑셀로 저장">엑셀</button><button type="button" class="link" id="btnNewContract">계약 직접 추가</button></span>
         </div>
       </aside>
       <article class="detail" id="detail" aria-live="polite"></article>
@@ -242,6 +242,25 @@
   <div class="dlg-body"><div id="tplList" class="form"></div><div class="dlg-actions"><button type="button" class="btn primary" id="tplGo">이 양식으로 만들기</button></div></div>
 </dialog>
 
+<dialog id="dlgMail" class="dlg" aria-labelledby="mailTitle">
+  <form method="dialog" class="dlg-head">
+    <h2 id="mailTitle">업체 보완 요청 메일</h2>
+    <button class="btn icon" value="close" aria-label="닫기">✕</button>
+  </form>
+  <div class="dlg-body">
+    <div class="form mail-form">
+      <label>받는 사람<input type="email" id="mailTo" placeholder="업체 메일 (계약 메모에 저장됨)" autocomplete="off"></label>
+      <label>제목<input type="text" id="mailSubj"></label>
+      <label>본문<textarea id="mailBody" rows="16"></textarea></label>
+    </div>
+    <p class="muted small" id="mailNote"></p>
+    <div class="dlg-actions">
+      <button type="button" class="btn" id="mailOpen" title="이 PC의 기본 메일 프로그램(아웃룩 등)으로 엽니다">메일 프로그램으로 열기</button>
+      <button type="button" class="btn primary" id="mailCopy">제목·본문 복사</button>
+    </div>
+  </div>
+</dialog>
+
 <dialog id="dlgPay" class="dlg narrow" aria-labelledby="payTitle">
   <form method="dialog" class="dlg-head">
     <h2 id="payTitle">지출 처리</h2>
@@ -261,6 +280,7 @@
 <script src="vendor/cfb.min.js"></script>
 <script src="vendor/tesseract/tesseract.min.js"></script>
 <script src="js/logic.js"></script>
+<script src="js/xlsx.js"></script>
 <script src="js/hwp.js"></script>
 <script src="js/server.js"></script>
 <script src="js/readers.js"></script>

@@ -20,12 +20,12 @@
   const ME = '용도공';
   const api = (items) => ({ response: { header: { resultCode: '00', resultMsg: '정상' }, body: { items, numOfRows: 100, pageNo: 1, totalCount: items.length } } });
   const 공사 = [
-    { untyCntrctNo: 'R26BK01234567', dcsnCntrctNo: 'R26BK01234567-00', cnstwkNm: '시청사 옥상 방수공사', corpList: '[1^주계약업체^단독^100^(주)다해토건^홍길동^대한민국^1234567890]', totCntrctAmt: '48000000', cbgnDate: '2026-06-01', ttalCcmpltDate: '2026-10-10', cntrctInsttNm: '용인도시공사', cntrctInsttOfclNm: ME, cntrctInsttChrgDeptNm: '계약팀' },
-    { untyCntrctNo: 'R26BK02020202', dcsnCntrctNo: 'R26BK02020202-00', cnstwkNm: '기흥 레스피아 진입로 보수공사', corpList: '[1^주계약업체^단독^100^경기포장(주)^최강^대한민국^3334445556]', totCntrctAmt: '26800000', cbgnDate: '2026-08-10', ttalCcmpltDate: '2026-11-30', cntrctInsttNm: '용인도시공사', cntrctInsttOfclNm: ME, cntrctInsttChrgDeptNm: '계약팀' },
-    { untyCntrctNo: 'R26BK05555555', dcsnCntrctNo: 'R26BK05555555-00', cnstwkNm: '처인구 공영주차장 전기설비 교체', corpList: '[1^주계약업체^단독^100^대한전기(주)^이몽룡^대한민국^2223334445]', totCntrctAmt: '73500000', ttalCcmpltDate: '2026-12-20', cntrctInsttNm: '용인도시공사', cntrctInsttOfclNm: '김철수', cntrctInsttChrgDeptNm: '계약팀' },
+    { untyCntrctNo: 'R26BK01234567', dcsnCntrctNo: 'R26BK01234567-00', cnstwkNm: '시청사 옥상 방수공사', corpList: '[1^주계약업체^단독^(주)다해토건^홍길동^대한민국^100^(주)다해토건^^1234567890]', totCntrctAmt: '48000000', cbgnDate: '2026-06-01', ttalCcmpltDate: '2026-10-10', cntrctInsttNm: '용인도시공사', cntrctInsttOfclNm: ME, cntrctInsttChrgDeptNm: '계약팀' },
+    { untyCntrctNo: 'R26BK02020202', dcsnCntrctNo: 'R26BK02020202-00', cnstwkNm: '기흥 레스피아 진입로 보수공사', corpList: '[1^주계약업체^단독^경기포장(주)^최강^대한민국^100^경기포장(주)^^3334445556]', totCntrctAmt: '26800000', cbgnDate: '2026-08-10', ttalCcmpltDate: '2026-11-30', cntrctInsttNm: '용인도시공사', cntrctInsttOfclNm: ME, cntrctInsttChrgDeptNm: '계약팀' },
+    { untyCntrctNo: 'R26BK05555555', dcsnCntrctNo: 'R26BK05555555-00', cnstwkNm: '처인구 공영주차장 전기설비 교체', corpList: '[1^주계약업체^단독^대한전기(주)^이몽룡^대한민국^100^대한전기(주)^^2223334445]', totCntrctAmt: '73500000', ttalCcmpltDate: '2026-12-20', cntrctInsttNm: '용인도시공사', cntrctInsttOfclNm: '김철수', cntrctInsttChrgDeptNm: '계약팀' },
   ];
   const 용역 = [
-    { untyCntrctNo: 'R26BS07654321', dcsnCntrctNo: 'R26BS07654321-00', cntrctNm: '체육관 시설 청소 용역', corpList: '[1^주계약업체^단독^100^한빛환경 주식회사^김영희^대한민국^5556667778]', totCntrctAmt: '21500000', wbgnDate: '2026-07-01', ttalScmpltDate: '2026-12-31', cntrctInsttNm: '용인도시공사', cntrctInsttOfclNm: ME, cntrctInsttChrgDeptNm: '계약팀' },
+    { untyCntrctNo: 'R26BS07654321', dcsnCntrctNo: 'R26BS07654321-00', cntrctNm: '체육관 시설 청소 용역', corpList: '[1^주계약업체^단독^한빛환경 주식회사^김영희^대한민국^100^한빛환경 주식회사^^5556667778]', totCntrctAmt: '21500000', wbgnDate: '2026-07-01', ttalScmpltDate: '2026-12-31', cntrctInsttNm: '용인도시공사', cntrctInsttOfclNm: ME, cntrctInsttChrgDeptNm: '계약팀', baseDtls: '외부재정연계(e나라도움)' },
   ];
   const bid = (no, name, org, price, rate, extra) => Object.assign({ bidNtceNo: no, bidNtceOrd: '000', bidNtceNm: name, ntceInsttNm: org, bidNtceDt: '2026-09-01 10:00:00',
     bidBeginDt: '2026-09-02 10:00:00', bidClseDt: '2026-09-09 10:00:00', opengDt: '2026-09-09 11:00:00', presmptPrce: String(price), sucsfbidLwltRate: rate,
@@ -89,6 +89,15 @@
     }
     doc.destroy();
   }
+  // 엑셀 미리보기(시연판은 파일을 내려받을 수 없어 표로 보여 줌)
+  function showTable(title, sheets) {
+    const body = overlay(title);
+    document.getElementById('demoOvNote').textContent = '실제 프로그램은 이 내용을 엑셀 파일로 저장하고 바로 엽니다.';
+    const esc = (v) => String(v == null ? '' : v).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    const fmt = (v, t) => (t === 'money' && v ? Number(v).toLocaleString('ko-KR') : t === 'date' && v ? String(v).replace(/^(\d{4})(\d{2})(\d{2}).*$/, '$1-$2-$3') : v);
+    body.innerHTML = sheets.map((sh) => `<section class="demo-sheet"><h4>${esc(sh.name)} <span class="muted">${sh.rows.length}줄</span></h4><div class="demo-tbl"><table class="grid"><thead><tr>${sh.cols.map((c) => `<th>${esc(c.h)}</th>`).join('')}</tr></thead>
+      <tbody>${sh.rows.slice(0, 60).map((r) => `<tr>${sh.cols.map((c, i) => `<td${c.type === 'money' ? ' class="r num"' : c.type === 'wrap' ? ' class="w"' : ''}>${esc(fmt(r[i], c.type))}</td>`).join('')}</tr>`).join('')}</tbody></table></div></section>`).join('');
+  }
   async function showFile(path) {
     const name = path.split('/').pop(); const bytes = files.get(path);
     if (!bytes) throw notFound();
@@ -137,7 +146,7 @@
     async pickFolder() { throw new Error('시연판에서는 폴더를 바꿀 수 없습니다.'); },
     async quit() { return { ok: true }; },
     fileUrl: (path) => '#',
-    showPdf,
+    showPdf, showTable,
     _files: files,
   };
   root.JH = root.JH || {};

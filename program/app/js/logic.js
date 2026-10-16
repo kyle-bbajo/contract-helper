@@ -40,7 +40,7 @@
     seq = 0;
     const g1 = '구매요구', g2 = '계약', g5 = '준공조서', g6 = '대금청구', g7 = '지출결의';
     const head = (k) => [
-      it(g1, '구매요구서', '구매요구,구매요청', { source: '문서함', note: '설계내역서·시방서 등 포함', id: k + '-req' }),
+      it(g1, '구매요구서 또는 기안문', '구매요구,구매요청,계약의뢰,계약요청,일반기안,기안문', { source: '문서함', note: '설계내역서·시방서 등 포함. 우리 예산이 아닌 사업(e나라도움 등)은 일반 기안문', id: k + '-req' }),
       it(g2, '계약서', '계약서,계약문서,계약체결', { source: '나라장터', id: k + '-contract' }),
       it(g2, '견적서·설계내역서', '견적,설계내역,내역서,산출내역', { source: '나라장터', id: k + '-estimate' }),
       it(g2, '계약 관련서류', '관련서류,관련문서,이행각서,서약서,청렴계약,수의계약,등기부,인감,사업자등록,면허', { source: '나라장터', note: '이행각서·서약서·등기부등본·사업자등록증 등', id: k + '-related' }),
@@ -229,17 +229,38 @@
     return { items: items || [], total: Number(b.totalCount || 0) };
   }
   // corpList: "[순번^구분^...^업체명^대표자^...],[...]" — 형식이 바뀌어도 업체명 같은 칸을 고름
+  // 업체목록: 실제 응답은 [순번^주계약업체^단독^업체명^대표자^대한민국^지분율^업체명^^사업자번호] 형태, 여러 업체면 ],[ 로 이어짐
+  // 주계약업체를 맨 앞으로(공동도급이면 도급업체가 먼저 올 수 있음)
   function parseCorpList(s) {
     if (!s) return [];
-    const STOP = /^(단독|공동|주계약|부계약|대표사|구성원|분담|대한민국|한국|내국|외국|국내|국외|\d.*|Y|N)$/;
-    return String(s).split(/\]\s*,?\s*\[/).map((e) => e.replace(/^\[|\]$/g, '')).map((e) => {
-      const f = e.split('^').map((x) => x.trim()).filter(Boolean);
-      const ko = f.filter((x) => /[가-힣]/.test(x) && !STOP.test(x));
-      const corp = ko.find((x) => /(주식회사|\(주\)|㈜|유한|건설|전기|산업|기업|엔지니어링|기술|개발|공업|종합|토건|통신|조경|환경|상사|시스템|컨설팅|디자인)/.test(x));
-      return corp || ko[0] || '';
-    }).filter(Boolean);
+    const STOP = /^(단독|공동|주계약|부계약|대표사|구성원|분담|주계약업체|도급업체|분담업체|부계약업체|공동수급업체|구성원업체|혼합방식|혼합|공동이행|분담이행|주계약자관리방식|대한민국|한국|내국|외국|국내|국외|[\d.,\s%]*|Y|N)$/;
+    const rows = String(s).split(/\]\s*,?\s*\[/).map((e) => e.replace(/^\[|\]$/g, '')).map((e) => {
+      const f = e.split('^').map((x) => x.trim());
+      const role = f[1] || '';
+      const name = f.slice(2).find((x) => x && /[가-힣A-Za-z]/.test(x) && !STOP.test(x)) || '';
+      return { role, name };
+    }).filter((r) => r.name);
+    rows.sort((a, b) => (/주계약|대표/.test(b.role) ? 1 : 0) - (/주계약|대표/.test(a.role) ? 1 : 0));
+    return rows.map((r) => r.name);
+  }
+  // 외부재정연계(e나라도움 등 우리 예산이 아닌 사업) 알아내기
+  // 공개 명세에는 정해진 항목 이름이 없어서, 응답의 모든 항목을 훑어 이름·값으로 판단함
+  //  - 이름이 재정·연계·보조금 계열이고 값이 Y/예  - 값에 '외부재정', '재정연계', 'e나라도움', '보조금' 같은 말
+  const EXT_KEY = /(fnnc|fnc|fin|extrnl|extnl|lnk|link|sbsd|subsid|grnt|nrdm|enara)/i;
+  const EXT_VAL = /(외부\s*재정|재정\s*연계|e\s*-?\s*나라\s*도움|이나라도움|국고\s*보조|보조금)/i;
+  const NAME_KEYS = /^(cnstwkNm|cntrctNm|bidNtceNm|ntceNm|corpList|crdtrNm|cntrctInsttNm|dminsttNm|cntrctInfoUrl|cntrctDtlInfoUrl)$/;
+  function detectExtFinance(x) {
+    if (!x || typeof x !== 'object') return null;
+    for (const [k, v] of Object.entries(x)) {
+      const s = v == null ? '' : String(v).trim();
+      if (!s || NAME_KEYS.test(k)) continue; // 계약명·업체명에 '보조금'이 들어가도 예산 출처와는 무관
+      if (EXT_VAL.test(s)) return { why: `${k}: ${s.slice(0, 40)}` };
+      if (EXT_KEY.test(k) && /^(y|yes|예|해당|1)$/i.test(s)) return { why: `${k}: ${s}` };
+    }
+    return null;
   }
   function normalizeApiItem(x, type) {
+    const ext = detectExtFinance(x);
     const vendors = parseCorpList(x.corpList);
     const nums = [x.dcsnCntrctNo, x.untyCntrctNo, x.cntrctRefNo].filter(Boolean);
     return {
@@ -258,6 +279,7 @@
       dept: x.cntrctInsttChrgDeptNm || '',
       org: x.cntrctInsttNm || '',
       url: x.cntrctDtlInfoUrl || x.cntrctInfoUrl || '',
+      budgetAuto: ext ? 'ext' : '', budgetWhy: ext ? ext.why : '',
     };
   }
 
@@ -275,13 +297,72 @@
   const fmtDate = (s) => { const m = String(s || '').match(/(\d{4})[-.\/]?(\d{2})[-.\/]?(\d{2})/); return m ? `${m[1]}.${m[2]}.${m[3]}` : ''; };
   const toDate = (s) => { const m = String(s || '').match(/(\d{4})[-.\/]?(\d{2})[-.\/]?(\d{2})/); return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null; };
   const won = (n) => (n ? Number(n).toLocaleString('ko-KR') + '원' : '');
+  // ---------- 날짜 읽기(증명서 유효기간, 준공계·준공조서 날짜) ----------
+  const p2 = (n) => String(n).padStart(2, '0');
+  const ymd = (d) => `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}`;
+  const addDays = (s, n) => { const d = toDate(s); if (!d) return ''; d.setDate(d.getDate() + n); return ymd(d); };
+  const DATE_RE = /(20\d{2})\s*[.\-\/년]\s*(\d{1,2})\s*[.\-\/월]\s*(\d{1,2})/g;
+  function datesIn(s) {
+    const out = [];
+    for (const m of String(s || '').matchAll(DATE_RE)) { const mo = +m[2], d = +m[3]; if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) out.push(`${m[1]}${p2(mo)}${p2(d)}`); }
+    return out;
+  }
+  // 줄 단위 원문에서: 유효기간(끝 날짜), 발급일, 준공일, 검사일, 문서에 나온 가장 늦은 날짜
+  function extractDates(lines) {
+    const ls = (lines || []).map((x) => String(x || ''));
+    const r = { valid: '', validHow: '', issue: '', finish: '', inspect: '', last: '' };
+    const all = ls.flatMap(datesIn).sort(); r.last = all.length ? all[all.length - 1] : '';
+    let validDays = 0;
+    for (let i = 0; i < ls.length; i++) {
+      const s = ls[i], here = datesIn(s);
+      if (!r.valid && /유\s*효\s*(기\s*간|기\s*한|일)/.test(s)) {
+        const days = s.replace(DATE_RE, '').match(/(\d{1,3})\s*일\s*(간|까지|이내)?/);
+        const ds = here.length ? here : days ? [] : datesIn(ls[i + 1]);
+        if (ds.length) { r.valid = ds.sort()[ds.length - 1]; r.validHow = 'read'; }
+        else if (days) validDays = +days[1];
+      }
+      if (!r.issue && /(발\s*급|발\s*행|증\s*명)\s*일/.test(s) && here.length) r.issue = here[0];
+      if (!r.finish && /(준\s*공|완\s*료)\s*(일\s*자|년\s*월\s*일|일)/.test(s) && !/검\s*사/.test(s) && here.length) r.finish = here[0];
+      if (!r.inspect && /(검\s*사|검\s*수)\s*(일\s*자|일)/.test(s) && here.length) r.inspect = here[0];
+    }
+    // "발급일로부터 30일" 같은 경우: 발급일(없으면 문서 마지막 날짜)부터 계산 — 첫날 포함으로 보수적으로
+    if (!r.valid && validDays && (r.issue || r.last)) { r.valid = addDays(r.issue || r.last, validDays - 1); r.validHow = 'calc'; }
+    return r;
+  }
+  // 유효기간을 따지는 증명서: 4대 사회보험·고용산재 완납증명서, 국세·지방세 납세증명서
+  const isCertItem = (id) => /-(inspaid|emppaid|tax|ltax)$/.test(String(id || ''));
+
+  // 업체 보완 요청 메일(빠진 서류 + 유효기간 부족으로 재발급할 서류)
+  function vendorMail({ c, org, dept, officer, phone, missing = [], reissue = [], basis }) {
+    const f = (s) => fmtDate(s);
+    const title = `[${org || '발주기관'}] 「${c.name || '계약'}」 대금 청구 서류 보완 요청`;
+    const secs = [];
+    if (missing.length) secs.push(['미제출 서류', missing.map((n) => `  - ${n}`)]);
+    if (reissue.length) secs.push(['재발급 필요 서류(유효기간 부족)', reissue.map((x) => `  - ${x.name}: 유효기간 ${f(x.valid)}까지 → ${f(basis.date)} 이후까지 유효한 증명서로 재발급`)]);
+    if (reissue.length && basis && basis.date) secs.push(['기준', [`  - 대금 지급 예정일(${f(basis.date)}) 기준으로 유효한 증명서가 필요합니다.`]]);
+    const who = [org, dept, officer].filter(Boolean).join(' ');
+    const body = [
+      '안녕하십니까.' + (who ? ` ${who}입니다.` : ''),
+      '',
+      `「${c.name || ''}」${c.no ? `(계약번호 ${c.no})` : ''} 대금 지급을 위해 제출 서류를 확인한 결과, 아래 서류의 보완을 요청드리고자 합니다.`,
+      '',
+      ...secs.flatMap(([h, ls], i) => [`${i + 1}. ${h}`, ...ls, '']),
+      '회신 메일로 보내 주시면 확인 후 지급 절차를 진행하겠습니다.',
+      '감사합니다.',
+      '',
+      `${officer || ''} 드림`,
+      [org, dept].filter(Boolean).join(' ') + (phone ? ` / ${phone}` : ''),
+    ].join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    return { title, body };
+  }
+
   const safeName = (s, max = 60) => String(s || '').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, max) || '이름없음';
 
   const api = {
     norm, uid, stem, extOf, kindOf, defaultChecklists, STAGES, ORIGINAL_SOURCES,
     classifyItem, guessType, findMeta, vendorCore, baseNo, contractScore, matchContract, contractKey,
-    API_BASE, API_OPS, apiUrl, monthRanges, parseApiText, parseApiBody, parseCorpList, normalizeApiItem,
-    checklistStatus, fmtDate, toDate, won, safeName,
+    API_BASE, API_OPS, apiUrl, monthRanges, parseApiText, parseApiBody, parseCorpList, normalizeApiItem, detectExtFinance,
+    checklistStatus, fmtDate, toDate, won, safeName, datesIn, extractDates, addDays, isCertItem, vendorMail,
   };
   root.JH = root.JH || {};
   root.JH.logic = api;

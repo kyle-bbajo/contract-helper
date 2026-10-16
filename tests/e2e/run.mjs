@@ -47,11 +47,11 @@ async function stopServer() {
 // 시험용 나라장터 응답
 const api = (items) => JSON.stringify({ response: { header: { resultCode: '00', resultMsg: '정상' }, body: { items, numOfRows: 100, pageNo: 1, totalCount: items.length } } });
 const 공사 = [
-  { untyCntrctNo: 'R26BK01234567', dcsnCntrctNo: 'R26BK01234567-00', cnstwkNm: '시청사 옥상 방수공사', corpList: '[1^주계약업체^단독^100^(주)다해토건^홍길동^대한민국^1234567890]', totCntrctAmt: '48000000', cbgnDate: '2026-06-01', ttalCcmpltDate: '2026-10-10', cntrctInsttNm: '용인도시공사', cntrctInsttOfclNm: '박주호', cntrctInsttChrgDeptNm: '계약팀' },
-  { untyCntrctNo: 'R26BK05555555', dcsnCntrctNo: 'R26BK05555555-00', cnstwkNm: '처인구 공영주차장 전기설비 교체', corpList: '[1^주계약업체^단독^100^대한전기(주)^이몽룡^대한민국^2223334445]', totCntrctAmt: '73500000', ttalCcmpltDate: '2026-12-20', cntrctInsttNm: '용인도시공사', cntrctInsttOfclNm: '김철수' },
+  { untyCntrctNo: 'R26BK01234567', dcsnCntrctNo: 'R26BK01234567-00', cnstwkNm: '시청사 옥상 방수공사', corpList: '[1^주계약업체^단독^(주)다해토건^홍길동^대한민국^100^(주)다해토건^^1234567890]', totCntrctAmt: '48000000', cbgnDate: '2026-06-01', ttalCcmpltDate: '2026-10-10', cntrctInsttNm: '용인도시공사', cntrctInsttOfclNm: '박주호', cntrctInsttChrgDeptNm: '계약팀' },
+  { untyCntrctNo: 'R26BK05555555', dcsnCntrctNo: 'R26BK05555555-00', cnstwkNm: '처인구 공영주차장 전기설비 교체', corpList: '[1^주계약업체^단독^대한전기(주)^이몽룡^대한민국^100^대한전기(주)^^2223334445]', totCntrctAmt: '73500000', ttalCcmpltDate: '2026-12-20', cntrctInsttNm: '용인도시공사', cntrctInsttOfclNm: '김철수' },
 ];
 const 용역 = [
-  { untyCntrctNo: 'R26BS07654321', dcsnCntrctNo: 'R26BS07654321-00', cntrctNm: '체육관 시설 청소 용역', corpList: '[1^주계약업체^단독^100^한빛환경 주식회사^김영희^대한민국^5556667778]', totCntrctAmt: '21500000', wbgnDate: '2026-07-01', ttalScmpltDate: '2026-12-31', cntrctInsttNm: '용인도시공사', cntrctInsttOfclNm: '박주호' },
+  { untyCntrctNo: 'R26BS07654321', dcsnCntrctNo: 'R26BS07654321-00', cntrctNm: '체육관 시설 청소 용역', corpList: '[1^주계약업체^단독^한빛환경 주식회사^김영희^대한민국^100^한빛환경 주식회사^^5556667778]', totCntrctAmt: '21500000', wbgnDate: '2026-07-01', ttalScmpltDate: '2026-12-31', cntrctInsttNm: '용인도시공사', cntrctInsttOfclNm: '박주호', baseDtls: '외부재정연계(e나라도움)' },
 ];
 const bid = (no, name, price, rate, extra = {}) => ({ bidNtceNo: no, bidNtceOrd: '000', bidNtceNm: name, ntceInsttNm: '용인도시공사', bidNtceDt: '2026-09-01 10:00:00',
   bidBeginDt: '2026-09-02 10:00:00', bidClseDt: '2026-09-09 10:00:00', opengDt: '2026-09-09 11:00:00', presmptPrce: String(price), sucsfbidLwltRate: rate,
@@ -84,7 +84,7 @@ const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));
 page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
 // 실패한 요청은 주소로 판단: 한글 변환·한글 양식 채우기는 시험 PC에 한글이 없어 실패가 정상(대체 방법으로 처리됨)
-page.on('response', (r) => { if (r.status() >= 500 && !/\/api\/(hwp2pdf|hwpfill)/.test(r.url())) errors.push(`${r.status()} ${r.url()}`); });
+page.on('response', (r) => { if (r.status() >= 500 && !/\/api\/(hwp2pdf|hwpfill|open)/.test(r.url())) errors.push(`${r.status()} ${r.url()}`); });
 await page.route('**/api/nara**', (r) => {
   const u = decodeURIComponent(new URL(r.request().url()).searchParams.get('u'));
   let body;
@@ -171,7 +171,7 @@ try {
   // ===== 계약 화면: 맨 위 [업로드], 서류 줄마다 [+ 추가]로 직접 넣기 =====
   await page.click('.views [data-view="contracts"]');
   await page.click('.citem:has-text("시청사 옥상 방수공사")');
-  const order = await page.evaluate(() => { const d = document.querySelector('#detail'); const kids = [...d.children]; return [kids.indexOf(d.querySelector('#dropin')), kids.indexOf(d.querySelector('.stages')), d.querySelector('#dropin [data-act="addhere"]').textContent.trim()]; });
+  const order = await page.evaluate(() => { const d = document.querySelector('#detail .dbody'); const kids = [...d.children]; return [kids.indexOf(d.querySelector('#dropin')), kids.indexOf(d.querySelector('.stages')), d.querySelector('#dropin [data-act="addhere"]').textContent.trim()]; });
   assert.ok(order[0] >= 0 && order[0] < order[1] && order[2] === '업로드', '업로드 칸이 서류 목록 위에: ' + JSON.stringify(order));
   const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('.row[data-drop-item="c-defect"] [data-act="additem"]')]);
   await fc.setFiles({ name: 'scan_0012.pdf', mimeType: 'application/pdf', buffer: readFileSync(join(DOCS, 'noname(1).pdf')) });
@@ -196,11 +196,62 @@ try {
   await page.click('.more-hits');
   assert.deepEqual(await page.$$eval('.citem .nm', (e) => e.map((x) => x.textContent)), ['처인구 공영주차장 전기설비 교체']);
   await page.fill('#q', ''); await page.selectOption('#fOfficer', '박주호');
+  step('계약 메모(감독부서·감독관·연락처·특이사항) 저장 + 메모·연락처까지 찾기, 다른 담당자 계약 안내');
+
+  // 우리 예산이 아닌 사업(e나라도움 등): 구매요구서 자리가 일반 기안문으로
+  await page.click('.citem:has-text("시청사 옥상 방수공사")');
+  assert.match(await page.textContent('.row[data-drop-item="c-req"] .rname'), /^구매요구서/);
+  await page.click('[data-act="budget"][data-v="ext"]');
+  await page.waitForSelector('.row[data-drop-item="c-req"] .rname:has-text("일반 기안문")', { timeout: 5000 });
+  await page.screenshot({ path: join(SHOTS, '4b-계약-메모-예산.png') });
+  // 나라장터 응답에 외부재정연계가 있으면 자동으로 외부 예산
+  await page.click('.citem:has-text("체육관 시설 청소 용역")');
+  await page.waitForSelector('.row[data-drop-item="s-req"] .rname:has-text("일반 기안문")', { timeout: 5000 });
+  assert.match(await page.textContent('.memo .bsrc'), /나라장터: 외부재정연계/);
+  assert.ok(JSON.parse(readFileSync(join(data, '진단', '나라장터_계약응답.json'), 'utf8')).items.length >= 3, '나라장터 원래 응답 보관');
+  await page.click('.citem:has-text("시청사 옥상 방수공사")');
+  step('예산 구분: 나라장터 외부재정연계 → 자동으로 외부 예산(일반 기안문), 직접 바꾸기도 가능');
+
+  // 증명서 유효기간: 지출요청일(준공계 10.08 + 2주 = 10.22)보다 먼저 끝나면 재발급 → 업체 보완 요청 메일
+  assert.match(await page.textContent('.req'), /2026-10-22|준공계 2026\.10\.08 \+ 2주/);
+  assert.equal(await page.inputValue('.req input[data-act="payplan"]'), '2026-10-22');
+  assert.match(await page.textContent('.row[data-drop-item="c-inspaid"] .rside'), /10\.15까지 · 재발급/);
+  assert.match(await page.textContent('.row[data-drop-item="c-tax"] .rside'), /10\.31까지 유효/);
+  await page.click('.req [data-act="mail"]');
+  await page.waitForSelector('#dlgMail[open]');
+  const mail = await page.inputValue('#mailBody');
+  assert.match(mail, /^안녕하십니까\. 용인도시공사 계약팀 박주호입니다\./);
+  assert.match(mail, /미제출 서류\n(  - .+\n)*  - 대금청구서/);
+  assert.match(mail, /4대 사회보험 완납증명서: 유효기간 2026\.10\.15까지 → 2026\.10\.22 이후까지 유효한 증명서로 재발급/);
+  assert.match(mail, /박주호 드림/);
+  assert.match(await page.inputValue('#mailSubj'), /「시청사 옥상 방수공사」 대금 청구 서류 보완 요청/);
+  await page.screenshot({ path: join(SHOTS, '4c-보완요청-메일.png') });
+  await page.click('#dlgMail .dlg-head button');
+  // 잘못 읽었으면 날짜를 고침 → 다시 판정
+  await page.fill('.row[data-drop-item="c-inspaid"] input[data-act="validset"]', '2026-10-30');
+  await page.waitForSelector('.row[data-drop-item="c-inspaid"] .valid.ok', { timeout: 5000 });
+  step('증명서 유효기간 읽기 → 지출요청일(준공계+2주)과 비교해 재발급 표시, 업체 보완 요청 메일 작성, 날짜 직접 고침');
+
+  // 현황판 → 엑셀로 받기(계약 현황 + 서류 상세 시트)
   await page.click('.views [data-view="board"]');
   assert.match(await page.textContent('#view-board'), /감독 시설관리팀 홍감독 031-324-1234/);
   await page.screenshot({ path: join(SHOTS, '5-현황판-메모.png') });
+  await page.click('#view-board [data-act="excel"]');
+  await waitFor(() => existsSync(join(data, '현황')) && readdirSync(join(data, '현황')).some((f) => f.endsWith('.xlsx')), 15000, '엑셀 저장');
+  const xf = join(data, '현황', readdirSync(join(data, '현황')).find((f) => f.endsWith('.xlsx')));
+  const xo = JSON.parse(execFileSync('python3', ['-c', `
+import json, sys, openpyxl
+wb = openpyxl.load_workbook(sys.argv[1]); a, b = wb.worksheets
+rows = [[c.value if not hasattr(c.value, 'isoformat') else c.value.date().isoformat() for c in r] for r in a.iter_rows()]
+print(json.dumps({'names': wb.sheetnames, 'head': rows[0], 'rows': rows[1:], 'detail': b.max_row}, ensure_ascii=False))`, xf]).toString());
+  assert.deepEqual(xo.names, ['계약 현황', '서류 상세']);
+  const H = (k) => xo.head.indexOf(k);
+  const r0 = xo.rows.find((r) => r[H('계약명')] === '시청사 옥상 방수공사');
+  assert.equal(r0[H('계약금액')], 48000000); assert.equal(r0[H('준공일')], '2026-10-10'); assert.equal(r0[H('감독관')], '홍감독');
+  assert.equal(r0[H('예산')], '외부 예산(e나라도움 등)'); assert.match(r0[H('빠진 서류')], /일반 기안문/); assert.match(r0[H('특이사항')], /하자보증서/);
+  assert.equal(xo.rows.length, 2); assert.ok(xo.detail > 20, '서류 상세 시트');
   await page.click('.views [data-view="contracts"]');
-  step('계약 메모(감독부서·감독관·연락처·특이사항) 저장 + 메모·연락처까지 찾기, 다른 담당자 계약 안내');
+  step('현황판 → 엑셀로 받기: 계약 현황(금액·날짜 서식, 감독·예산·빠진 서류·특이사항) + 서류 상세 시트');
 
   // ===== 공고문 =====
   await page.click('.brand');

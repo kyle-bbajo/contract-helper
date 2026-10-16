@@ -42,10 +42,42 @@
     const anything = docs.length > 0 || Object.values(c.originals || {}).some(Boolean);
     const end = L.toDate(c.endDate);
     st.late = !!(end && end < today() && !c.paidDate);
-    st.state = c.paidDate ? 'paid' : !anything ? 'empty' : st.missing.length ? 'missing' : 'ready';
+    const v = validity(c);
+    st.basis = v.basis; st.certs = v.certs;
+    st.expired = v.certs.filter((x) => x.status === 'short');
+    st.unknownValid = v.certs.filter((x) => x.status === 'unknown');
+    st.need = st.missing.length + st.expired.length;
+    st.state = c.paidDate ? 'paid' : !anything ? 'empty' : st.need ? 'missing' : 'ready';
     st.untyped = docs.filter((d) => !d.itemId).length;
     st.origCount = Object.values(c.originals || {}).filter(Boolean).length;
     return st;
+  }
+
+  // ---------- 지출요청일과 증명서 유효기간 ----------
+  // 기준일: 직접 넣은 지출 예정일 > 지출일 > (준공조서·준공계 중 늦은 날짜) + 2주 > 계약 준공일 + 2주
+  const dateOfDoc = (d, kind) => d.dateOverride || (d.dates && (kind === 'inspect' ? d.dates.inspect || d.dates.last : d.dates.finish || d.dates.last)) || '';
+  function payBasis(c) {
+    if (c.payPlan) return { date: c.payPlan, how: '지출 예정일(직접 넣음)', manual: true };
+    if (c.paidDate) return { date: String(c.paidDate).replace(/\D/g, '').slice(0, 8), how: '지출일' };
+    const docs = docsOf(c.key);
+    const pick = (re, kind, label) => docs.filter((d) => re.test(d.itemId || '')).map((d) => ({ date: dateOfDoc(d, kind), label })).filter((x) => x.date);
+    const cands = [...pick(/-inspect$/, 'inspect', '준공조서'), ...pick(/-finish$/, 'finish', '준공계')].sort((a, b) => (a.date < b.date ? 1 : -1));
+    if (cands[0]) return { date: L.addDays(cands[0].date, 14), how: `${cands[0].label} ${L.fmtDate(cands[0].date)} + 2주` };
+    if (c.endDate) return { date: L.addDays(String(c.endDate).replace(/\D/g, '').slice(0, 8), 14), how: `계약 준공일 ${L.fmtDate(c.endDate)} + 2주 (준공계·준공조서가 오면 그 날짜로 바뀜)`, guess: true };
+    return null;
+  }
+  function validity(c) {
+    const basis = payBasis(c), docs = docsOf(c.key), out = [];
+    for (const x of lists(c.type)) {
+      if (!L.isCertItem(x.id)) continue;
+      const ds = docs.filter((d) => d.itemId === x.id); if (!ds.length) continue;
+      // 같은 서류가 여러 개면 가장 오래 유효한 것으로 판단
+      const vs = ds.map((d) => ({ d, valid: d.validOverride || (d.dates && d.dates.valid) || '' }));
+      const best = vs.filter((v) => v.valid).sort((a, b) => (a.valid < b.valid ? 1 : -1))[0];
+      const status = !best ? 'unknown' : basis && best.valid < basis.date ? 'short' : 'ok';
+      out.push({ item: x, valid: best ? best.valid : '', status, doc: (best || vs[0]).d });
+    }
+    return { basis, certs: out };
   }
 
   // ---------- 저장 ----------
@@ -92,6 +124,7 @@
       for (const k of ['type', 'name', 'vendor', 'no', 'amount', 'contractDate', 'startDate', 'endDate', 'period', 'officer', 'dept', 'org', 'url']) {
         if (!keep[k] && n[k]) ex[k] = n[k];
       }
+      if (n.budgetAuto) { ex.budgetAuto = n.budgetAuto; ex.budgetWhy = n.budgetWhy || ''; }
       ex.nums = [...new Set([...(ex.nums || []), ...(n.nums || [])])];
       if (n.source === 'api') ex.source = 'api';
       ex.updatedAt = Date.now();
@@ -122,6 +155,7 @@
         recs.push({
           id: L.uid(), name: f.name, kind, size: f.size, mime: f.type, bytes, ocr,
           meta: L.findMeta(lines), text: L.norm(lines.join(' ')).slice(0, 6000), title: L.norm(lines.slice(0, 8).join(' ')).slice(0, 300),
+          dates: L.extractDates(lines),
         });
       }
       // 2) 계약서가 있으면 먼저 계약을 찾거나 만듦
@@ -152,7 +186,7 @@
         const saved = await S.save(dir, fname, r.bytes);
         db.docs.push({
           id: r.id, key: c ? c.key : null, itemId: item ? item.id : null, path: saved.path, name: r.name, kind: r.kind,
-          size: r.size, mime: r.mime, addedAt: new Date().toISOString(), ocr: r.ocr, meta: r.meta, text: r.text, title: r.title, manual: !!forced,
+          size: r.size, mime: r.mime, addedAt: new Date().toISOString(), ocr: r.ocr, meta: r.meta, text: r.text, title: r.title, dates: r.dates, manual: !!forced,
         });
         if (c) { byContract[c.key] = (byContract[c.key] || 0) + 1; c.updatedAt = Date.now(); } else inbox++;
       }
@@ -249,7 +283,7 @@
         const text = L.norm(lines.join(' ')).slice(0, 6000), title = L.norm(lines.slice(0, 8).join(' ')).slice(0, 300);
         let c = contracts().find((x) => x.folder && (dir === x.folder || dir.startsWith(x.folder + '/'))) || L.matchContract(contracts(), L.norm(L.stem(name)) + '|' + text);
         const doc = { id: L.uid(), key: c ? c.key : null, itemId: c ? L.classifyItem(lists(c.type), name, title) : null, path: f.path, name, kind, size: f.size,
-          addedAt: new Date().toISOString(), ocr, meta: L.findMeta(lines), text, title, manual: false };
+          addedAt: new Date().toISOString(), ocr, meta: L.findMeta(lines), text, title, dates: L.extractDates(lines), manual: false };
         db.docs.push(doc); added++;
         if (c && /^미분류\//.test(f.path)) await moveDoc(doc, c.key, doc.itemId, false);
       } catch (e) { console.warn('새 파일 읽기 실패', f.path, e); }
@@ -278,19 +312,21 @@
     }
     const ranges = L.monthRanges(months);
     const btn = $('#btnFetch'); if (btn.classList.contains('busy')) return; btn.classList.add('busy'); btn.disabled = true;
-    const steps = ranges.length * 2; let step = 0, created = 0; const seen = new Set();
+    const steps = ranges.length * 2; let step = 0, created = 0; const seen = new Set(); const raw = [];
     try {
       for (const type of ['공사', '용역']) {
         for (const [b, e] of ranges) {
           progress(`나라장터에서 ${type} 계약 불러오는 중 (${b.slice(0, 4)}.${b.slice(4, 6)})`, step++ / steps);
           for (let page = 1; page < 50; page++) {
             const { items, total } = L.parseApiBody(await S.nara(L.apiUrl(L.API_OPS[type], cfg, b, e, page, 100)));
-            for (const x of items) { const r = upsertContract(L.normalizeApiItem(x, type)); seen.add(r.c.key); if (r.created) created++; }
+            for (const x of items) { raw.push({ 구분: type, ...x }); const r = upsertContract(L.normalizeApiItem(x, type)); seen.add(r.c.key); if (r.created) created++; }
             if (page * 100 >= total || !items.length) break;
           }
         }
       }
       cfg.lastFetch = new Date().toISOString(); await saveCfg();
+      // 나라장터가 준 그대로를 남겨 둠(어떤 항목이 오는지 확인할 때: 데이터 폴더 \진단\나라장터_계약응답.json)
+      if (raw.length) S.writeJson('진단/나라장터_계약응답.json', { at: cfg.lastFetch, count: raw.length, items: raw }).catch(() => {});
       await saveDb(true);
       const moved = await rematchInbox();
       toast(`나라장터 계약 ${seen.size}건을 확인했습니다. 새 계약 ${created}건` + (moved ? `, 미분류 서류 ${moved}개를 계약으로 옮겼습니다.` : '.'), 'ok');
@@ -366,7 +402,7 @@
   function pillFor(st, c) {
     if (st.state === 'paid') return `<span class="pill paid">지출 ${esc(L.fmtDate(c.paidDate).slice(5))}</span>`;
     if (st.state === 'empty') return '<span class="pill none">서류 없음</span>';
-    if (st.state === 'missing') return `<span class="pill miss">미비 ${st.missing.length}</span>`;
+    if (st.state === 'missing') return `<span class="pill miss" title="${st.expired.length ? `빠진 서류 ${st.missing.length} · 유효기간 부족 ${st.expired.length}` : ''}">미비 ${st.need}</span>`;
     return '<span class="pill ready">지출 대기</span>';
   }
   function renderFilters() {
@@ -411,7 +447,7 @@
     let cls = '', a = '', b = '';
     if (st.state === 'paid') { a = '지출'; b = L.fmtDate(c.paidDate).slice(2); }
     else if (st.state === 'empty') { cls = 'none'; a = '서류'; b = '없음'; }
-    else if (st.missing.length) { a = '미비'; b = `${st.missing.length}건`; }
+    else if (st.need) { a = '미비'; b = `${st.need}건`; }
     else { cls = 'ok'; a = '서류'; b = '완료'; }
     return `<svg class="seal ${cls}" viewBox="0 0 120 120" role="img" aria-label="${esc(a + ' ' + b)}">
       <defs><filter id="ink" x="-5%" y="-5%" width="110%" height="110%"><feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" seed="7"/><feDisplacementMap in="SourceGraphic" scale="2.2"/></filter></defs>
@@ -424,24 +460,70 @@
     return (withInbox ? '<option value="__inbox">미분류로 보내기</option>' : '') + '<option value="">서류 종류 고르기</option>' +
       list.map((x) => `<option value="${esc(x.id)}"${x.id === sel ? ' selected' : ''}>${esc(x.group)} · ${esc(x.name)}</option>`).join('');
   }
+  const isoOf = (s) => { const m = String(s || '').replace(/\D/g, ''); return m.length >= 8 ? `${m.slice(0, 4)}-${m.slice(4, 6)}-${m.slice(6, 8)}` : ''; };
   function fileRow(d, list) {
     const tag = d.missing ? '<span class="ft warn" title="데이터 폴더에서 이 파일을 찾을 수 없습니다">파일 없음</span>'
       : d.ocr ? '<span class="ft" title="스캔본이라 글자 인식으로 읽었습니다">스캔</span>' : `<span class="ft${d.kind === 'hwp' && !d.pdfPath ? ' warn' : ''}">${KIND_LABEL[d.kind]}</span>`;
     const conv = d.kind === 'hwp' && !d.pdfPath ? `<button class="btn sm" data-act="hwp" data-doc="${d.id}">PDF로 변환</button>` : '';
-    return `<div class="file">${tag}<span class="fn" title="${esc(d.name)}">${esc(d.name)}</span>${conv}
+    let dt = '';
+    if (L.isCertItem(d.itemId)) {
+      const v = d.validOverride || (d.dates && d.dates.valid) || '';
+      const how = d.validOverride ? '직접' : d.dates && d.dates.validHow === 'calc' ? '계산' : v ? '읽음' : '';
+      dt = `<label class="vdate${v ? '' : ' empty'}" title="증명서에 적힌 유효기간 마지막 날. 잘못 읽었으면 고치세요.">유효기간<input type="date" data-act="validset" data-doc="${d.id}" value="${isoOf(v)}">${how ? `<small>${how}</small>` : ''}</label>`;
+    } else if (/-(finish|inspect)$/.test(d.itemId || '')) {
+      const v = dateOfDoc(d, /-inspect$/.test(d.itemId) ? 'inspect' : 'finish');
+      dt = `<label class="vdate${v ? '' : ' empty'}" title="지출요청일(이 날짜 + 2주) 계산에 씁니다">날짜<input type="date" data-act="docdate" data-doc="${d.id}" value="${isoOf(v)}">${d.dateOverride ? '<small>직접</small>' : ''}</label>`;
+    }
+    return `<div class="file">${tag}<span class="fn" title="${esc(d.name)}">${esc(d.name)}</span>${conv}${dt}
       <select data-act="moveitem" data-doc="${d.id}" aria-label="서류 종류">${itemOptions(list, d.itemId, true)}</select>
       <button class="link" data-act="view" data-doc="${d.id}">보기</button>
       <button class="x" data-act="del" data-doc="${d.id}" title="빼기" aria-label="빼기">✕</button></div>`;
   }
+  // 우리 예산이 아닌 사업(e나라도움 보조금 등)은 구매요구서 대신 일반 기안문이 옴
+  const isExt = (c) => !!c && (c.budget ? c.budget === 'ext' : c.budgetAuto === 'ext');
+  const BUDGET = { own: '우리 예산', ext: '외부 예산(e나라도움 등)' };
+  function itemView(c, x) {
+    if (isExt(c) && /-req$/.test(x.id)) return { name: '일반 기안문', note: '우리 예산이 아니라 구매요구서 대신 기안문으로 옴' };
+    if (!isExt(c) && /-req$/.test(x.id)) return { name: '구매요구서', note: '설계내역서·시방서 등 포함 (외부 예산 사업은 오른쪽 메모에서 예산을 바꾸면 기안문으로 바뀜)' };
+    return { name: x.name, note: x.note };
+  }
+  // 업체에 다시 받을 서류: 업체·메일로 받는 서류 중 빠진 것 + 유효기간이 지출요청일보다 먼저 끝나는 증명서
+  function vendorNeeds(c, st) {
+    const missing = st.missing.filter((x) => L.ORIGINAL_SOURCES.includes(x.source)).map((x) => itemView(c, x).name);
+    const reissue = st.expired.map((x) => ({ name: itemView(c, x.item).name, valid: x.valid }));
+    return { missing, reissue };
+  }
+  function reqCard(c, st) {
+    const b = st.basis, n = vendorNeeds(c, st);
+    const items = [
+      n.missing.length ? `<li><b class="num">${n.missing.length}</b> 업체 서류 빠짐</li>` : '',
+      n.reissue.length ? `<li class="bad"><b class="num">${n.reissue.length}</b> 유효기간 부족 → 재발급</li>` : '',
+      st.unknownValid.length ? `<li class="unk"><b class="num">${st.unknownValid.length}</b> 유효기간 못 읽음(서류 줄에서 입력)</li>` : '',
+    ].join('');
+    return `<section class="req" aria-label="지출요청일과 업체 보완 요청">
+      <div class="memo-head"><h3>지출요청일</h3>${c.payPlan ? '<button type="button" class="link sm" data-act="payauto">자동으로</button>' : ''}</div>
+      <input type="date" data-act="payplan" value="${isoOf(b && b.date)}" aria-label="지출요청일(증명서 유효기간을 이 날짜로 따짐)">
+      <p class="req-how">${b ? esc(b.how) : '준공일을 알 수 없어 직접 넣어 주세요'}<br>증명서 유효기간은 이 날짜까지 남아 있어야 합니다.</p>
+      ${items ? `<ul class="req-list">${items}</ul>` : '<p class="req-ok">업체에 다시 받을 서류가 없습니다.</p>'}
+      <button type="button" class="btn${n.missing.length || n.reissue.length ? ' primary' : ''} block" data-act="mail"${n.missing.length || n.reissue.length ? '' : ' disabled'}>보완 요청 메일 쓰기</button>
+    </section>`;
+  }
   function memoCard(c) {
     const m = memoOf(c);
     const f = (k, label, ph, extra = '') => `<label class="mf"><span>${label}</span><input type="text" data-memo="${k}" value="${esc(m[k] || '')}" placeholder="${esc(ph)}" autocomplete="off"${extra}></label>`;
-    return `<section class="memo" aria-label="메모">
-      <div class="memo-head"><h3>메모</h3><span class="muted" id="memoState">이 PC에만 저장 · 인쇄본에는 들어가지 않습니다</span></div>
+    const b = isExt(c) ? 'ext' : 'own';
+    // 예산 출처: 나라장터에서 알아낸 값 / 직접 바꾼 값
+    const auto = c.budgetAuto === 'ext' ? '나라장터: 외부재정연계' : '';
+    const src = c.budget ? `직접 바꿈${auto ? ` · <button type="button" class="link sm" data-act="budgetauto">나라장터 값으로</button>` : ''}` : auto ? `<span title="${esc(c.budgetWhy || '')}">${esc(auto)}</span>` : '';
+    return `<section class="memo" aria-label="계약 메모">
+      <div class="memo-head"><h3>메모</h3><span class="muted" id="memoState">자동 저장</span></div>
+      <div class="mf"><span>예산${src ? ` <small class="bsrc">${src}</small>` : ''}</span><div class="seg budget" role="group" aria-label="예산 구분">${[['own', '우리 예산'], ['ext', '외부(e나라도움 등)']].map(([k, v]) => `<button type="button" data-act="budget" data-v="${k}" class="${k === b ? 'on' : ''}" aria-pressed="${k === b}" title="${esc(BUDGET[k])}">${esc(v)}</button>`).join('')}</div></div>
       <div class="memo-grid">
         ${f('dept', '감독부서', '예: 시설관리팀')}${f('person', '감독관', '이름')}${f('phone', '연락처', '예: 031-000-0000', ' inputmode="tel"')}
-        <label class="mf wide"><span>특이사항</span><textarea data-memo="note" rows="2" placeholder="예: 준공검사 10/20 예정, 하자보증서 원본은 업체가 직접 가져오기로 함">${esc(m.note || '')}</textarea></label>
-      </div></section>`;
+        ${f('vmail', '업체 메일', '보완 요청 메일 받는 사람', ' inputmode="email"')}
+        <label class="mf wide"><span>특이사항</span><textarea data-memo="note" rows="4" placeholder="예: 준공검사 10/20 예정, 하자보증서 원본은 업체가 직접 가져오기로 함">${esc(m.note || '')}</textarea></label>
+      </div>
+      <p class="memo-foot">이 PC에만 저장되고 인쇄본에는 들어가지 않습니다.</p></section>`;
   }
   function renderDetail() {
     const el = $('#detail');
@@ -482,9 +564,10 @@
         </div>
         ${sealSvg(st, c)}
       </div>
-      ${memoCard(c)}
+      <div class="dbody">
       <div class="dropin" id="dropin"><button class="btn primary" data-act="addhere">업로드</button>
         <span>이 계약 서류로 올립니다. 서류 종류는 자동으로 찾고, 파일을 여기에 끌어다 놓아도 됩니다.</span></div>
+      <aside class="dside">${reqCard(c, st)}${memoCard(c)}</aside>
       <div class="stages">
         ${untyped.length ? `<section class="stage"><div class="stage-head"><span class="stage-no" style="background:var(--amber)">?</span><h3>서류 종류를 정해 주세요</h3><span class="where">이 계약 서류인데 어떤 서류인지 찾지 못했습니다</span></div>
           <div class="row"><span class="mark warn">!</span><div class="rname">종류 미정 ${untyped.length}개</div><div class="rside"></div><div class="files">${untyped.map((d) => fileRow(d, list)).join('')}</div></div></section>` : ''}
@@ -504,29 +587,81 @@
               else if (x.required) { mark = '<span class="mark miss">✕</span>'; side = '<span class="missing">누락</span>'; }
               else { mark = '<span class="mark opt">–</span>'; side = '<span class="optional">해당 시</span>'; }
               const tog = canOrig ? `<label class="orig-toggle" title="종이 원본으로 받았으면 체크하세요. 인쇄본의 이 자리에 원본을 끼울 안내 페이지가 들어갑니다."><input type="checkbox" data-act="orig" data-item="${esc(x.id)}"${orig ? ' checked' : ''}> 원본</label>` : '';
-              const add = `<button class="add-item" data-act="additem" data-item="${esc(x.id)}" title="${esc(x.name)}(으)로 바로 넣기">+ 추가</button>`;
-              return `<div class="row" data-drop-item="${esc(x.id)}">${mark}<div class="rname">${esc(x.name)}${x.note ? `<span class="note">${esc(x.note)}</span>` : ''}</div>
+              const xv = itemView(c, x);
+              const cv = (st.certs || []).find((v) => v.item.id === x.id);
+              if (cv && ds.length) {
+                if (cv.status === 'short') { mark = '<span class="mark miss">!</span>'; side = `<span class="valid bad" title="지출요청일 ${esc(L.fmtDate(st.basis.date))}보다 먼저 끝남">${esc(L.fmtDate(cv.valid).slice(5))}까지 · 재발급</span>`; }
+                else if (cv.status === 'unknown') side = '<span class="valid unk" title="유효기간을 읽지 못했습니다. 아래 날짜 칸에 넣어 주세요.">유효기간 확인</span>';
+                else side = `<span class="valid ok" title="지출요청일까지 유효">${esc(L.fmtDate(cv.valid).slice(5))}까지 유효</span>`;
+              }
+              const add = `<button class="add-item" data-act="additem" data-item="${esc(x.id)}" title="${esc(xv.name)}(으)로 바로 넣기">+ 추가</button>`;
+              return `<div class="row" data-drop-item="${esc(x.id)}">${mark}<div class="rname">${esc(xv.name)}${xv.note ? `<span class="note">${esc(xv.note)}</span>` : ''}</div>
                 <div class="rside">${tog}${side}${add}</div>${ds.length ? `<div class="files">${ds.map((d) => fileRow(d, list)).join('')}</div>` : ''}</div>`;
             }).join('')}
           </section>`;
         }).join('')}
+      </div>
       </div>`;
   }
 
   // 메모 칸 높이를 내용에 맞춤
   const fitMemo = () => $$('textarea[data-memo]').forEach((t) => { t.style.height = 'auto'; t.style.height = t.scrollHeight + 2 + 'px'; });
 
+  // ---------- 엑셀로 받기 ----------
+  const XLS_ICON = '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 8l8 8M16 8l-8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+  const stateText = (st) => (st.state === 'paid' ? '지출 완료' : st.state === 'empty' ? '서류 없음' : st.state === 'missing' ? '서류 미비' : '지출 대기');
+  function excelSheets(rows) {
+    const contractsSheet = {
+      name: '계약 현황',
+      cols: [{ h: '번호', w: 6, type: 'int' }, { h: '상태', w: 10 }, { h: '계약명', w: 36 }, { h: '구분', w: 7 }, { h: '예산', w: 12 }, { h: '업체', w: 22 },
+        { h: '계약번호', w: 20 }, { h: '계약금액', w: 15, type: 'money' }, { h: '시작일', w: 12, type: 'date' }, { h: '준공일', w: 12, type: 'date' }, { h: '준공 지남', w: 10 },
+        { h: '계약 담당', w: 10 }, { h: '담당부서', w: 12 }, { h: '감독부서', w: 14 }, { h: '감독관', w: 10 }, { h: '감독 연락처', w: 15 },
+        { h: '필수 서류', w: 10 }, { h: '빠진 서류', w: 40, type: 'wrap' }, { h: '재발급 필요(유효기간)', w: 34, type: 'wrap' }, { h: '지출요청일', w: 12, type: 'date' }, { h: '원본 받음', w: 9, type: 'int' }, { h: '지출일', w: 12, type: 'date' }, { h: '지출 메모', w: 18 }, { h: '특이사항', w: 44, type: 'wrap' }],
+      rows: rows.map(({ c, st }, i) => {
+        const m = memoOf(c);
+        return [i + 1, stateText(st), c.name, c.type, BUDGET[isExt(c) ? 'ext' : 'own'], c.vendor, c.no, c.amount || '', c.startDate, c.endDate, st.late ? '준공 지남' : '',
+          c.officer, c.dept, m.dept, m.person, m.phone, `${st.reqDone}/${st.reqTotal}`, st.missing.map((x) => itemView(c, x).name).join(', '),
+          st.expired.map((x) => `${itemView(c, x.item).name}(${L.fmtDate(x.valid)}까지)`).join(', '), st.basis ? st.basis.date : '', st.origCount || '', c.paidDate, c.payMemo, m.note];
+      }),
+    };
+    const detail = { name: '서류 상세', cols: [{ h: '계약명', w: 36 }, { h: '계약번호', w: 20 }, { h: '단계', w: 10 }, { h: '서류', w: 30 }, { h: '필수', w: 7 }, { h: '상태', w: 10 }, { h: '파일', w: 50, type: 'wrap' }], rows: [] };
+    for (const { c } of rows) {
+      const docs = docsOf(c.key);
+      for (const x of lists(c.type)) {
+        const ds = docs.filter((d) => d.itemId === x.id); const orig = !!(c.originals || {})[x.id];
+        detail.rows.push([c.name, c.no, x.group, itemView(c, x).name, x.required ? '필수' : '해당 시', ds.length ? '받음' : orig ? '원본 받음' : x.required ? '누락' : '', ds.map((d) => d.name).join('\n')]);
+      }
+    }
+    return [contractsSheet, detail];
+  }
+  async function exportExcel(rows) {
+    if (!rows.length) { toast('엑셀로 받을 계약이 없습니다.', 'err'); return; }
+    const sheets = excelSheets(rows);
+    const d = new Date(), p = (n) => String(n).padStart(2, '0');
+    const name = `계약현황_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.xlsx`;
+    const bytes = JH.xlsx.build({ title: '계약 현황', sheets });
+    const saved = await S.save('현황', name, bytes);
+    if (S.showTable) { S.showTable(name, sheets); return; } // 시연판: 화면 미리보기
+    toast(`계약 ${rows.length}건을 엑셀로 저장했습니다 (현황 폴더).`, 'ok', { label: '폴더 열기', run: () => S.open('현황') });
+    try { await S.openFile(saved.path); } catch (_) { /* 엑셀이 없으면 폴더에서 열면 됨 */ }
+  }
+
   // ---------- 화면: 현황판 ----------
+  function boardRows() {
+    return filtered(true).map((c) => ({ c, st: statusOf(c) }))
+      .filter(({ st }) => !ui.board || (ui.board === 'late' ? st.late : ui.board === 'missing' ? (st.state === 'missing' || st.state === 'empty') : st.state === ui.board))
+      .sort((a, b) => (b.st.late - a.st.late) || ((L.toDate(a.c.endDate) || 9e15) - (L.toDate(b.c.endDate) || 9e15)));
+  }
   function renderBoard() {
     const all = filtered(true).map((c) => ({ c, st: statusOf(c) }));
     const cnt = { '': all.length, missing: 0, ready: 0, late: 0, paid: 0 };
     all.forEach(({ st }) => { if (st.state === 'missing' || st.state === 'empty') cnt.missing++; if (st.state === 'ready') cnt.ready++; if (st.state === 'paid') cnt.paid++; if (st.late) cnt.late++; });
-    const rows = all.filter(({ st }) => !ui.board || (ui.board === 'late' ? st.late : ui.board === 'missing' ? (st.state === 'missing' || st.state === 'empty') : st.state === ui.board))
-      .sort((a, b) => (b.st.late - a.st.late) || ((L.toDate(a.c.endDate) || 9e15) - (L.toDate(b.c.endDate) || 9e15)));
+    const rows = boardRows();
     const chip = (k, label, alert) => `<button class="chip${ui.board === k ? ' on' : ''}${alert && cnt[k] ? ' alert' : ''}" data-board="${k}">${label} <b>${cnt[k]}</b></button>`;
     $('#view-board').innerHTML = `
       <div class="board-head"><h2>현황판</h2><span class="sub">${ui.officer ? `담당 ${esc(ui.officer)}` : '담당자 전체'}${ui.type ? ` · ${esc(ui.type)}` : ''}${cfg.lastFetch ? ` · 나라장터 ${esc(L.fmtDate(cfg.lastFetch.slice(0, 10)))} 기준` : ''}</span>
-        <div class="right"><select id="bOfficer" aria-label="담당자">${$('#fOfficer').innerHTML}</select></div></div>
+        <div class="right"><select id="bOfficer" aria-label="담당자">${$('#fOfficer').innerHTML}</select>
+          <button class="btn" data-act="excel" title="지금 보이는 계약을 엑셀 파일로 저장하고 엽니다"${rows.length ? '' : ' disabled'}>${XLS_ICON}엑셀로 받기 <span class="num">${rows.length}건</span></button></div></div>
       <div class="chips">${chip('', '전체')}${chip('missing', '서류 미비')}${chip('ready', '지출 대기')}${chip('late', '준공 지남·미지출', true)}${chip('paid', '지출 완료')}</div>
       ${rows.length ? `<table class="grid"><thead><tr><th>계약</th><th>구분</th><th>준공일</th><th>서류</th><th class="r">원본</th><th>지출</th><th>상태</th></tr></thead><tbody>
         ${rows.map(({ c, st }) => `<tr data-key="${esc(c.key)}">
@@ -618,6 +753,12 @@
         try { const r = await S.hwp2pdf(d.path); d.pdfPath = r.path; await saveDb(true); toast('PDF로 변환했습니다.', 'ok'); }
         catch (err) { toast('한글 변환 실패: ' + err.message, 'err'); }
         render();
+      } else if (act === 'budget') { c.budget = t.dataset.v === 'ext' ? 'ext' : 'own'; c.updatedAt = Date.now(); render(); await saveDb(true);
+        toast(c.budget === 'ext' ? '외부 예산 사업으로 바꿨습니다. 구매요구서 자리가 "일반 기안문"으로 바뀝니다.' : '우리 예산 사업으로 바꿨습니다.', 'ok');
+      } else if (act === 'mail') { openMail(c);
+      } else if (act === 'payauto') { delete c.payPlan; c.updatedAt = Date.now(); render(); await saveDb(true);
+      } else if (act === 'budgetauto') { delete c.budget; c.updatedAt = Date.now(); render(); await saveDb(true);
+      } else if (act === 'excel') { await exportExcel(t.dataset.from === 'list' ? filtered().map((x) => ({ c: x, st: statusOf(x) })) : boardRows());
       } else if (act === 'searchall') { ui.officer = ''; ui.officerTouched = true; ui.type = ''; ui.state = ''; $$('#fState button').forEach((b) => b.classList.toggle('on', !b.dataset.state)); render();
       } else if (act === 'rematch') { const n = await rematchInbox(); toast(n ? `${n}개를 계약으로 옮겼습니다.` : '새로 찾은 계약이 없습니다.'); render(); }
     } catch (err) { console.error(err); toast(err.message, 'err'); }
@@ -637,9 +778,35 @@
         await moveDoc(d, c.key, L.classifyItem(lists(c.type), d.name, d.title));
         toast(`"${c.name}"으로 옮겼습니다.`, 'ok', { label: '계약 보기', run: () => { ui.sel = c.key; setView('contracts'); } });
         render();
+      } else if (t.dataset.act === 'validset' || t.dataset.act === 'docdate') {
+        const d = docById(t.dataset.doc); const v = t.value.replace(/-/g, '');
+        if (t.dataset.act === 'validset') { if (v) d.validOverride = v; else delete d.validOverride; } else { if (v) d.dateOverride = v; else delete d.dateOverride; }
+        await saveDb(true); render();
+      } else if (t.dataset.act === 'payplan') {
+        const c = db.contracts[ui.sel]; const v = t.value.replace(/-/g, '');
+        if (v) c.payPlan = v; else delete c.payPlan; c.updatedAt = Date.now(); await saveDb(true); render();
       } else if (t.id === 'bOfficer') { ui.officer = t.value; ui.officerTouched = true; render(); }
     } catch (err) { console.error(err); toast(err.message, 'err'); render(); }
   }
+
+  // 업체 보완 요청 메일
+  function openMail(c) {
+    const st = statusOf(c), n = vendorNeeds(c, st);
+    const m = L.vendorMail({ c, org: cfg.insttNm, dept: (cfg.notice && cfg.notice.dept) || '', officer: cfg.officer, phone: (cfg.notice && cfg.notice.phone) || '', missing: n.missing, reissue: n.reissue, basis: st.basis || {} });
+    $('#mailTo').value = memoOf(c).vmail || ''; $('#mailSubj').value = m.title; $('#mailBody').value = m.body;
+    $('#mailNote').textContent = st.unknownValid.length ? `유효기간을 읽지 못한 증명서 ${st.unknownValid.length}개는 빠져 있습니다. 서류 줄에서 날짜를 넣으면 반영됩니다.` : '';
+    $('#dlgMail').showModal();
+  }
+  $('#mailCopy').onclick = async () => {
+    const text = `제목: ${$('#mailSubj').value}\n\n${$('#mailBody').value}`;
+    try { await navigator.clipboard.writeText(text); toast('메일 내용을 복사했습니다. 메일 쓰기 화면에 붙여 넣으세요.', 'ok'); }
+    catch (_) { $('#mailBody').select(); toast('복사하지 못했습니다. 본문을 직접 선택해 복사해 주세요.', 'err'); }
+  };
+  $('#mailOpen').onclick = () => {
+    const c = db.contracts[ui.sel]; const to = $('#mailTo').value.trim();
+    if (c && to !== (memoOf(c).vmail || '')) { c.memo = { ...(c.memo || {}), vmail: to }; saveDb(); }
+    location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent($('#mailSubj').value)}&body=${encodeURIComponent($('#mailBody').value)}`;
+  };
 
   // 첫 실행: 이름·부서·연락처만 받음(인증키·기관은 공용 설정)
   function openWelcome() {

@@ -47,6 +47,12 @@ writeFileSync(join(OUT, 'css/demo.css'), `
 .demo-fig { margin: 0; display: grid; gap: 6px; justify-items: center; }
 .demo-fig figcaption { color: var(--muted); font-size: 12.5px; }
 .demo-page { max-width: 100%; height: auto; background: #fff; box-shadow: 0 2px 10px rgba(30,38,51,.15); }
+.demo-sheet { width: 100%; display: grid; gap: 6px; }
+.demo-sheet h4 { margin: 0; font-size: 14px; }
+.demo-tbl { overflow: auto; max-width: 100%; background: var(--sheet); border-radius: 8px; }
+.demo-tbl table { font-size: 12.5px; white-space: nowrap; }
+.demo-tbl td { white-space: nowrap; vertical-align: top; }
+.demo-tbl td.w { white-space: pre-line; min-width: 240px; max-width: 360px; }
 .demo-text { white-space: pre-wrap; background: var(--sheet); padding: 20px; border-radius: 8px; width: 100%; max-width: 760px; font: 14px/1.8 "Pretendard", "Malgun Gothic", sans-serif; margin: 0; }
 `);
 

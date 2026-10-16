@@ -76,3 +76,46 @@ test('체크리스트 상태: 원본 체크도 받은 것으로', () => {
   assert.ok(!st.missing.some((x) => x.id === 'c-contract' || x.id === 'c-start'));
   assert.equal(st.conv.length, 1, '변환 안 된 한글');
 });
+
+test('외부재정연계(e나라도움 등) 알아내기: 이름이 Y이거나 값에 그런 말이 있으면', () => {
+  const L = require('../../src/app/js/logic.js');
+  assert.equal(L.normalizeApiItem({ cnstwkNm: 'a', untyCntrctNo: 'R26BK01234567' }, '공사').budgetAuto, ''); // 응답에 없으면 모름
+  assert.equal(L.normalizeApiItem({ cnstwkNm: 'a', untyCntrctNo: 'R26BK01234567', extrnlFnncLnkYn: 'Y' }, '공사').budgetAuto, 'ext');
+  assert.equal(L.normalizeApiItem({ cnstwkNm: 'a', untyCntrctNo: 'R26BK01234567', extrnlFnncLnkYn: 'N' }, '공사').budgetAuto, '');
+  assert.equal(L.normalizeApiItem({ cntrctNm: 'b', baseDtls: '외부재정연계(e나라도움) 사업' }, '용역').budgetAuto, 'ext');
+  assert.match(L.detectExtFinance({ payDivNm: 'e-나라도움 연계' }).why, /payDivNm/);
+  assert.equal(L.detectExtFinance({ cntrctNm: '용인 보조금 지원센터 청소' }), null); // 계약명에 든 말은 보지 않음
+});
+
+test('증명서 유효기간·준공 날짜 읽기, 보완 요청 메일', () => {
+  const L = require('../../src/app/js/logic.js');
+  let r = L.extractDates(['납세증명서', '발급일자 : 2026. 10. 1.', '유효기간 : 2026. 10. 31.', '2026년 10월 1일 용인세무서장']);
+  assert.deepEqual([r.valid, r.validHow, r.issue], ['20261031', 'read', '20261001']);
+  r = L.extractDates(['완납증명서', '유효기간', '2026.09.25 ~ 2026.10.15']);
+  assert.equal(r.valid, '20261015');
+  r = L.extractDates(['지방세 납세증명서', '유효기간 : 발급일로부터 30일', '발급일 2026년 10월 2일']);
+  assert.deepEqual([r.valid, r.validHow], ['20261031', 'calc']);
+  r = L.extractDates(['준공계', '<준공일자><2026. 10. 8.>']); assert.equal(r.finish, '20261008');
+  r = L.extractDates(['준공검사조서', '검사일자 : 2026-10-12', '준공일자 2026-10-08']); assert.deepEqual([r.inspect, r.finish], ['20261012', '20261008']);
+  assert.equal(L.extractDates(['아무 날짜 없음']).valid, '');
+  assert.ok(L.isCertItem('c-ltax') && L.isCertItem('s-inspaid') && !L.isCertItem('c-claim'));
+  const m = L.vendorMail({ c: { name: '시청사 옥상 방수공사', no: 'R26BK01234567-00' }, org: '용인도시공사', dept: '계약팀', officer: '용도공', phone: '031-000-0000',
+    missing: ['대금청구서'], reissue: [{ name: '국세 납세증명서', valid: '20261015' }], basis: { date: '20261022' } });
+  assert.equal(m.title, '[용인도시공사] 「시청사 옥상 방수공사」 대금 청구 서류 보완 요청');
+  assert.match(m.body, /^안녕하십니까\. 용인도시공사 계약팀 용도공입니다\./);
+  assert.match(m.body, /1\. 미제출 서류\n  - 대금청구서/);
+  assert.match(m.body, /2\. 재발급 필요 서류\(유효기간 부족\)\n  - 국세 납세증명서: 유효기간 2026\.10\.15까지 → 2026\.10\.22 이후까지/);
+  assert.match(m.body, /용도공 드림\n용인도시공사 계약팀 \/ 031-000-0000$/);
+});
+
+test('업체목록: 실제 나라장터 응답 형식(이름 위치·공동도급에서 주계약업체 우선)', () => {
+  const L = require('../../src/app/js/logic.js');
+  assert.deepEqual(L.parseCorpList('[1^주계약업체^단독^크렉스^박학순^대한민국^100^크렉스^^7800300048]'), ['크렉스']);
+  assert.deepEqual(L.parseCorpList('[1^주계약업체^단독^프라임안전기술원^김형준^대한민국^^프라임안전기술원^^4932601706]'), ['프라임안전기술원']);
+  assert.deepEqual(L.parseCorpList('[1^도급업체^혼합방식^주식회사 수양엔지니어링^박상일^대한민국^5^주식회사 수양엔지니어링^^1248149079],[2^주계약업체^혼합방식^주식회사 에이플러스건축사사무소^이윤호^대한민국^39^주식회사 에이플러스건축사사무소^^3048131796]')[0], '주식회사 에이플러스건축사사무소');
+  assert.deepEqual(L.parseCorpList('[1^주계약업체^단독^100^(주)다해토건^홍길동^대한민국^1234567890]'), ['(주)다해토건']); // 예전 시험 형식도
+  const n = L.normalizeApiItem({ untyCntrctNo: 'R26TE17592369', dcsnCntrctNo: 'R26TA0216731800', cntrctRefNo: 'R26TA0216731800', cntrctNm: '아르피아 수영장 샤워실 청소 용역',
+    corpList: '[1^주계약업체^단독^크렉스^박학순^대한민국^100^크렉스^^7800300048]', totCntrctAmt: '4160000', wbgnDate: '2026-08-30', ttalScmpltDate: '2026-09-05',
+    cntrctInsttOfclNm: '이창구', cntrctInsttChrgDeptNm: '회계팀', baseDtls: '추정가격 2천만원 이하 물품 또는 용역', payDivNm: '' }, '용역');
+  assert.deepEqual([n.vendor, n.amount, n.startDate, n.endDate, n.officer, n.dept, n.budgetAuto], ['크렉스', 4160000, '2026-08-30', '2026-09-05', '이창구', '회계팀', '']);
+});
