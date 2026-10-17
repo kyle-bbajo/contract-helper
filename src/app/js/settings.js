@@ -229,8 +229,11 @@
   };
   $('#btnSaveAi').onclick = async () => {
     const c = JH.app.cfg;
+    const prevLocal = (c.notice || {}).aiLocalModel || '';
     c.notice = { ...(c.notice || {}), aiProvider: $('#ntAiProvider').value, aiKey: $('#ntAiKey').value.trim(), aiModel: $('#ntAiModel').value.trim(), aiLocalModel: $('#ntAiLocalModel').value.trim() };
     await JH.app.saveCfg(); JH.ai.reset(); JH.app.toast('AI 설정을 저장했습니다.', 'ok'); showAi(true);
+    // 모델을 바꿨으면 그 모델을 뒤에서 내려받음(없을 때만)
+    if (c.notice.aiLocalModel !== prevLocal) { try { const st = await JH.ai.status(true); if (!st.ready) { await JH.ai.setup(); JH.app.toast(`새 PC AI 모델(${c.notice.aiLocalModel || 'gemma3:4b'})을 뒤에서 내려받습니다. 끝나면 "준비됨"으로 바뀝니다.`, 'ok'); setTimeout(() => showAi(true), 1500); } } catch (_) {} }
     if (JH.notice && JH.notice.refresh) JH.notice.refresh();
   };
   $('#phKeys').addEventListener('click', async (e) => { const b = e.target.closest('[data-ph]'); if (!b) return; try { await navigator.clipboard.writeText(`{{${b.dataset.ph}}}`); JH.app.toast(`{{${b.dataset.ph}}} 복사했습니다.`, 'ok'); } catch (_) {} });

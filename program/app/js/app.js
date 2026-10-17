@@ -518,6 +518,45 @@
     if (JH.settings && JH.settings.showWatch) JH.settings.showWatch(watch.dirs);
   }
 
+  // ---------- 켤 때 연결 확인 + 점심시간 자동 새로고침 ----------
+  // 처음 화면에 나라장터 인증키·국가법령정보센터 OC·PC AI가 되는지 한 줄씩 보여 줌(각각 한 번씩만 조회)
+  async function checkAccounts() {
+    const el = $('#acctLine'); if (!el || !S.online) return;
+    const rows = [];
+    const put = (k, cls, t) => { rows[k] = `<li class="${cls}">${esc(t)}</li>`; el.innerHTML = rows.filter(Boolean).join(''); };
+    put(0, 'wait', '나라장터 인증키 확인 중…'); put(1, 'wait', '법령 OC 확인 중…'); put(2, 'wait', 'PC AI 확인 중…');
+    // 1) 나라장터
+    try {
+      if (!cfg.apiKey || !cfg.insttNm) put(0, 'bad', '나라장터: 설정에서 인증키·기관명을 넣어 주세요');
+      else { const [b, e] = L.monthRanges(1)[0]; const r = L.parseApiBody(await S.nara(L.apiUrl(L.API_OPS.공사, cfg, b, e, 1, 1))); put(0, 'ok', `나라장터 연결됨 (이번 달 공사 계약 ${r.total}건)`); }
+    } catch (e) { put(0, 'bad', '나라장터 안 됨: ' + e.message); }
+    // 2) 국가법령정보센터
+    try {
+      const oc = String(cfg.lawOC || org.lawOC || '').trim();
+      if (!oc) put(1, 'warn', '법령 자동 받기: OC를 아직 안 넣음(규정·질문 답변 → 자료)');
+      else {
+        const t = await S.law(JH.rulesLogic.lawSearchUrl(oc, '지방공기업법', 'law'));
+        let j = null; try { j = JSON.parse(t); } catch (_) {}
+        const ok = j && JH.rulesLogic.pickLaw(j, '지방공기업법', 'law');
+        put(1, ok ? 'ok' : 'bad', ok ? `법령 OC(${oc}) 사용 가능` : `법령 OC(${oc}) 안 됨: 활용 신청(법령·행정규칙)이 승인됐는지 open.law.go.kr에서 확인하세요`);
+      }
+    } catch (e) { put(1, 'bad', '법령 연결 안 됨: ' + e.message); }
+    // 3) PC AI
+    try { const st = await JH.ai.status(true); put(2, st.ready ? 'ok' : 'warn', JH.ai.statusText(st)); } catch (_) { put(2, 'warn', 'PC AI 상태를 모름'); }
+  }
+  // 자동 새로고침(나라장터 계약·세부 정보, 법령·예규): 하루 세 번 — 켜자마자(오전 한 번), 12시부터, 18시부터. 각 칸마다 하루 한 번만
+  const slotOf = (d) => (d.getHours() >= 18 ? 'evening' : d.getHours() >= 12 ? 'noon' : 'morning');
+  async function autoRefresh(first) {
+    if (!cfg.apiKey || !cfg.insttNm) return;
+    const now = new Date(), today = now.toISOString().slice(0, 10), slot = slotOf(now);
+    const done = (cfg.autoDone && cfg.autoDone.date === today) ? cfg.autoDone.slots || [] : [];
+    if (done.includes(slot) || $('#btnFetch').classList.contains('busy')) return;
+    cfg.autoDone = { date: today, slots: [...done, slot] }; await saveCfg();
+    toast(`${first ? '켜자마자' : slot === 'noon' ? '점심시간' : '저녁'} 자동 새로고침: 나라장터 계약과 법령·예규를 받습니다. 그동안 다른 일을 하셔도 됩니다.`);
+    try { await fetchContracts(); } catch (_) {}
+    try { if (JH.rules && (cfg.lawOC || org.lawOC)) { await JH.rules.load(); await JH.rules.fetchLaws(true); } } catch (_) {}
+  }
+
   // ---------- 나라장터 계약 목록 ----------
   // full이 아니면 지난번에 불러온 달부터만(여럿이 인증키 하나를 같이 쓰므로 조회 횟수를 아낌)
   // 나라장터에서 받아 두는 항목이 늘면 올림 → 한 번은 기간 전체를 다시 받아 예전에 불러온 계약도 새 항목(계약방법·대표자·사업자번호·통합계약번호 등)을 채움
@@ -1814,6 +1853,7 @@
     try { await reconcile(); render(); } catch (e) { console.warn('폴더 확인 실패', e); }
     if (!cfg.officer) openWelcome();
     setInterval(() => { S.ping().catch(() => banner('연결 창구가 꺼졌습니다. 바탕화면의 바로가기로 다시 실행해 주세요.', true)); }, 60000);
+    if (cfg.officer) { checkAccounts().finally(() => autoRefresh(true)); setInterval(() => autoRefresh(false), 5 * 60000); }
   }
 
   root.JH.app = {

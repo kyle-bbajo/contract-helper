@@ -45,6 +45,7 @@
     <section class="view on" id="view-home" aria-label="처음 화면">
       <div class="home">
         <h1 class="home-title" id="homeTitle">어떤 일을 하시겠어요?</h1>
+        <ul class="acct" id="acctLine" aria-label="연결 상태"></ul>
         <div class="doors">
           <button type="button" class="door" data-view="contracts">
             <svg class="door-seal" viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="54" fill="none" stroke="currentColor" stroke-width="5"/><circle cx="60" cy="60" r="45" fill="none" stroke="currentColor" stroke-width="1.6"/><text x="60" y="71" text-anchor="middle" font-size="32" font-weight="800" fill="currentColor">지출</text></svg>
@@ -231,7 +232,7 @@
       <div class="form">
         <div class="form-row">
           <label>공고문에 쓸 AI<select id="ntAiProvider"><option value="auto">자동 (키가 있으면 Gemini, 없으면 PC AI)</option><option value="local">PC 안 AI만</option><option value="gemini">Gemini (Google, 무료 키)</option><option value="claude">Claude (Anthropic, 유료)</option></select></label>
-          <label>PC AI 모델 <span class="hint">비워 두면 gemma3:4b</span><input type="text" id="ntAiLocalModel" autocomplete="off" placeholder="gemma3:4b"></label>
+          <label>PC AI 모델 <span class="hint">모두 무료·PC 안에서만 돎</span><select id="ntAiLocalModel"><option value="">gemma3:4b — 기본(Google, 3GB, 가볍고 빠름)</option><option value="exaone3.5:7.8b">exaone3.5:7.8b — LG AI연구원, 한국어 강함(5GB, 메모리 16GB 권장)</option><option value="exaone3.5:2.4b">exaone3.5:2.4b — LG AI연구원, 한국어·가벼움(1.6GB)</option><option value="gemma3:12b">gemma3:12b — 더 정확(8GB, 메모리 16GB 이상)</option></select></label>
         </div>
         <div class="form-row">
           <label>Gemini·Claude 키 <span class="hint">Gemini: aistudio.google.com 에서 무료 발급 · 이 PC에만 저장</span><input type="password" id="ntAiKey" autocomplete="off" placeholder="비워 두면 PC 안 AI만"></label>

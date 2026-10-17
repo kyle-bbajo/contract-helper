@@ -189,6 +189,11 @@ try {
   await startServer();
   await page.goto(base);
   await waitFor(() => page.$('.toast:has-text("데이터 폴더가 옮겨진 것을 찾았습니다")'), 30000, '데이터 폴더 다시 찾기');
+  // 켜자마자: 처음 화면에 연결 상태(나라장터·법령 OC·PC AI) 한 줄씩 + 자동 새로고침(하루 세 번 중 첫 번째)
+  await waitFor(async () => /나라장터 연결됨/.test(await page.textContent('#acctLine')), 20000, '연결 상태');
+  assert.match(await page.textContent('#acctLine'), /법령 자동 받기: OC를 아직 안 넣음/);
+  await waitFor(() => page.$('.toast:has-text("자동 새로고침")'), 20000, '켜자마자 자동 새로고침');
+  await waitFor(() => page.evaluate(() => JH.app.cfg.autoDone && JH.app.cfg.autoDone.slots.length === 1), 10000, '자동 새로고침 기록');
   await waitFor(() => page.evaluate(() => JH.app.db.docs.length === 13), 60000, '직접 넣은 파일 읽기');
   const st = await page.evaluate(() => {
     const c = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사');

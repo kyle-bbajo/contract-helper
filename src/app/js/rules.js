@@ -31,9 +31,9 @@
       throw new Error(/검증|인증|OC|미신청|등록/.test(msg) ? `국가법령정보센터 사용자 확인 실패 — OC(아이디)와 Open API 활용 신청(법령·행정규칙)을 확인하세요. (${msg})` : `알 수 없는 응답: ${msg}`);
     }
   }
-  async function fetchLaws() {
+  async function fetchLaws(quiet) {
     const oc = ocOf();
-    if (!oc) { app().toast('국가법령정보센터 OC(아이디)를 먼저 넣어 주세요.', 'err'); const i = $('#rlOc'); if (i) i.focus(); return; }
+    if (!oc) { if (!quiet) { app().toast('국가법령정보센터 OC(아이디)를 먼저 넣어 주세요.', 'err'); const i = $('#rlOc'); if (i) i.focus(); } return; }
     const list = cfg().lawList && cfg().lawList.length ? cfg().lawList : R.DEFAULT_LAWS;
     let ok = 0; const bad = [];
     try {
@@ -53,8 +53,8 @@
       }
       await saveKb();
       cfg().lawFetchedAt = new Date().toISOString(); await app().saveCfg();
-      app().toast(`법령·예규 ${ok}건을 받았습니다.` + (bad.length ? ` 못 받음: ${bad.join(', ')}` : ''), bad.length ? (ok ? '' : 'err') : 'ok');
-    } finally { app().progress(null); render(); }
+      if (!quiet || bad.length) app().toast(`법령·예규 ${ok}건을 받았습니다.` + (bad.length ? ` 못 받음: ${bad.join(', ')}` : ''), bad.length ? (ok ? '' : 'err') : 'ok');
+    } finally { app().progress(null); if (view() && view().classList.contains('on')) render(); }
   }
 
   // ---------- 우리 규정집 올리기 ----------

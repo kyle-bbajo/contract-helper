@@ -107,7 +107,7 @@ npm run demo          # dist/demo/ 시연판(인증키 없음, 흉내 데이터)
 
 ## 기관 공용 설정
 
-인증키는 **코드에 쓰지 않고 `config/org.json` 한 파일에서만** 고칩니다. 빌드할 때 이 파일이 `program/app/org.json`으로 복사됩니다.
+인증키(나라장터)와 국가법령정보센터 OC(`lawOC`)는 **코드에 쓰지 않고 `config/org.json` 한 파일에서만** 고칩니다. 빌드할 때 이 파일이 `program/app/org.json`으로 복사됩니다.
 
 ```json
 { "insttNm": "용인도시공사", "insttDivCd": "1", "apiKey": "공공데이터포털_일반_인증키", "months": 6,
