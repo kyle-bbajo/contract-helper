@@ -705,6 +705,14 @@ body.resizing { cursor: col-resize; user-select: none; }
 @media (max-width: 860px) { .rsrc { grid-template-columns: 1fr; } }
 .rsrc-box { border: 1px solid var(--rule); border-radius: var(--radius); padding: 12px 14px; background: var(--sheet); display: grid; gap: 8px; }
 .rsrc-box h3 { margin: 0; font-size: 15px; }
+.rlaw { border: 1px solid var(--rule); border-left-width: 4px; border-radius: var(--radius); padding: 10px 14px; margin: 10px 0 12px; background: var(--sheet); font-size: 13px; }
+.rlaw h3 { margin: 0 0 4px; font-size: 15px; }
+.rlaw p { margin: 4px 0; }
+.rlaw.ok { border-left-color: var(--ok); color: var(--ok); padding-block: 6px; }
+.rlaw.bad { border-left-color: var(--seal); } .rlaw.bad h3 { color: var(--seal); }
+.rlaw.warn { border-left-color: var(--amber); } .rlaw.wait { color: var(--muted); }
+.rlaw-steps { margin: 8px 0; padding-left: 22px; display: grid; gap: 6px; line-height: 1.6; }
+.rlaw-steps .num { font-size: 15px; letter-spacing: .02em; }
 .rsrc-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 13px; }
 .rsrc-oc { display: flex; gap: 8px; align-items: end; }
 .rsrc-oc label { flex: 1; display: grid; gap: 4px; font-size: 12.5px; color: var(--ink-2); }

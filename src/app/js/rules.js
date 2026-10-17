@@ -7,7 +7,7 @@
   const app = () => root.JH.app;
   const KB_PATH = '규정/지식.json', QA_PATH = '규정/질문답변.json';
   let kb = { sources: [] }, qa = { items: [] }, loaded = false, idx = null, qidx = null;
-  const st = { tab: 'ask', q: '', res: null, busy: false, qaFilter: '', open: null };
+  const st = { tab: 'ask', q: '', res: null, busy: false, qaFilter: '', open: null, law: null };
 
   async function load() {
     if (loaded || !S.online) return;
@@ -57,6 +57,42 @@
       cfg().lawFetchedAt = new Date().toISOString(); await app().saveCfg();
       if (!quiet || bad.length) app().toast(`법령·예규 ${ok}건을 받았습니다.` + (bad.length ? ` 못 받음: ${bad.join(', ')}` : ''), bad.length ? (ok ? '' : 'err') : 'ok');
     } finally { app().progress(null); if (view() && view().classList.contains('on')) render(); }
+  }
+
+  // ---------- 법령 연결 확인: OC가 되는지, 안 되면 이 PC IP와 등록 방법을 화면에 ----------
+  async function checkLaw() {
+    const oc = ocOf();
+    st.law = { state: 'wait', oc, ip: '' }; render();
+    const ipP = S.myIp().then((r) => r.ip).catch(() => '');
+    if (!oc) { st.law = { state: 'none', oc, ip: await ipP }; render(); return; }
+    let state = 'bad', msg = '';
+    try {
+      const t = await S.law(R.lawSearchUrl(oc, '지방공기업법', 'law'));
+      let j = null; try { j = JSON.parse(t); } catch (_) {}
+      const why = R.lawError(j);
+      if (j && R.pickLaw(j, '지방공기업법', 'law')) state = 'ok';
+      else if (/IP/.test(why)) state = 'ip';
+      else msg = why || '응답을 알아보지 못했습니다';
+    } catch (e) { msg = e.message; }
+    st.law = { state, oc, ip: await ipP, msg, at: new Date() }; render();
+  }
+  function lawBox() {
+    const w = st.law; if (!w) return '';
+    const ipB = w.ip ? `<b class="num">${esc(w.ip)}</b> <button type="button" class="btn sm" data-copyip="${esc(w.ip)}">IP 복사</button>` : '<span class="muted">(인터넷 주소를 알아내지 못함 — 네이버에서 "내 IP" 검색)</span>';
+    const again = '<button type="button" class="link sm" data-ract="lawcheck">다시 확인</button>';
+    if (w.state === 'wait') return '<div class="rlaw wait">법령 연결 확인 중…</div>';
+    if (w.state === 'ok') return `<div class="rlaw ok">● 법령 OC(${esc(w.oc)}) 사용 가능 · 이 PC의 IP ${w.ip ? `<b class="num">${esc(w.ip)}</b>` : ''} 등록됨 ${again}</div>`;
+    const steps = `<ol class="rlaw-steps">
+        <li>이 PC의 IP: ${ipB}</li>
+        <li><a class="btn sm primary" href="https://open.law.go.kr" target="_blank" rel="noopener">국가법령정보센터(open.law.go.kr) 열기</a> → 로그인</li>
+        <li>[마이페이지] → [OPEN API 신청 내역] → 신청한 건을 눌러 [수정]</li>
+        <li><b>서버장비의 IP주소</b> 칸에 복사한 IP를 붙여 넣고 [추가] → 아래 [수정/저장]</li>
+        <li>여기로 돌아와 ${again.replace('link sm', 'btn sm')} — "사용 가능"으로 바뀌면 끝(반영에 몇 분 걸릴 수 있음)</li>
+      </ol>
+      <p class="muted small">※ [API인증키관리]는 OC만 바꾸는 곳이라 IP 칸이 없습니다. 꼭 <b>신청 내역 → 수정</b>에서 넣으세요. · 회사 PC에서 보이는 IP를 넣어야 합니다(집·휴대폰 IP는 안 됨). · 회사 IP가 바뀌면 다시 추가.</p>`;
+    if (w.state === 'ip') return `<div class="rlaw bad"><h3>법령 자동 받기: 이 PC의 IP를 국가법령정보센터에 추가해야 합니다</h3><p class="small">OC(<b>${esc(w.oc)}</b>)는 이미 들어가 있습니다. 국가법령정보센터는 <b>등록된 IP</b>에서 온 요청만 받기 때문에, 아래 순서로 이 PC의 IP를 한 번 추가해 주세요.</p>${steps}</div>`;
+    if (w.state === 'none') return `<div class="rlaw warn"><h3>법령 자동 받기: OC가 없습니다</h3><p class="small">아래 [자료] 탭의 OC 칸에 국가법령정보센터에서 정한 OC를 넣고, 이 PC의 IP도 등록해야 합니다.</p>${steps}</div>`;
+    return `<div class="rlaw bad"><h3>법령 OC(${esc(w.oc)}) 연결 안 됨</h3><p class="small">${esc(w.msg)}</p><p class="small">대부분 IP 미등록이거나 [OPEN API 신청]에서 법령·행정규칙 활용 신청이 안 된 경우입니다. 아래를 확인하세요.</p>${steps}</div>`;
   }
 
   // ---------- 우리 규정집 올리기 ----------
@@ -130,6 +166,7 @@
     el.innerHTML = `<div class="rules">
       <div class="rules-head"><h2>규정·질문 답변</h2><span class="muted">법령·예규 ${nLaw}건 · 우리 규정 ${nMine}건 · 조항 ${nChunk.toLocaleString('ko-KR')}개 · 저장한 질문답변 ${qa.items.length}건 — 모두 이 PC 안에서만 처리</span>
         <div class="seg" role="tablist"><button type="button" data-rtab="ask" class="${st.tab === 'ask' ? 'on' : ''}">질문하기</button><button type="button" data-rtab="qa" class="${st.tab === 'qa' ? 'on' : ''}">질문답변 모음 ${qa.items.length}</button><button type="button" data-rtab="src" class="${st.tab === 'src' ? 'on' : ''}">자료(법령·규정)</button></div></div>
+      ${lawBox()}
       ${st.tab === 'ask' ? askPane() : st.tab === 'qa' ? qaPane() : srcPane()}</div>`;
   }
   function askPane() {
@@ -169,8 +206,8 @@
         <label class="btn primary">규정 파일 올리기<input type="file" id="rlUp" accept=".hwp,.hwpx,.pdf,.docx,.txt" multiple hidden></label>
         <ul class="rsrc-list">${kb.sources.filter((s) => s.mine).map(row).join('') || '<li class="muted">아직 없음</li>'}</ul></div>
       <div class="rsrc-box"><h3>법령·예규(자동으로 받기)</h3>
-        <p class="muted small">국가법령정보센터 Open API에서 아래 법령·예규 본문을 받아 둡니다. 개정되면 [다시 받기]. 처음 한 번 <b>OC</b>가 필요합니다: open.law.go.kr 회원가입 → [OPEN API 신청]에서 법령·행정규칙 활용 신청 → 가입 이메일의 @ 앞부분이 OC입니다(무료).</p>
-        <div class="rsrc-oc"><label>OC(아이디)<input type="text" id="rlOc" value="${esc(oc)}" placeholder="예: yongin_contract" autocomplete="off"></label><button type="button" class="btn${kb.sources.some((s) => s.auto) ? '' : ' primary'}" data-ract="laws">${kb.sources.some((s) => s.auto) ? '다시 받기' : '법령 받기'}</button></div>
+        <p class="muted small">국가법령정보센터 Open API에서 아래 법령·예규 본문을 받아 둡니다. 개정되면 [다시 받기]. 처음 한 번 필요합니다(무료): ① open.law.go.kr 회원가입 → [OPEN API 신청]에서 법령·행정규칙 활용 신청 ② 신청할 때 정한 <b>OC</b>를 아래에 넣기 ③ 신청 내역의 <b>서버장비의 IP주소</b>에 이 PC의 IP 추가(위 안내).</p>
+        <div class="rsrc-oc"><label>OC(아이디)<input type="text" id="rlOc" value="${esc(oc)}" placeholder="예: contracthelper" autocomplete="off"></label><button type="button" class="btn${kb.sources.some((s) => s.auto) ? '' : ' primary'}" data-ract="laws">${kb.sources.some((s) => s.auto) ? '다시 받기' : '법령 받기'}</button></div>
         <ul class="rsrc-list">${list.map((it) => { const got = kb.sources.find((s) => s.auto && L.norm(s.name) === L.norm(it.name)); return got ? row(got) : `<li><b>${esc(it.name)}</b> <small class="muted">${it.kind === 'admrul' ? '예규·고시' : '법령'} · 아직 안 받음</small></li>`; }).join('')}</ul>
         <details class="adv"><summary>받을 법령 바꾸기</summary><p class="muted small">한 줄에 하나, 국가법령정보센터 이름 그대로. 예규·고시·훈령은 앞에 "예규:"를 붙입니다.</p>
           <textarea id="rlList" rows="8">${esc(list.map((x) => (x.kind === 'admrul' ? '예규: ' : '') + x.name).join('\n'))}</textarea><button type="button" class="btn sm" data-ract="lawlist">목록 저장</button></details></div>
@@ -184,7 +221,8 @@
     else if (a === 'save') saveAnswer();
     else if (a === 'useprev') { const best = st.res && st.res.qaHits[0]; if (best) { $('#rqA').value = best.d.a; } }
     else if (a === 'copy') { const t = ($('#rqA') || {}).value || ''; navigator.clipboard.writeText(t).then(() => app().toast('답을 복사했습니다.', 'ok'), () => app().toast('복사하지 못했습니다. 답을 직접 선택해 복사해 주세요.', 'err')); }
-    else if (a === 'laws') { const v = ($('#rlOc') || {}).value; if (v != null && v.trim() !== String(cfg().lawOC || '')) { cfg().lawOC = v.trim(); app().saveCfg(); } fetchLaws(); }
+    else if (a === 'laws') { const v = ($('#rlOc') || {}).value; if (v != null && v.trim() !== String(cfg().lawOC || '')) { cfg().lawOC = v.trim(); app().saveCfg(); } fetchLaws().then(checkLaw); }
+    else if (a === 'lawcheck') checkLaw();
     else if (a === 'lawlist') {
       const ls = (($('#rlList') || {}).value || '').split('\n').map((x) => x.trim()).filter(Boolean).map((x) => (/^(예규|고시|훈령)\s*[:：]/.test(x) ? { name: x.replace(/^[^:：]+[:：]\s*/, ''), kind: 'admrul' } : { name: x, kind: 'law' }));
       cfg().lawList = ls; app().saveCfg(); app().toast('받을 법령 목록을 저장했습니다. [다시 받기]를 누르면 이 목록으로 받습니다.', 'ok'); render();
@@ -203,7 +241,7 @@
     el.addEventListener('input', (e) => { if (e.target.id === 'rqaQ') { st.qaFilter = e.target.value; const pos = e.target.selectionStart; render(); const i = $('#rqaQ'); if (i) { i.focus(); i.setSelectionRange(pos, pos); } } });
     el.addEventListener('keydown', (e) => { if (e.target.id === 'rqQ' && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); ask(e.target.value); } });
   }
-  async function show() { bind(); try { await load(); } catch (e) { console.warn(e); } render(); }
+  async function show() { bind(); try { await load(); } catch (e) { console.warn(e); } render(); if (!st.law || st.law.state !== 'ok') checkLaw(); }
 
-  root.JH.rules = { show, load, ask, uploadRules, fetchLaws, get kb() { return kb; }, get qa() { return qa; } };
+  root.JH.rules = { show, load, ask, uploadRules, fetchLaws, checkLaw, get kb() { return kb; }, get qa() { return qa; } };
 })(window);

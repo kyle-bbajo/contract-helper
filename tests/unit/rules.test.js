@@ -34,6 +34,6 @@ test('규정집 조 단위 나누기·찾기·질문 만들기', () => {
 });
 
 test('국가법령정보센터 오류 응답(등록 안 된 IP)을 알기 쉬운 말로', () => {
-  assert.match(R.lawError({ result: '사용자 정보 검증에 실패하였습니다.', msg: 'OPEN API 호출 시 사용자 검증을 위하여 정확한 서버장비의 IP주소 및 도메인주소를 등록해 주세요.' }), /서버장비의 IP주소에 회사 공인 IP/);
+  assert.match(R.lawError({ result: '사용자 정보 검증에 실패하였습니다.', msg: 'OPEN API 호출 시 사용자 검증을 위하여 정확한 서버장비의 IP주소 및 도메인주소를 등록해 주세요.' }), /신청 내역 → \[수정\] → 서버장비의 IP주소/);
   assert.equal(R.lawError({ LawSearch: { law: [] } }), '');
 });

@@ -40,7 +40,7 @@
   function lawError(json) {
     if (!json || typeof json !== 'object' || !json.result || json.LawSearch || json.AdmRulSearch || json.법령) return '';
     const t = `${json.result} ${json.msg || ''}`;
-    if (/IP|도메인|검증/.test(t)) return '국가법령정보센터가 이 PC의 인터넷 주소(IP)를 모릅니다. open.law.go.kr → 마이페이지 → API인증키관리 → 서버장비의 IP주소에 회사 공인 IP를 추가하세요(회사 PC에서 네이버에 "내 IP" 검색).';
+    if (/IP|도메인|검증/.test(t)) return '국가법령정보센터가 이 PC의 인터넷 주소(IP)를 모릅니다. open.law.go.kr → 마이페이지 → OPEN API 신청 내역 → [수정] → 서버장비의 IP주소에 이 PC의 IP를 [추가]하세요(규정·질문 답변 화면 위쪽에 IP와 순서가 나옵니다).';
     return String(t).trim();
   }
   // 검색 결과에서 이름이 같은 것(현행) 하나 — 법령: 법령명한글·법령일련번호 / 행정규칙: 행정규칙명·행정규칙일련번호
