@@ -195,6 +195,7 @@
     async watch() { return { ok: true, dirs: [], files: [] }; },
     async watchPick() { throw new Error('시연판에서는 PC 폴더를 볼 수 없습니다. 실제 프로그램에서는 내려받는 폴더를 골라 두면 새 파일을 자동으로 정리합니다.'); },
     async watchClear() { return { ok: true }; },
+    async law() { throw new Error('시연판에서는 국가법령정보센터에 연결하지 않습니다. 실제 프로그램은 OC를 넣으면 법령 본문을 받아 둡니다.'); },
     async hwpSec() { return { ok: true, state: 'nodll', dll: '', folder: '한글보안모듈' }; },
     async hwp2pdf() { throw new Error('시연판에서는 한글→PDF 변환을 하지 않습니다. 실제 프로그램은 설치된 한글로 자동 변환합니다.'); },
     async open() { throw new Error('시연판에서는 폴더를 열 수 없습니다. 실제 프로그램은 탐색기로 엽니다.'); },

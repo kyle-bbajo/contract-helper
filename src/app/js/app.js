@@ -1455,6 +1455,7 @@
     $('#homeJichul').innerHTML = mine.length
       ? `<li><b class="num">${cnt.miss}</b>서류 미비</li><li><b class="num">${cnt.ready}</b>지출 대기</li><li class="${cnt.late ? 'alert' : ''}"><b class="num">${cnt.late}</b>준공 지남·미지출</li>${inbox ? `<li class="alert"><b class="num">${inbox}</b>미분류</li>` : ''}`
       : '<li class="muted">아직 계약이 없습니다. 서류를 넣거나 나라장터에서 불러오세요.</li>';
+    const rh = $('#homeRules'); if (rh && JH.rules) { JH.rules.load().catch(() => {}).then(() => { const k = JH.rules.kb, q = JH.rules.qa; rh.innerHTML = k.sources.length || q.items.length ? `<li><b class="num">${k.sources.length}</b>법령·규정</li><li><b class="num">${q.items.length}</b>저장한 답변</li>` : '<li class="muted">법령을 받고 규정집을 올리면 질문에 답합니다.</li>'; }); }
     const ns = JH.notice && JH.notice.stats ? JH.notice.stats() : { count: 0 };
     $('#homeNotice').innerHTML = ns.count
       ? `<li><b class="num">${ns.draft}</b>작성 중</li><li><b class="num">${ns.done}</b>작성 완료</li>${ns.recent ? `<li class="recent">최근: ${esc(ns.recent)}</li>` : ''}`
@@ -1466,13 +1467,13 @@
     const n = inboxDocs().length;
     const ic = $('#inboxCount'); ic.hidden = !n; ic.textContent = n;
     if (ui.view === 'home') { renderHome(); return; }
-    if (ui.view === 'notice') return;
+    if (ui.view === 'notice' || ui.view === 'rules') return;
     renderList(); renderDetail(); fitMemo();
     const cur = ui.view === 'contracts' && ui.sel && db.contracts[ui.sel]; if (cur && S.online) backfillDates(cur);
     if (ui.view === 'board') renderBoard();
     if (ui.view === 'inbox') renderInbox();
   }
-  const MOD = { contracts: 'jichul', board: 'jichul', inbox: 'jichul', notice: 'notice', home: '' };
+  const MOD = { contracts: 'jichul', board: 'jichul', inbox: 'jichul', notice: 'notice', rules: 'rules', home: '' };
   function setView(v) {
     ui.view = v;
     const mod = MOD[v];
@@ -1482,6 +1483,7 @@
     $$('.view').forEach((s) => s.classList.toggle('on', s.id === 'view-' + v));
     document.body.dataset.mod = mod || 'home';
     if (v === 'notice') JH.notice.show();
+    if (v === 'rules' && JH.rules) JH.rules.show();
     render();
   }
 

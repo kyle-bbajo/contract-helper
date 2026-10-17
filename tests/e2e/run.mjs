@@ -656,6 +656,54 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   assert.deepEqual(await page.$$eval('.lgroup span', (s) => s.map((x) => x.textContent)), ['작성 중', '작성 완료']);
   step('진행 상태: 한글 파일 → 작성 완료(번호 연결 단계 없음), 복사해서 새로 쓰기 → 작성 중');
 
+  // ===== 규정·질문 답변 =====
+  // 법령(국가법령정보센터)·PC AI는 흉내 냄: /api/law → 검색·본문 JSON, /api/ai/status → 준비됨, 127.0.0.1:11434 → 답
+  await page.route('**/api/law**', (r) => {
+    const u = decodeURIComponent(new URL(r.request().url()).searchParams.get('u'));
+    let body;
+    if (u.includes('lawSearch.do')) { const q = decodeURIComponent(u.match(/query=([^&]+)/)[1]); body = u.includes('target=admrul') ? { AdmRulSearch: { admrul: [{ 행정규칙명: q, 행정규칙일련번호: '9' + q.length }] } } : { LawSearch: { law: [{ 법령명한글: q, 법령일련번호: '1' + q.length, 현행연혁코드: '현행', 시행일자: '20260101' }] } }; }
+    else body = { 법령: { 조문: { 조문단위: [{ 조문번호: '9', 조문내용: '제9조(계약의 방법) ① 지방자치단체의 장은 일반입찰에 부쳐야 한다.', 항: [{ 항내용: '② 다만 추정가격이 2천만원 이하인 물품·용역은 수의계약을 할 수 있다.' }] }, { 조문번호: '35', 조문내용: '제35조(선금) 계약금액의 100분의 70을 초과하지 아니하는 범위에서 선금을 지급할 수 있다.' }] } } };
+    r.fulfill({ status: 200, contentType: 'text/plain; charset=utf-8', body: JSON.stringify(body) });
+  });
+  await page.route('**/api/ai/status', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, installed: true, status: { state: 'ready' } }) }));
+  let localPrompt = '';
+  await page.route('http://127.0.0.1:11434/**', (r) => {
+    const u = r.request().url();
+    if (u.endsWith('/api/tags')) return r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ models: [{ name: 'gemma3:4b' }] }) });
+    const b = JSON.parse(r.request().postData() || '{}'); localPrompt = (b.messages || []).map((m) => m.content).join('\n');
+    return r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ message: { role: 'assistant', content: '1) 결론: 선금은 계약금액의 70%까지 지급할 수 있습니다.\n2) 근거: 「우리 계약규정」 제15조, 「지방자치단체를 당사자로 하는 계약에 관한 법률 시행령」 제35조.\n3) 회신: 선금은 계약금액의 100분의 70 범위에서 신청하실 수 있습니다.' } }) });
+  });
+  await page.click('.views [data-view="rules"]');
+  await page.waitForSelector('[data-rtab="src"]');
+  await page.click('[data-rtab="src"]');
+  // 우리 규정집 올리기(글 파일) → 조 단위
+  const [fcR] = await Promise.all([page.waitForEvent('filechooser'), page.click('label:has(#rlUp)')]);
+  await fcR.setFiles({ name: '계약사무처리규정.txt', mimeType: 'text/plain', buffer: Buffer.from('제1장 총칙\n제1조(목적) 이 규정은 공사 계약 사무를 정한다.\n제15조(선금 지급) ① 선금은 계약금액의 100분의 70 범위에서 지급한다.\n② 선금을 받으려는 자는 보증서를 제출하여야 한다.\n제16조(하자보수보증금) 공사 준공 시 하자보수보증금을 납부하거나 지급각서를 제출한다.') });
+  await waitFor(() => page.$('.toast:has-text("규정 1개를 읽어")'), 15000, '규정 올리기');
+  assert.match(await page.textContent('.rsrc-list'), /계약사무처리규정[\s\S]*조항 3개/);
+  // 법령 받기(OC 넣고)
+  await page.fill('#rlOc', 'tester'); await page.click('[data-ract="laws"]');
+  await waitFor(() => page.$('.toast:has-text("법령·예규")'), 30000, '법령 받기');
+  const got = await page.evaluate(() => JH.rules.kb.sources.filter((s) => s.auto).map((s) => [s.name, s.chunks.length]));
+  assert.ok(got.length >= 10 && got.every(([, n]) => n === 2), JSON.stringify(got));
+  assert.equal(JSON.parse(readFileSync(join(data, '설정.json'), 'utf8')).lawOC, 'tester');
+  // 질문 → 근거(우리 규정 + 시행령) → PC AI 답 → 저장(학습) → 다시 물으면 저장한 답이 먼저
+  await page.click('[data-rtab="ask"]');
+  await page.fill('#rqQ', '선금은 계약금액의 몇 퍼센트까지 지급할 수 있나요?');
+  await page.click('[data-ract="ask"]');
+  await waitFor(async () => /70%까지/.test(await page.inputValue('#rqA').catch(() => '')), 30000, 'AI 답');
+  assert.match(localPrompt, /\[근거\][\s\S]*계약사무처리규정 제15조\(선금 지급\)/); assert.match(localPrompt, /시행령 제35조\(선금\)/); assert.match(localPrompt, /지어내지 않습니다/);
+  assert.match(await page.textContent('.rq-refs'), /계약사무처리규정/);
+  await page.fill('#rqA', '선금은 계약금액의 70%까지입니다(우리 규정 제15조). 보증서를 먼저 받으세요.');
+  await page.click('[data-ract="save"]');
+  await waitFor(() => page.$('.toast:has-text("저장했습니다")'), 10000, '질문답변 저장');
+  assert.equal(JSON.parse(readFileSync(join(data, '규정', '질문답변.json'), 'utf8')).items.length, 1);
+  await page.fill('#rqQ', '선금 몇 퍼센트까지 가능한가요'); await page.click('[data-ract="ask"]');
+  await page.waitForSelector('.rq-prev:has-text("보증서를 먼저 받으세요")', { timeout: 30000 });
+  await page.click('[data-rtab="qa"]'); assert.match(await page.textContent('.rqa'), /선금은 계약금액의 몇 퍼센트까지/);
+  await page.screenshot({ path: join(SHOTS, '7-규정질문답변.png') });
+  step('규정·질문 답변: 규정집 올려 조 단위로, 법령·예규 10건 자동으로 받기(국가법령정보센터), 질문 → 근거 찾아 PC AI 답 → 저장(학습) → 비슷한 질문에 저장한 답 먼저');
+
   // 계약별 목록 너비: 경계를 끌어 넓히면 기억, 두 번 누르면 원래대로
   await page.click('.views [data-view="contracts"]');
   const listW = () => page.$eval('#view-contracts .list', (x) => Math.round(x.getBoundingClientRect().width));

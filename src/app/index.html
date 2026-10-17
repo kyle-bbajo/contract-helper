@@ -25,6 +25,9 @@
       <span class="vgroup" data-mod="notice">
         <button type="button" data-view="notice">공고문 작성</button>
       </span>
+      <span class="vgroup" data-mod="rules">
+        <button type="button" data-view="rules">규정·질문 답변</button>
+      </span>
     </nav>
     <div class="bar-actions">
       <button type="button" class="btn ghost refresh" id="btnFetch" data-for="jichul" title="나라장터 계약목록 새로고침"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>새로고침</span></button>
@@ -54,6 +57,12 @@
             <h2>공고문 작성</h2>
             <p>공종과 금액을 넣으면 비슷한 나라장터 공고에서 조건을 배워 채우고, 문장 초안이나 한글 양식으로 만들어 줍니다.</p>
             <ul class="door-stats" id="homeNotice"></ul>
+          </button>
+          <button type="button" class="door rules" data-view="rules">
+            <svg class="door-seal" viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="54" fill="none" stroke="currentColor" stroke-width="5"/><circle cx="60" cy="60" r="45" fill="none" stroke="currentColor" stroke-width="1.6"/><text x="60" y="71" text-anchor="middle" font-size="32" font-weight="800" fill="currentColor">규정</text></svg>
+            <h2>규정·질문 답변</h2>
+            <p>업체·감독부서 질문을 넣으면 법령·예규·우리 규정·이전 답변에서 근거를 찾아 PC 안 AI가 답합니다. 답을 고쳐 저장할수록 우리 방식대로 답합니다.</p>
+            <ul class="door-stats" id="homeRules"></ul>
           </button>
         </div>
       </div>
@@ -91,6 +100,7 @@
 
     <section class="view" id="view-board" aria-label="현황판"></section>
     <section class="view" id="view-inbox" aria-label="미분류"></section>
+    <section class="view" id="view-rules" aria-label="규정·질문 답변"></section>
     <section class="view" id="view-notice" aria-label="공고문 작성">
       <aside class="list">
         <div class="filters"><strong>작성한 공고문</strong></div>
@@ -399,8 +409,10 @@
 <script src="js/readers.js"></script>
 <script src="js/pdfbuild.js"></script>
 <script src="js/notice-logic.js"></script>
+<script src="js/rules-logic.js"></script>
 <script src="js/app.js"></script>
 <script src="js/notice.js"></script>
+<script src="js/rules.js"></script>
 <script src="js/settings.js"></script>
 </body>
 </html>

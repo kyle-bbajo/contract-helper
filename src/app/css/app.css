@@ -677,3 +677,34 @@ body.resizing { cursor: col-resize; user-select: none; }
 .pv-body canvas, .pv-body img { max-width: 100%; height: auto; box-shadow: 0 1px 4px rgba(0,0,0,.15); background: #fff; }
 .pv-text { white-space: pre-wrap; font-size: 12.5px; margin: 0; width: 100%; }
 @media (max-width: 720px) { .dlg-body.pv { grid-template-columns: 1fr; } }
+/* 규정·질문 답변 */
+.doors { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 1100px) { .doors { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 720px) { .doors { grid-template-columns: 1fr; } }
+.door.rules .door-seal { color: var(--ok); opacity: .85; }
+#view-rules { display: none; overflow: auto; padding: 22px 28px; }
+#view-rules.on { display: block; }
+.rules { max-width: 1040px; margin: 0 auto; display: grid; gap: 16px; }
+.rules-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.rules-head h2 { margin: 0; font-size: 22px; }
+.rules-head .seg { margin-left: auto; }
+.rq, .rqa, .rsrc { display: grid; gap: 12px; }
+.rq-in, .rq-ans, .rqa-it label { display: grid; gap: 4px; }
+.rq-in span, .rq-ans span, .rqa-it label { font-weight: 600; font-size: 13px; color: var(--ink-2); }
+.rq textarea, .rqa-it textarea, .rqa-it input, #rlList, #rlOc, #rqaQ { font: inherit; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--sheet); width: 100%; box-sizing: border-box; }
+.rq-acts { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.rq-out { display: grid; gap: 10px; border-top: 1px solid var(--rule-soft); padding-top: 12px; }
+.rq-out h4 { margin: 6px 0 0; font-size: 13.5px; color: var(--ink-2); }
+.rq-prev { border: 1px solid var(--ok); background: var(--ok-soft); border-radius: var(--radius); padding: 10px 12px; }
+.rq-refs { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 13px; }
+.rq-refs pre, .rq-prev pre, .rqa-it pre { white-space: pre-wrap; font: 12.5px/1.6 inherit; background: var(--paper); border-radius: 6px; padding: 8px 10px; margin: 4px 0; }
+.rq-help { color: var(--ink-2); font-size: 14px; }
+.rqa-it { border: 1px solid var(--rule); border-radius: var(--radius); padding: 8px 12px; background: var(--sheet); display: grid; gap: 8px; }
+.rqa-it summary { cursor: pointer; }
+.rsrc { grid-template-columns: 1fr 1fr; align-items: start; }
+@media (max-width: 860px) { .rsrc { grid-template-columns: 1fr; } }
+.rsrc-box { border: 1px solid var(--rule); border-radius: var(--radius); padding: 12px 14px; background: var(--sheet); display: grid; gap: 8px; }
+.rsrc-box h3 { margin: 0; font-size: 15px; }
+.rsrc-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 13px; }
+.rsrc-oc { display: flex; gap: 8px; align-items: end; }
+.rsrc-oc label { flex: 1; display: grid; gap: 4px; font-size: 12.5px; color: var(--ink-2); }

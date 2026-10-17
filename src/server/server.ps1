@@ -376,7 +376,7 @@ function Handle($stream, $req) {
     if (-not $full.StartsWith([IO.Path]::GetFullPath($WebRoot), 'OrdinalIgnoreCase') -or -not (Test-Path -LiteralPath $full -PathType Leaf)) { Send-Error $stream 404 'not found'; return }
     if ($path -eq '/index.html') {
       $html = [IO.File]::ReadAllText($full, $Utf8).Replace('__JH_TOKEN__', $Token)
-      Send-Bytes $stream 200 'text/html; charset=utf-8' ($Utf8.GetBytes($html)) @{ 'Content-Security-Policy' = "default-src 'self' blob: data:; script-src 'self' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' blob: data:; worker-src 'self' blob:; frame-ancestors 'none'" }
+      Send-Bytes $stream 200 'text/html; charset=utf-8' ($Utf8.GetBytes($html)) @{ 'Content-Security-Policy' = "default-src 'self' blob: data:; script-src 'self' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' blob: data: http://127.0.0.1:11434; worker-src 'self' blob:; frame-ancestors 'none'" }
     } else {
       Send-Bytes $stream 200 (Get-Mime $full) ([IO.File]::ReadAllBytes($full)) $null
     }
@@ -453,6 +453,25 @@ function Handle($stream, $req) {
       }
       [void]$sb.Append(']}')
       Send-Bytes $stream 200 'application/json; charset=utf-8' ($Utf8.GetBytes($sb.ToString())) $null; return
+    }
+
+    '/api/law' {
+      # 국가법령정보센터(법령·행정규칙) 조회 중계 — www.law.go.kr/DRF/ 주소만 허용(OC는 화면에서 받음)
+      $u = [string]$q['u']; $uri = $null
+      if (-not [Uri]::TryCreate($u, [UriKind]::Absolute, [ref]$uri) -or $uri.Host -ne 'www.law.go.kr' -or $uri.Scheme -ne 'https' -or -not $uri.AbsolutePath.StartsWith('/DRF/')) { Send-Error $stream 400 'url'; return }
+      try {
+        $wc = New-Object System.Net.WebClient
+        $wc.Headers.Add('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) JichulHelper')
+        $wc.Headers.Add('Accept', 'application/json, */*')
+        $bytes = $wc.DownloadData($uri)
+        Send-Bytes $stream 200 'text/plain; charset=utf-8' $bytes $null
+      } catch {
+        $msg = $_.Exception.Message; $code = 0
+        try { $code = [int]$_.Exception.InnerException.Response.StatusCode } catch {}
+        if (-not $code) { try { $code = [int]$_.Exception.Response.StatusCode } catch {} }
+        Send-Error $stream 502 ("국가법령정보센터 연결 실패" + $(if ($code) { " ($code)" } else { '' }) + ": $msg")
+      }
+      return
     }
 
     '/api/nara' {
