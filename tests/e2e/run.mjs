@@ -174,6 +174,9 @@ try {
   const moved = join(HOME, 'Documents', '보관', '계약업무도우미');
   mkdirSync(dirname(moved), { recursive: true });
   renameSync(data, moved); data = moved;
+  // 자동으로 읽을 폴더(내려받는 곳)도 이 PC 설정에 둠
+  const WATCH = join(HOME, 'Downloads', '계약서류'); mkdirSync(WATCH, { recursive: true });
+  writeFileSync(join(PROG, 'local.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(PROG, 'local.json'), 'utf8')), watchDir: WATCH }));
   await startServer();
   await page.goto(base);
   await waitFor(() => page.$('.toast:has-text("데이터 폴더가 옮겨진 것을 찾았습니다")'), 30000, '데이터 폴더 다시 찾기');
@@ -239,6 +242,24 @@ try {
   assert.equal(po.first, 'c-estimate'); assert.equal(po.n, po.all, '서류 종류는 하나도 빠지지 않음');
   await waitFor(async () => /바꿈/.test(await page.textContent('[data-act="printorder"]')), 5000, '바꿈 표시');
   step('[인쇄 순서 편집]: 끌어 놓기·↑↓로 서류 순서를 바꿔 저장 → 한 번에 인쇄·PDF·표지가 그 순서');
+  // 내려받는 폴더에 파일이 들어오면(받는 중 → 다 받음) 자동으로 계약·서류 종류를 찾아 정리, 원래 파일은 그대로
+  {
+    const pdf = Buffer.from(await (async () => { const d = await PDFDocument.create(); d.addPage(); d.addPage(); return d.save(); })());
+    writeFileSync(join(WATCH, '시청사 옥상 방수공사_준공사진대지.pdf.crdownload'), pdf.subarray(0, 50)); // 받는 중
+    await new Promise((r) => setTimeout(r, 6000));
+    assert.ok(!(await page.evaluate(() => JH.app.db.docs.some((d) => /준공사진대지/.test(d.name)))), '받는 중인 파일은 아직');
+    renameSync(join(WATCH, '시청사 옥상 방수공사_준공사진대지.pdf.crdownload'), join(WATCH, '시청사 옥상 방수공사_준공사진대지.pdf')); writeFileSync(join(WATCH, '시청사 옥상 방수공사_준공사진대지.pdf'), pdf);
+    await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => /준공사진대지/.test(d.name))), 30000, '폴더에서 자동으로 읽기');
+    const w = await page.evaluate(() => { const d = JH.app.db.docs.find((x) => /준공사진대지/.test(x.name)); return { c: JH.app.db.contracts[d.key].name, item: d.itemId }; });
+    assert.deepEqual(w, { c: '시청사 옥상 방수공사', item: 'c-photo' });
+    assert.ok(existsSync(join(WATCH, '시청사 옥상 방수공사_준공사진대지.pdf')), '원래 파일은 그대로');
+    await new Promise((r) => setTimeout(r, 6000));
+    assert.equal(await page.evaluate(() => JH.app.db.docs.filter((d) => /준공사진대지/.test(d.name)).length), 1, '한 번 읽은 파일은 다시 안 읽음');
+    await page.click('#btnSettings'); await page.click('#dlgSettings .dlg-tabs button[data-tab="folder"]');
+    assert.match(await page.textContent('#watchDir'), /계약서류/); assert.ok(await page.isVisible('#watchState'));
+    await page.keyboard.press('Escape');
+  }
+  step('자동으로 읽을 폴더: 문서함·메일에서 내려받기만 하면(다 받아진 뒤) 계약·서류 종류를 찾아 정리, 원래 파일은 그대로·다시 안 읽음');
 
   // ===== 메모(감독부서·감독관·연락처·특이사항)와 찾기 =====
   // 위 칸(지출요청일 | 메모, 아래 감사 자료)은 접혀 있고 펼치면 이 PC에 기억

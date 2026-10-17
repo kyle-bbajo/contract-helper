@@ -159,6 +159,13 @@
         <button type="button" class="btn" id="btnOpenData">탐색기로 열기</button>
         <button type="button" class="btn" id="btnPickData">폴더 바꾸기</button>
       </div>
+      <h3 class="sub-h">자동으로 읽을 폴더</h3>
+      <p class="help">문서함·메일에서 계약 서류를 <b>이 폴더로 내려받기만</b> 하면, 프로그램이 켜져 있는 동안 몇 초마다 새 파일을 찾아 계약별·서류 종류별로 정리합니다(내려받는 중인 파일은 다 받아진 뒤에). 원래 파일은 그대로 두고, 한 번 읽은 파일은 다시 읽지 않습니다. 예: 다운로드\계약서류</p>
+      <div class="path-box"><code id="watchDir">꺼짐</code> <span class="ok-t small" id="watchState" hidden>● 보는 중</span></div>
+      <div class="dlg-actions">
+        <button type="button" class="btn ghost" id="btnWatchOff">끄기</button>
+        <button type="button" class="btn primary" id="btnWatchPick">폴더 고르기</button>
+      </div>
     </div>
     <div class="tab" data-pane="lists">
       <div class="lists-head">

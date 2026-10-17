@@ -457,6 +457,40 @@
     }
   }
 
+  // ---------- 자동으로 읽을 폴더(내려받은 계약 서류) ----------
+  // 몇 초마다 폴더를 보고, 새 파일이 다 받아졌으면(크기가 두 번 연속 같으면) 읽어서 계약별로 정리. 원래 파일은 그대로 둠
+  const watch = { dir: '', last: new Map(), busy: false, timer: null };
+  const watchSig = (f) => `${f.name}|${f.size}|${f.mtime}`;
+  async function watchTick() {
+    if (watch.busy || !S.online || !watch.dir) return;
+    watch.busy = true;
+    try {
+      const r = await S.watch();
+      watch.dir = r.dir || '';
+      if (r.missing) { banner(`자동으로 읽을 폴더(${esc(r.dir)})를 찾지 못했습니다. 설정 → 데이터 폴더에서 다시 고르세요.`, true); return; }
+      const seen = new Set(db.watchSeen || []);
+      const fresh = (r.files || []).filter((f) => DOC_EXT.test(f.name) && !seen.has(watchSig(f)));
+      const ready = fresh.filter((f) => watch.last.get(f.name) === f.size); // 받는 중인 파일은 다음 번에
+      watch.last = new Map(fresh.map((f) => [f.name, f.size]));
+      if (!ready.length) return;
+      const files = [];
+      for (const f of ready) {
+        try { const b = await S.watchFile(f.name); files.push(new File([b], f.name.split('/').pop(), { type: '' })); seen.add(watchSig(f)); }
+        catch (e) { console.warn('자동 읽기 실패', f.name, e); }
+      }
+      db.watchSeen = [...seen].slice(-5000);
+      if (files.length) { toast(`내려받은 폴더에서 새 파일 ${files.length}개를 찾아 정리합니다.`); await ingest(files); }
+      else await saveDb();
+    } catch (e) { console.warn('자동 읽기', e); }
+    finally { watch.busy = false; }
+  }
+  function startWatch(dir) {
+    watch.dir = dir || ''; clearInterval(watch.timer); watch.timer = null;
+    if (watch.dir) { watch.timer = setInterval(watchTick, 5000); watchTick(); }
+    const el = $('#watchDir'); if (el) el.textContent = watch.dir || '꺼짐';
+    const st = $('#watchState'); if (st) st.hidden = !watch.dir;
+  }
+
   // ---------- 나라장터 계약 목록 ----------
   // full이 아니면 지난번에 불러온 달부터만(여럿이 인증키 하나를 같이 쓰므로 조회 횟수를 아낌)
   // 나라장터에서 받아 두는 항목이 늘면 올림 → 한 번은 기간 전체를 다시 받아 예전에 불러온 계약도 새 항목(계약방법·대표자·사업자번호·통합계약번호 등)을 채움
@@ -1725,6 +1759,8 @@
         db.checklists = fresh; db.checklistsVer = CHECKLIST_VER; saveDb(true);
       } else if (!db.checklists) db.checklistsVer = CHECKLIST_VER;
       JH.settings.setInfo(info);
+      // 자동으로 읽을 폴더가 정해져 있으면 보기 시작(고른 뒤에 들어온 파일만 — 고를 때 있던 파일은 설정에서 '본 것'으로 둠)
+      if (info.watchDir) startWatch(info.watchDir);
       if (info.relocated) toast(`데이터 폴더가 옮겨진 것을 찾았습니다: ${info.dataDir}`, 'ok');
       if (info.lost) banner(`예전 데이터 폴더(${esc(info.oldDir)})를 찾지 못해 임시로 새 폴더를 쓰고 있습니다. <button class="link" id="bannerFind">옮긴 폴더 고르기</button>`, true);
       const bf = $('#bannerFind'); if (bf) bf.onclick = async () => { const r = await S.pickFolder(); if (r.ok) location.reload(); };
@@ -1740,7 +1776,7 @@
 
   root.JH.app = {
     get cfg() { return cfg; }, set cfg(v) { cfg = v; }, get db() { return db; }, get org() { return org; },
-    defaults, lists, printList, saveCfg, saveDb, fetchContracts, enrichContracts, fillFromDocs, openForms, render, toast, banner, start, ingest, setView, progress,
+    defaults, lists, printList, startWatch, saveCfg, saveDb, fetchContracts, enrichContracts, fillFromDocs, openForms, render, toast, banner, start, ingest, setView, progress,
     setChecklists(v) { db.checklists = v; return saveDb(true); },
   };
   document.addEventListener('DOMContentLoaded', () => {});

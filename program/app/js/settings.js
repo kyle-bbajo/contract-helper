@@ -111,6 +111,18 @@
     JH.app.cfg = c; await JH.app.saveCfg(); JH.app.banner('');
     dlg.close(); JH.app.fetchContracts(true);
   };
+  // 자동으로 읽을 폴더: 고를 때 이미 들어 있던 파일은 '본 것'으로 두고(한꺼번에 올리지 않음) 그 뒤에 들어온 것부터
+  $('#btnWatchPick').onclick = async () => {
+    try {
+      const r = await S.watchPick(); if (!r.ok) return;
+      const now = await S.watch();
+      const db = JH.app.db; db.watchSeen = [...new Set([...(db.watchSeen || []), ...(now.files || []).map((f) => `${f.name}|${f.size}|${f.mtime}`)])].slice(-5000);
+      await JH.app.saveDb(true);
+      JH.app.startWatch(r.dir);
+      JH.app.toast(`이제 ${r.dir}에 새로 내려받는 계약 서류를 자동으로 정리합니다.` + ((now.files || []).length ? ` 이미 있던 파일 ${now.files.length}개는 건너뜁니다(필요하면 [업로드]로 올리세요).` : ''), 'ok');
+    } catch (e) { JH.app.toast('폴더를 고르지 못했습니다: ' + e.message, 'err'); }
+  };
+  $('#btnWatchOff').onclick = async () => { try { await S.watchClear(); JH.app.startWatch(''); JH.app.toast('자동으로 읽기를 껐습니다.'); } catch (e) { JH.app.toast(e.message, 'err'); } };
   $('#btnOpenData').onclick = () => S.open('').catch((e) => JH.app.toast(e.message, 'err'));
   $('#btnPickData').onclick = async () => {
     try {
