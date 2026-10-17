@@ -43,6 +43,7 @@
     },
     hwp2pdf: (path) => call('POST', '/api/hwp2pdf', { path }),
     office2pdf: (path) => call('POST', '/api/office2pdf', { path }),
+    myIp: () => call('GET', '/api/myip'),
     async law(u) { const r = await call('GET', '/api/law', { u }); return r.text(); },
     watch: () => call('GET', '/api/watch'),
     watchPick: () => call('POST', '/api/watch', { pick: '1' }),

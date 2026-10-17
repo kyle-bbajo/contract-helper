@@ -87,7 +87,7 @@ const draftText = () => page.$$eval('.draft textarea.dbody', (ts) => ts.map((t) 
 page.on('pageerror', (e) => errors.push(String(e)));
 page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
 // 실패한 요청은 주소로 판단: 한글 변환·한글 양식 채우기는 시험 PC에 한글이 없어 실패가 정상(대체 방법으로 처리됨)
-page.on('response', (r) => { if (r.status() >= 500 && !/\/api\/(hwp2pdf|hwpfill|hwpconvert|office2pdf|open|law)/.test(r.url())) errors.push(`${r.status()} ${r.url()}`); }); // 시험 환경엔 인터넷이 없어 국가법령정보센터 실제 조회는 502
+page.on('response', (r) => { if (r.status() >= 500 && !/\/api\/(hwp2pdf|hwpfill|hwpconvert|office2pdf|open|law|myip)/.test(r.url())) errors.push(`${r.status()} ${r.url()}`); }); // 시험 환경엔 인터넷이 없어 국가법령정보센터 실제 조회는 502
 await page.route('**/api/nara**', (r) => {
   const u = decodeURIComponent(new URL(r.request().url()).searchParams.get('u'));
   let body;
@@ -663,13 +663,13 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
 
   // ===== 규정·질문 답변 =====
   // 법령(국가법령정보센터)·PC AI는 흉내 냄: /api/law → 검색·본문 JSON, /api/ai/status → 준비됨, 127.0.0.1:11434 → 답
-  await page.route('**/api/law**', (r) => {
+  const lawRoute = (r) => {
     const u = decodeURIComponent(new URL(r.request().url()).searchParams.get('u'));
     let body;
     if (u.includes('lawSearch.do')) { const q = decodeURIComponent(u.match(/query=([^&]+)/)[1]); body = u.includes('target=admrul') ? { AdmRulSearch: { admrul: [{ 행정규칙명: q, 행정규칙일련번호: '9' + q.length }] } } : { LawSearch: { law: [{ 법령명한글: q, 법령일련번호: '1' + q.length, 현행연혁코드: '현행', 시행일자: '20260101' }] } }; }
     else body = { 법령: { 조문: { 조문단위: [{ 조문번호: '9', 조문내용: '제9조(계약의 방법) ① 지방자치단체의 장은 일반입찰에 부쳐야 한다.', 항: [{ 항내용: '② 다만 추정가격이 2천만원 이하인 물품·용역은 수의계약을 할 수 있다.' }] }, { 조문번호: '35', 조문내용: '제35조(선금) 계약금액의 100분의 70을 초과하지 아니하는 범위에서 선금을 지급할 수 있다.' }] } } };
     r.fulfill({ status: 200, contentType: 'text/plain; charset=utf-8', body: JSON.stringify(body) });
-  });
+  };
   await page.route('**/api/ai/status', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, installed: true, status: { state: 'ready' } }) }));
   let localPrompt = '';
   await page.route('http://127.0.0.1:11434/**', (r) => {
@@ -678,6 +678,16 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     const b = JSON.parse(r.request().postData() || '{}'); localPrompt = (b.messages || []).map((m) => m.content).join('\n');
     return r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ message: { role: 'assistant', content: '1) 결론: 선금은 계약금액의 70%까지 지급할 수 있습니다.\n2) 근거: 「우리 계약규정」 제15조, 「지방자치단체를 당사자로 하는 계약에 관한 법률 시행령」 제35조.\n3) 회신: 선금은 계약금액의 100분의 70 범위에서 신청하실 수 있습니다.' } }) });
   });
+  // IP 미등록이면 처음 화면에 이 PC의 공인 IP를 알아내 [IP 복사]·[등록하러 가기]
+  await page.route('**/api/myip', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, ip: '211.234.10.20' }) }));
+  await page.route('**/api/law**', (r) => r.fulfill({ status: 200, contentType: 'text/plain; charset=utf-8', body: JSON.stringify({ result: '사용자 정보 검증에 실패하였습니다.', msg: 'OPEN API 호출 시 사용자 검증을 위하여 정확한 서버장비의 IP주소 및 도메인주소를 등록해 주세요.' }) }));
+  await page.click('.brand'); await page.evaluate(() => JH.app.checkAccounts());
+  await page.waitForSelector('#acctLine [data-copyip="211.234.10.20"]', { timeout: 15000 });
+  assert.match(await page.textContent('#acctLine'), /211\.234\.10\.20가 국가법령정보센터에 등록되지 않았습니다/);
+  await waitFor(async () => /현재 이 PC의 IP는 211\.234\.10\.20 입니다/.test(await page.textContent('#acctLine')), 10000, '현재 IP 표시');
+  await page.screenshot({ path: join(SHOTS, '0b-연결상태.png') });
+  await page.unroute('**/api/law**');
+  await page.route('**/api/law**', lawRoute);
   await page.click('.views [data-view="rules"]');
   await page.waitForSelector('[data-rtab="src"]');
   await page.click('[data-rtab="src"]');

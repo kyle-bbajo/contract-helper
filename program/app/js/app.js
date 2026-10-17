@@ -538,12 +538,21 @@
         const t = await S.law(JH.rulesLogic.lawSearchUrl(oc, '지방공기업법', 'law'));
         let j = null; try { j = JSON.parse(t); } catch (_) {}
         const ok = j && JH.rulesLogic.pickLaw(j, '지방공기업법', 'law'), why = JH.rulesLogic.lawError(j);
-        put(1, ok ? 'ok' : 'bad', ok ? `법령 OC(${oc}) 사용 가능` : `법령 OC(${oc}) 안 됨: ${why || '활용 신청(법령·행정규칙)을 open.law.go.kr에서 확인하세요'}`);
+        if (ok) put(1, 'ok', `법령 OC(${oc}) 사용 가능`);
+        else if (/IP/.test(why)) {
+          // IP 미등록: 이 PC의 공인 IP를 자동으로 알아내 [복사]·[등록하러 가기]로 바로
+          let ip = ''; try { ip = (await S.myIp()).ip; } catch (_) {}
+          rows[1] = `<li class="bad">법령 OC(${esc(oc)}): 이 PC의 인터넷 주소${ip ? ` <b class="num">${esc(ip)}</b>` : ''}가 국가법령정보센터에 등록되지 않았습니다. ${ip ? `<button type="button" class="link sm" data-copyip="${esc(ip)}">IP 복사</button> ` : ''}<a class="link sm" href="https://open.law.go.kr" target="_blank" rel="noopener">등록하러 가기</a> <small class="muted">(마이페이지 → OPEN API 신청 내역 → 수정 → 서버장비의 IP주소에 붙여 넣고 [추가])</small></li>`;
+          el.innerHTML = rows.filter(Boolean).join('');
+        } else put(1, 'bad', `법령 OC(${oc}) 안 됨: ${why || '활용 신청(법령·행정규칙)을 open.law.go.kr에서 확인하세요'}`);
       }
     } catch (e) { put(1, 'bad', '법령 연결 안 됨: ' + e.message); }
     // 3) PC AI
     try { const st = await JH.ai.status(true); put(2, st.ready ? 'ok' : 'warn', JH.ai.statusText(st)); } catch (_) { put(2, 'warn', 'PC AI 상태를 모름'); }
+    // 4) 이 PC의 인터넷 주소(공인 IP) — 국가법령정보센터에 등록할 값, 늘 보여 줌
+    try { const ip = (await S.myIp()).ip; rows[3] = `<li class="info">현재 이 PC의 IP는 <b class="num">${esc(ip)}</b> 입니다 <button type="button" class="link sm" data-copyip="${esc(ip)}">복사</button></li>`; el.innerHTML = rows.filter(Boolean).join(''); } catch (_) { /* 인터넷 안 됨 */ }
   }
+  document.addEventListener('click', (e) => { const b = e.target.closest('[data-copyip]'); if (!b) return; navigator.clipboard.writeText(b.dataset.copyip).then(() => toast(`${b.dataset.copyip}를 복사했습니다. 국가법령정보센터 신청 내역의 '서버장비의 IP주소'에 붙여 넣고 [추가]하세요.`, 'ok'), () => toast(`IP: ${b.dataset.copyip} (복사가 안 되면 직접 적어 주세요)`)); });
   // 자동 새로고침(나라장터 계약·세부 정보, 법령·예규): 하루 세 번 — 켜자마자(오전 한 번), 12시부터, 18시부터. 각 칸마다 하루 한 번만
   const slotOf = (d) => (d.getHours() >= 18 ? 'evening' : d.getHours() >= 12 ? 'noon' : 'morning');
   async function autoRefresh(first) {
@@ -1858,7 +1867,7 @@
 
   root.JH.app = {
     get cfg() { return cfg; }, set cfg(v) { cfg = v; }, get db() { return db; }, get org() { return org; },
-    defaults, lists, printList, startWatch, saveCfg, saveDb, fetchContracts, enrichContracts, fillFromDocs, openForms, render, toast, banner, start, ingest, setView, progress,
+    defaults, lists, printList, startWatch, checkAccounts, saveCfg, saveDb, fetchContracts, enrichContracts, fillFromDocs, openForms, render, toast, banner, start, ingest, setView, progress,
     setChecklists(v) { db.checklists = v; return saveDb(true); },
   };
   document.addEventListener('DOMContentLoaded', () => {});

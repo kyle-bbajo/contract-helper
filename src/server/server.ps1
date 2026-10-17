@@ -455,6 +455,14 @@ function Handle($stream, $req) {
       Send-Bytes $stream 200 'application/json; charset=utf-8' ($Utf8.GetBytes($sb.ToString())) $null; return
     }
 
+    '/api/myip' {
+      # 이 PC가 인터넷에 나가는 주소(공인 IP) — 국가법령정보센터에 등록할 값. 공개 IP 확인 서비스 두 곳 중 되는 곳
+      foreach ($u in @('https://api.ipify.org', 'https://checkip.amazonaws.com')) {
+        try { $wc = New-Object System.Net.WebClient; $ip = ($wc.DownloadString($u)).Trim(); if ($ip -match '^\d{1,3}(\.\d{1,3}){3}$') { Send-Json $stream 200 @{ ok = $true; ip = $ip }; return } } catch {}
+      }
+      Send-Error $stream 502 '공인 IP를 알아내지 못했습니다(인터넷 연결 확인)'; return
+    }
+
     '/api/law' {
       # 국가법령정보센터(법령·행정규칙) 조회 중계 — www.law.go.kr/DRF/ 주소만 허용(OC는 화면에서 받음)
       $u = [string]$q['u']; $uri = $null
