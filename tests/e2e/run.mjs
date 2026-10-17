@@ -211,7 +211,21 @@ try {
   const added = await page.evaluate(() => { const d = JH.app.db.docs.find((x) => x.name === 'scan_0012.pdf'); return { item: d.itemId, c: JH.app.db.contracts[d.key].name, manual: d.manual }; });
   assert.deepEqual(added, { item: 'c-defect', c: '시청사 옥상 방수공사', manual: true }, '내용은 견적서여도 고른 줄(하자보증서)로 들어감');
   await waitFor(() => page.$('.row[data-drop-item="c-defect"] .file:has-text("scan_0012.pdf")'), 10000, '줄에 표시');
-  step('계약 화면 맨 위 [업로드], 서류 줄 [+ 추가]로 그 서류에 직접 넣기');
+  // 방수공사 화면 [업로드]로 다른 계약(청소 용역) 서류를 올리면 그 계약으로, 엑셀 견적서는 글자를 읽어 이 계약 견적서로
+  const xlsx = (() => { const z = CFB.utils.cfb_new();
+    CFB.utils.cfb_add(z, '/[Content_Types].xml', Buffer.from('<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>'));
+    CFB.utils.cfb_add(z, '/xl/sharedStrings.xml', Buffer.from('<?xml version="1.0"?><sst><si><t>견 적 서</t></si><si><t>시청사 옥상 방수공사</t></si><si><t>합계</t></si></sst>'));
+    CFB.utils.cfb_add(z, '/xl/worksheets/sheet1.xml', Buffer.from('<?xml version="1.0"?><worksheet><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c></row><row r="5"><c r="A5" t="s"><v>2</v></c><c r="B5"><v>48000000</v></c></row></sheetData></worksheet>'));
+    return Buffer.from(CFB.write(z, { fileType: 'zip', type: 'buffer' })); })();
+  const [fc2] = await Promise.all([page.waitForEvent('filechooser'), page.click('[data-act="addhere"]')]);
+  await fc2.setFiles([{ name: '체육관 시설 청소 용역_착수계.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await (async () => { const d = await PDFDocument.create(); d.addPage(); return d.save(); })()) },
+    { name: 'gyeonjeok.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: xlsx }]);
+  await waitFor(() => page.$('.toast:has-text("그 계약으로 보냈습니다")'), 30000, '다른 계약으로 보냄');
+  const routed = await page.evaluate(() => { const f = (n) => { const d = JH.app.db.docs.find((x) => x.name === n); return d && { c: (JH.app.db.contracts[d.key] || {}).name, item: d.itemId }; }; return { pdf: f('체육관 시설 청소 용역_착수계.pdf'), xl: f('gyeonjeok.xlsx') }; });
+  assert.deepEqual(routed.pdf, { c: '체육관 시설 청소 용역', item: 's-start' }, '다른 계약 서류는 그 계약으로');
+  assert.deepEqual(routed.xl, { c: '시청사 옥상 방수공사', item: 'c-estimate' }, '엑셀 견적서 글자 읽어 분류');
+  await waitFor(() => page.$('.row[data-drop-item="c-estimate"] .file:has-text("gyeonjeok.xlsx") .ft:has-text("엑셀")'), 10000, '엑셀 표시');
+  step('계약 화면 맨 위 [업로드], 서류 줄 [+ 추가]로 그 서류에 직접 넣기 · 다른 계약 서류는 그 계약으로 자동 · 엑셀(.xlsx) 글자 읽어 분류');
 
   // ===== 메모(감독부서·감독관·연락처·특이사항)와 찾기 =====
   // 위 칸(지출요청일 | 메모, 아래 감사 자료)은 접혀 있고 펼치면 이 PC에 기억

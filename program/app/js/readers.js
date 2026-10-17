@@ -105,11 +105,29 @@
   }
 
   // 파일 하나 읽기 → { lines, ocr }
+  // 엑셀(.xlsx)·워드(.docx): 압축 안 XML의 글자만(견적서·산출내역서를 엑셀로 받는 경우 등). .xls(옛 형식)는 글자를 못 읽고 파일 이름으로 분류
+  function officeLines(bytes) {
+    if (!(bytes[0] === 0x50 && bytes[1] === 0x4b)) return [];
+    const z = root.CFB.read(bytes, { type: 'array' });
+    const txt = (re) => z.FullPaths.map((p, i) => [p, i]).filter(([p]) => re.test(p)).map(([, i]) => new TextDecoder('utf-8').decode(new Uint8Array(z.FileIndex[i].content || [])));
+    const un = (x) => x.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, '&');
+    const out = [];
+    // 엑셀: 공유 문자열 + 칸에 바로 든 글자, 숫자는 시트에서
+    for (const x of txt(/\/xl\/sharedStrings\.xml$/i)) for (const m of x.matchAll(/<si>([\s\S]*?)<\/si>/g)) { const t = un([...m[1].matchAll(/<t[^>]*>([^<]*)<\/t>/g)].map((y) => y[1]).join('')).trim(); if (t) out.push(t); }
+    for (const x of txt(/\/xl\/worksheets\/sheet\d+\.xml$/i).slice(0, 5)) for (const row of x.matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)) {
+      const vals = [...row[1].matchAll(/<c[^>]*?(?:t="(\w+)")?[^>]*>(?:<f>[^<]*<\/f>)?(?:<v>([^<]*)<\/v>|<is>[\s\S]*?<t[^>]*>([^<]*)<\/t>[\s\S]*?<\/is>)/g)].filter((c) => c[1] !== 's').map((c) => un(c[2] || c[3] || '').trim()).filter(Boolean);
+      if (vals.length) out.push(vals.join(' '));
+    }
+    // 워드: 문단마다
+    for (const x of txt(/\/word\/document\.xml$/i)) for (const p of x.split(/<\/w:p>/)) { const t = un([...p.matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g)].map((y) => y[1]).join('')).trim(); if (t) out.push(t); }
+    return out.slice(0, 2000);
+  }
   async function read(bytes, kind, type) {
     let lines = [], ocr = false;
     try {
       if (kind === 'pdf') lines = await pdfLines(bytes);
       else if (kind === 'hwp') lines = hwpLines(bytes);
+      else if (kind === 'other') lines = officeLines(bytes);
     } catch (e) { console.warn('읽기 실패', e); }
     const textLen = JH.logic.norm(lines.join('')).length;
     if (kind === 'image' || (kind === 'pdf' && textLen < 10)) {
@@ -162,5 +180,5 @@
     } finally { doc.destroy(); }
     return heads;
   }
-  root.JH.readers = { read, fullLines, pdfLines, hwpLines, ocrLines, pageHeads, get ocrBroken() { return ocrBroken; } };
+  root.JH.readers = { read, officeLines, fullLines, pdfLines, hwpLines, ocrLines, pageHeads, get ocrBroken() { return ocrBroken; } };
 })(window);

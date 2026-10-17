@@ -303,6 +303,13 @@
         const r = recs[i];
         progress(`정리하는 중 ${i + 1}/${recs.length}`, i / recs.length);
         let c = forced || (r.key && db.contracts[r.key]) || pickContract(L.norm(L.stem(r.name)) + '|' + r.text, r);
+        // 계약 화면에서 [업로드]로 올렸어도(서류 줄 [+ 추가]가 아니면) 다른 계약 서류가 분명하면 그 계약으로 보냄
+        //  - 내용·파일 이름에 다른 계약의 번호·이름이 있고, 지금 계약과는 맞지 않을 때만(애매하면 지금 계약)
+        if (forced && !forceItem) {
+          const hay = L.norm(L.stem(r.name)) + '|' + r.text;
+          const m = L.matchCandidates(contracts(), hay);
+          if (m.score >= 6 && m.top.length === 1 && m.top[0].key !== forced.key && L.contractScore(forced, hay) < m.score) { c = m.top[0]; r.rerouted = true; }
+        }
         let itemId = c ? (forced && forceItem ? forceItem : L.classifyItem(lists(c.type), r.name, r.title)) : null;
         // 한 파일에 여러 양식(착공계 묶음 등): 쪽마다 서류 이름을 찾아 함께 든 서류로 표시
         let also = [], pagesOf = null;
@@ -327,7 +334,7 @@
         const saved = await S.save(dir, fname, r.bytes);
         textDirty = true; db.docs.push({
           id: r.id, key: c ? c.key : null, itemId: item ? item.id : null, path: saved.path, name: r.name, kind: r.kind,
-          size: r.size, mime: r.mime, addedAt: new Date().toISOString(), ocr: r.ocr, meta: r.meta, text: r.text, title: r.title, dates: r.dates, manual: !!forced, facts: L.docFacts(r.lines),
+          size: r.size, mime: r.mime, addedAt: new Date().toISOString(), ocr: r.ocr, meta: r.meta, text: r.text, title: r.title, dates: r.dates, manual: !!forced && !r.rerouted, facts: L.docFacts(r.lines),
           ...(also.length ? { also, pagesOf } : {}),
         });
         if (c) { byContract[c.key] = (byContract[c.key] || 0) + 1; c.updatedAt = Date.now(); } else inbox++;
@@ -345,6 +352,8 @@
       if (newContracts) msg += ` 계약서에서 새 계약 ${newContracts}건을 만들었습니다.`;
       if (auditFilled) msg += ` 서류에서 감사·검사 칸 ${auditFilled}개를 채웠습니다.`;
       if (multiForm) msg += ` 여러 양식이 든 파일 ${multiForm}개는 안에 든 서류마다 표시했습니다.`;
+      const moved = recs.filter((r) => r.rerouted).length;
+      if (moved) msg += ` ${moved}개는 내용이 다른 계약 서류라 그 계약으로 보냈습니다.`;
       if (skipped) msg += ` 이미 있는 파일 ${skipped}개는 건너뛰었습니다.`;
       if (R.ocrBroken) msg += ' 스캔본 글자 인식을 시작하지 못해 일부는 미분류로 갔습니다.';
       toast(msg, inbox ? '' : 'ok', inbox ? { label: '미분류 보기', run: () => setView('inbox') } : null);
@@ -395,7 +404,7 @@
 
   // ---------- 폴더 정리 상태 맞추기 ----------
   // 탐색기에서 계약 폴더 이름을 바꾸거나 옮긴 파일을 이름·크기로 다시 찾고, 직접 넣은 파일은 읽어서 분류
-  const DOC_EXT = /\.(pdf|jpe?g|png|gif|bmp|webp|hwpx?)$/i;
+  const DOC_EXT = /\.(pdf|jpe?g|png|gif|bmp|webp|hwpx?|xlsx|xls|docx)$/i;
   async function reconcile() {
     const r = await S.list('', true);
     const all = r.files.filter((f) => /^(계약|미분류)\//.test(f.path) && !/\/인쇄본\//.test(f.path) && DOC_EXT.test(f.path));
@@ -632,7 +641,7 @@
   const isoOf = (s) => { const m = String(s || '').replace(/\D/g, ''); return m.length >= 8 ? `${m.slice(0, 4)}-${m.slice(4, 6)}-${m.slice(6, 8)}` : ''; };
   function fileRow(d, list) {
     const tag = d.missing ? '<span class="ft warn" title="데이터 폴더에서 이 파일을 찾을 수 없습니다">파일 없음</span>'
-      : d.ocr ? '<span class="ft" title="스캔본이라 글자 인식으로 읽었습니다">스캔</span>' : `<span class="ft${d.kind === 'hwp' && !d.pdfPath ? ' warn' : ''}">${KIND_LABEL[d.kind]}</span>`;
+      : d.ocr ? '<span class="ft" title="스캔본이라 글자 인식으로 읽었습니다">스캔</span>' : `<span class="ft${d.kind === 'hwp' && !d.pdfPath ? ' warn' : ''}">${d.kind === 'other' ? ({ xlsx: '엑셀', xls: '엑셀', docx: '워드' }[L.extOf(d.name)] || '기타') : KIND_LABEL[d.kind]}</span>`;
     const conv = d.kind === 'hwp' && !d.pdfPath ? `<button class="btn sm" data-act="hwp" data-doc="${d.id}">PDF로 변환</button>` : '';
     let dt = '';
     if (L.isCertItem(d.itemId)) {
