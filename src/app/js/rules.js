@@ -26,7 +26,9 @@
   // ---------- 법령 받기(국가법령정보센터 Open API) ----------
   async function getJson(url) {
     const t = await S.law(url);
-    try { return JSON.parse(t); } catch (_) {
+    let j; try { j = JSON.parse(t); } catch (_) { j = undefined; }
+    if (j !== undefined) { const why = R.lawError(j); if (why) throw new Error('사용자 확인 실패 — ' + why); return j; }
+    {
       const msg = String(t).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
       throw new Error(/검증|인증|OC|미신청|등록/.test(msg) ? `국가법령정보센터 사용자 확인 실패 — OC(아이디)와 Open API 활용 신청(법령·행정규칙)을 확인하세요. (${msg})` : `알 수 없는 응답: ${msg}`);
     }

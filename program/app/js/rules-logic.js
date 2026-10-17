@@ -14,6 +14,20 @@
     { name: '지방자치단체 공사계약 일반조건', kind: 'admrul' },
     { name: '지방자치단체 용역계약 일반조건', kind: 'admrul' },
     { name: '지방자치단체 물품구매계약 일반조건', kind: 'admrul' },
+    // 공종·업무별 — 업종 등록·하도급·안전·폐기물·노무 질문에 씀
+    { name: '건설산업기본법', kind: 'law' },
+    { name: '건설산업기본법 시행령', kind: 'law' },
+    { name: '건설기술 진흥법', kind: 'law' },
+    { name: '전기공사업법', kind: 'law' },
+    { name: '정보통신공사업법', kind: 'law' },
+    { name: '소방시설공사업법', kind: 'law' },
+    { name: '폐기물관리법', kind: 'law' },
+    { name: '건설폐기물의 재활용촉진에 관한 법률', kind: 'law' },
+    { name: '엔지니어링산업 진흥법', kind: 'law' },
+    { name: '하도급거래 공정화에 관한 법률', kind: 'law' },
+    { name: '산업안전보건법', kind: 'law' },
+    { name: '중소기업제품 구매촉진 및 판로지원에 관한 법률', kind: 'law' },
+    { name: '건설근로자의 고용개선 등에 관한 법률', kind: 'law' },
   ];
   const LAW_BASE = 'https://www.law.go.kr/DRF';
   const lawSearchUrl = (oc, name, kind) => `${LAW_BASE}/lawSearch.do?OC=${encodeURIComponent(oc)}&target=${kind === 'admrul' ? 'admrul' : 'law'}&type=JSON&display=20&query=${encodeURIComponent(name)}`;
@@ -22,6 +36,13 @@
     : `${LAW_BASE}/lawService.do?OC=${encodeURIComponent(oc)}&target=law&type=JSON&MST=${encodeURIComponent(id)}`);
   const squash = (s) => String(s || '').replace(/\s+/g, '');
 
+  // 국가법령정보센터 오류 응답({ result, msg }) → 알기 쉬운 말. 등록 안 된 IP에서 부르면 "사용자 정보 검증에 실패"
+  function lawError(json) {
+    if (!json || typeof json !== 'object' || !json.result || json.LawSearch || json.AdmRulSearch || json.법령) return '';
+    const t = `${json.result} ${json.msg || ''}`;
+    if (/IP|도메인|검증/.test(t)) return '국가법령정보센터가 이 PC의 인터넷 주소(IP)를 모릅니다. open.law.go.kr → 마이페이지 → API인증키관리 → 서버장비의 IP주소에 회사 공인 IP를 추가하세요(회사 PC에서 네이버에 "내 IP" 검색).';
+    return String(t).trim();
+  }
   // 검색 결과에서 이름이 같은 것(현행) 하나 — 법령: 법령명한글·법령일련번호 / 행정규칙: 행정규칙명·행정규칙일련번호
   function pickLaw(json, name, kind) {
     const list = [];
@@ -101,7 +122,7 @@
     return `[질문]\n${question}\n\n[근거]\n${ref || '(찾은 조항 없음)'}${prev ? `\n\n[이전에 저장한 비슷한 질문과 답]\n${prev}` : ''}`;
   }
 
-  const api = { DEFAULT_LAWS, LAW_BASE, lawSearchUrl, lawServiceUrl, pickLaw, lawText, splitArticles, grams, makeIndex, search, SYSTEM, prompt };
+  const api = { DEFAULT_LAWS, LAW_BASE, lawError, lawSearchUrl, lawServiceUrl, pickLaw, lawText, splitArticles, grams, makeIndex, search, SYSTEM, prompt };
   root.JH = root.JH || {};
   root.JH.rulesLogic = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

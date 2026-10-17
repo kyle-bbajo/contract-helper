@@ -537,8 +537,8 @@
       else {
         const t = await S.law(JH.rulesLogic.lawSearchUrl(oc, '지방공기업법', 'law'));
         let j = null; try { j = JSON.parse(t); } catch (_) {}
-        const ok = j && JH.rulesLogic.pickLaw(j, '지방공기업법', 'law');
-        put(1, ok ? 'ok' : 'bad', ok ? `법령 OC(${oc}) 사용 가능` : `법령 OC(${oc}) 안 됨: 활용 신청(법령·행정규칙)이 승인됐는지 open.law.go.kr에서 확인하세요`);
+        const ok = j && JH.rulesLogic.pickLaw(j, '지방공기업법', 'law'), why = JH.rulesLogic.lawError(j);
+        put(1, ok ? 'ok' : 'bad', ok ? `법령 OC(${oc}) 사용 가능` : `법령 OC(${oc}) 안 됨: ${why || '활용 신청(법령·행정규칙)을 open.law.go.kr에서 확인하세요'}`);
       }
     } catch (e) { put(1, 'bad', '법령 연결 안 됨: ' + e.message); }
     // 3) PC AI

@@ -32,3 +32,8 @@ test('규정집 조 단위 나누기·찾기·질문 만들기', () => {
   assert.match(p, /\[근거\]\n\[1\] 계약규정 제15조\(선금 지급\)/); assert.match(p, /이전 답변 1\) 질문: 선금 몇 %\?/);
   assert.match(R.SYSTEM, /지어내지 않습니다/);
 });
+
+test('국가법령정보센터 오류 응답(등록 안 된 IP)을 알기 쉬운 말로', () => {
+  assert.match(R.lawError({ result: '사용자 정보 검증에 실패하였습니다.', msg: 'OPEN API 호출 시 사용자 검증을 위하여 정확한 서버장비의 IP주소 및 도메인주소를 등록해 주세요.' }), /서버장비의 IP주소에 회사 공인 IP/);
+  assert.equal(R.lawError({ LawSearch: { law: [] } }), '');
+});

@@ -87,7 +87,7 @@ const draftText = () => page.$$eval('.draft textarea.dbody', (ts) => ts.map((t) 
 page.on('pageerror', (e) => errors.push(String(e)));
 page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
 // 실패한 요청은 주소로 판단: 한글 변환·한글 양식 채우기는 시험 PC에 한글이 없어 실패가 정상(대체 방법으로 처리됨)
-page.on('response', (r) => { if (r.status() >= 500 && !/\/api\/(hwp2pdf|hwpfill|hwpconvert|open)/.test(r.url())) errors.push(`${r.status()} ${r.url()}`); });
+page.on('response', (r) => { if (r.status() >= 500 && !/\/api\/(hwp2pdf|hwpfill|hwpconvert|office2pdf|open|law)/.test(r.url())) errors.push(`${r.status()} ${r.url()}`); }); // 시험 환경엔 인터넷이 없어 국가법령정보센터 실제 조회는 502
 await page.route('**/api/nara**', (r) => {
   const u = decodeURIComponent(new URL(r.request().url()).searchParams.get('u'));
   let body;
@@ -191,7 +191,7 @@ try {
   await waitFor(() => page.$('.toast:has-text("데이터 폴더가 옮겨진 것을 찾았습니다")'), 30000, '데이터 폴더 다시 찾기');
   // 켜자마자: 처음 화면에 연결 상태(나라장터·법령 OC·PC AI) 한 줄씩 + 자동 새로고침(하루 세 번 중 첫 번째)
   await waitFor(async () => /나라장터 연결됨/.test(await page.textContent('#acctLine')), 20000, '연결 상태');
-  assert.match(await page.textContent('#acctLine'), /법령 자동 받기: OC를 아직 안 넣음/);
+  assert.match(await page.textContent('#acctLine'), /법령/);
   await waitFor(() => page.$('.toast:has-text("자동 새로고침")'), 20000, '켜자마자 자동 새로고침');
   await waitFor(() => page.evaluate(() => JH.app.cfg.autoDone && JH.app.cfg.autoDone.slots.length === 1), 10000, '자동 새로고침 기록');
   await waitFor(() => page.evaluate(() => JH.app.db.docs.length === 13), 60000, '직접 넣은 파일 읽기');
@@ -687,10 +687,10 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   await waitFor(() => page.$('.toast:has-text("규정 1개를 읽어")'), 15000, '규정 올리기');
   assert.match(await page.textContent('.rsrc-list'), /계약사무처리규정[\s\S]*조항 3개/);
   // 법령 받기(OC 넣고)
-  await page.fill('#rlOc', 'tester'); await page.click('[data-ract="laws"]');
+  assert.equal(await page.inputValue('#rlOc'), 'contracthelper', '공용 OC가 들어 있음'); await page.fill('#rlOc', 'tester'); await page.click('[data-ract="laws"]');
   await waitFor(() => page.$('.toast:has-text("법령·예규")'), 30000, '법령 받기');
   const got = await page.evaluate(() => JH.rules.kb.sources.filter((s) => s.auto).map((s) => [s.name, s.chunks.length]));
-  assert.ok(got.length >= 10 && got.every(([, n]) => n === 2), JSON.stringify(got));
+  assert.ok(got.length >= 23 && got.every(([, n]) => n === 2), JSON.stringify(got));
   assert.equal(JSON.parse(readFileSync(join(data, '설정.json'), 'utf8')).lawOC, 'tester');
   // 질문 → 근거(우리 규정 + 시행령) → PC AI 답 → 저장(학습) → 다시 물으면 저장한 답이 먼저
   await page.click('[data-rtab="ask"]');
@@ -707,7 +707,7 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   await page.waitForSelector('.rq-prev:has-text("보증서를 먼저 받으세요")', { timeout: 30000 });
   await page.click('[data-rtab="qa"]'); assert.match(await page.textContent('.rqa'), /선금은 계약금액의 몇 퍼센트까지/);
   await page.screenshot({ path: join(SHOTS, '7-규정질문답변.png') });
-  step('규정·질문 답변: 규정집 올려 조 단위로, 법령·예규 10건 자동으로 받기(국가법령정보센터), 질문 → 근거 찾아 PC AI 답 → 저장(학습) → 비슷한 질문에 저장한 답 먼저');
+  step('규정·질문 답변: 규정집 올려 조 단위로, 법령·예규 23건 자동으로 받기(국가법령정보센터), 질문 → 근거 찾아 PC AI 답 → 저장(학습) → 비슷한 질문에 저장한 답 먼저');
 
   // 계약별 목록 너비: 경계를 끌어 넓히면 기억, 두 번 누르면 원래대로
   await page.click('.views [data-view="contracts"]');
