@@ -286,6 +286,26 @@ function Convert-Hwp([string]$src, [string]$dst, [string]$fmt) {
     if (-not $saved -or -not (Test-Path -LiteralPath $dst)) { throw "$fmt 형식으로 저장하지 못했습니다." }
   } finally { try { $null = $h.Clear(1) } catch {} }
 }
+# 엑셀·워드 → PDF(설치된 MS 오피스 사용, 창은 띄우지 않음)
+function Convert-OfficeToPdf([string]$src, [string]$dst) {
+  $ext = [IO.Path]::GetExtension($src).ToLowerInvariant()
+  if ($ext -eq '.xlsx' -or $ext -eq '.xls') {
+    try { $xl = New-Object -ComObject 'Excel.Application' } catch { throw '이 PC에서 엑셀 프로그램을 찾지 못했습니다.' }
+    try {
+      $xl.Visible = $false; $xl.DisplayAlerts = $false
+      $wb = $xl.Workbooks.Open($src, 0, $true)
+      try { $wb.ExportAsFixedFormat(0, $dst) } finally { $wb.Close($false) }
+    } finally { $xl.Quit(); [void][Runtime.InteropServices.Marshal]::ReleaseComObject($xl) }
+  } elseif ($ext -eq '.docx' -or $ext -eq '.doc') {
+    try { $wd = New-Object -ComObject 'Word.Application' } catch { throw '이 PC에서 워드 프로그램을 찾지 못했습니다.' }
+    try {
+      $wd.Visible = $false; $wd.DisplayAlerts = 0
+      $doc = $wd.Documents.Open($src, $false, $true)
+      try { $doc.SaveAs2($dst, 17) } finally { $doc.Close($false) }
+    } finally { $wd.Quit(); [void][Runtime.InteropServices.Marshal]::ReleaseComObject($wd) }
+  } else { throw 'PDF로 바꿀 수 없는 파일입니다.' }
+  if (-not (Test-Path -LiteralPath $dst)) { throw 'PDF로 저장하지 못했습니다.' }
+}
 # 한글 양식의 {{항목}}을 값으로 모두 바꿔 새 파일로 저장(설치된 한글 사용)
 function Fill-HwpTemplate([string]$src, [string]$dst, $values) {
   $h = Get-Hwp
@@ -485,6 +505,16 @@ function Handle($stream, $req) {
       $dst = [IO.Path]::ChangeExtension($src, '.pdf')
       if (Test-Path -LiteralPath $dst) { Send-Json $stream 200 @{ ok = $true; path = (Get-RelPath $dst) }; return }
       try { Convert-HwpToPdf $src $dst; Send-Json $stream 200 @{ ok = $true; path = (Get-RelPath $dst) } }
+      catch { Send-Error $stream 500 $_.Exception.Message }
+      return
+    }
+
+    '/api/office2pdf' {
+      # 엑셀·워드 → PDF(설치된 MS 오피스로). 한 번에 인쇄에 같이 들어감
+      $src = Resolve-DataPath $q['path']
+      $dst = [IO.Path]::ChangeExtension($src, '.pdf')
+      if (Test-Path -LiteralPath $dst) { Send-Json $stream 200 @{ ok = $true; path = (Get-RelPath $dst) }; return }
+      try { Convert-OfficeToPdf $src $dst; Send-Json $stream 200 @{ ok = $true; path = (Get-RelPath $dst) } }
       catch { Send-Error $stream 500 $_.Exception.Message }
       return
     }

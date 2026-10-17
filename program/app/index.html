@@ -364,6 +364,20 @@
   </div>
 </dialog>
 
+<dialog id="dlgOrder" class="dlg" aria-labelledby="ordTitle">
+  <form method="dialog" class="dlg-head">
+    <h2 id="ordTitle">인쇄 순서 편집</h2>
+    <button class="btn icon" value="close" aria-label="닫기">✕</button>
+  </form>
+  <div class="dlg-body">
+    <p class="help">끌어서 놓거나 ↑↓로 옮기세요. 한 서류에 파일이 여럿이면 그 안 순서도 바꿀 수 있습니다. 표지(목록표)도 이 순서로 나옵니다. 새로 올린 파일은 자기 서류 자리에 알아서 들어갑니다.</p>
+    <div class="ord-tools"><button type="button" class="link sm" id="ordHas">있는 서류만 위로</button><button type="button" class="link sm" id="ordReset">기본 순서로</button></div>
+    <ol class="ord-list" id="ordList"></ol>
+    <label class="ord-all"><input type="checkbox" id="ordAll"> 같은 구분(공사·용역·물품)의 모든 계약에 이 순서를 기본으로</label>
+    <div class="dlg-actions"><button type="button" class="btn primary" id="ordSave">저장</button></div>
+  </div>
+</dialog>
+
 <script src="vendor/cfb.min.js"></script>
 <script src="js/logic.js"></script>
 <script src="js/xlsx.js"></script>

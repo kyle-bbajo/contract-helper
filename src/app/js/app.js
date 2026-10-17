@@ -434,7 +434,7 @@
       progress(`폴더에 새로 넣은 파일 읽는 중 ${i + 1}/${unknown.length}`, i / unknown.length);
       const name = base(f.path), kind = L.kindOf(name), dir = f.path.split('/').slice(0, -1).join('/');
       // 한글을 PDF로 바꾼 파일이면 그 한글 서류에 연결
-      if (kind === 'pdf') { const twin = db.docs.find((d) => d.kind === 'hwp' && d.path.replace(/\.hwpx?$/i, '.pdf') === f.path); if (twin) { twin.pdfPath = f.path; continue; } }
+      if (kind === 'pdf') { const twin = db.docs.find((d) => (d.kind === 'hwp' || d.kind === 'other') && d.path.replace(/\.(hwpx?|xlsx?|docx?)$/i, '.pdf') === f.path); if (twin) { twin.pdfPath = f.path; continue; } }
       try {
         const bytes = await S.readBytes(f.path);
         const { lines, ocr } = await R.read(bytes, kind);
@@ -512,13 +512,80 @@
       if (d.pdfPath) return { kind: 'pdf', name: d.name, bytes: await S.readBytes(d.pdfPath) };
       return { kind: 'hwp', name: d.name };
     }
+    // 엑셀·워드: 설치된 오피스로 PDF로 바꿔 같이 인쇄(오피스가 없으면 '별도 인쇄' 자리)
+    if (d.kind === 'other' && /\.(xlsx?|docx?)$/i.test(d.name)) {
+      if (!d.pdfPath) { try { const r = await S.office2pdf(d.path); d.pdfPath = r.path; saveDb(); } catch (e) { console.warn(e); } }
+      if (d.pdfPath) return { kind: 'pdf', name: d.name, bytes: await S.readBytes(d.pdfPath) };
+    }
     return { kind: d.kind, name: d.name, bytes: d.kind === 'other' ? null : await S.readBytes(d.path) };
   }
-  async function printContract(c, mode) {
+  // 인쇄 순서: 계약마다 바꾼 순서(c.printOrder: 서류 종류 순서, c.fileOrder: 종류 안 파일 순서), 없으면 서류 목록 순서
+  function printList(c) {
+    const base = lists(c.type), ord = c.printOrder || [];
+    if (!ord.length) return base;
+    const rank = new Map(ord.map((id, i) => [id, i]));
+    // 순서에 없는 서류(나중에 생긴 것)는 목록에서 바로 앞 서류 뒤에 붙임
+    const out = base.filter((x) => rank.has(x.id)).sort((a, b) => rank.get(a.id) - rank.get(b.id));
+    base.forEach((x, i) => { if (rank.has(x.id)) return; const prev = base.slice(0, i).reverse().find((y) => out.includes(y)); out.splice(prev ? out.indexOf(prev) + 1 : 0, 0, x); });
+    return out;
+  }
+  function printDocs(c) {
+    const fo = c.fileOrder || {};
     const docs = docsOf(c.key).filter((d) => d.itemId);
+    const pos = (d) => { const a = fo[d.itemId] || []; const i = a.indexOf(d.id); return i < 0 ? 1e6 + (Date.parse(d.addedAt) || 0) / 1e9 : i; };
+    return [...docs].sort((a, b) => pos(a) - pos(b));
+  }
+  // [인쇄 순서 편집]: 서류 종류를 끌거나 ↑↓로 옮기고, 한 종류에 파일이 여럿이면 그 안 순서도
+  let ordEdit = null;
+  function openOrder(c) {
+    const docs = printDocs(c), got = gotMap(c);
+    ordEdit = { key: c.key, items: printList(c).map((x) => ({ x, files: docs.filter((d) => d.itemId === x.id), has: docs.some((d) => d.itemId === x.id) || !!got[x.id] })) };
+    renderOrder(); $('#ordAll').checked = false; $('#dlgOrder').showModal();
+  }
+  function renderOrder() {
+    const o = ordEdit; if (!o) return;
+    const c = db.contracts[o.key];
+    $('#ordList').innerHTML = o.items.map((it, i) => `<li class="ord-it${it.has ? '' : ' empty'}" draggable="true" data-oi="${i}">
+      <span class="grip" aria-hidden="true">⋮⋮</span><span class="no num">${i + 1}</span>
+      <span class="nm"><b>${esc(itemView(c, it.x).name)}</b> <small class="muted">${esc(it.x.group)}${it.has ? '' : ' · 없음(인쇄 안 됨)'}</small>
+        ${it.files.length > 1 ? `<ol class="ord-files">${it.files.map((d, j) => `<li><span>${esc(d.name)}</span><button type="button" class="x" data-of="${i}:${j}:-1" aria-label="위로"${j ? '' : ' disabled'}>↑</button><button type="button" class="x" data-of="${i}:${j}:1" aria-label="아래로"${j < it.files.length - 1 ? '' : ' disabled'}>↓</button></li>`).join('')}</ol>` : ''}</span>
+      <span class="mv"><button type="button" class="x" data-om="${i}:-1" aria-label="위로"${i ? '' : ' disabled'}>↑</button><button type="button" class="x" data-om="${i}:1" aria-label="아래로"${i < o.items.length - 1 ? '' : ' disabled'}>↓</button></span></li>`).join('');
+  }
+  $('#ordList').addEventListener('click', (e) => {
+    const m = e.target.closest('[data-om]'), f = e.target.closest('[data-of]'); const o = ordEdit; if (!o) return;
+    if (m) { const [i, d] = m.dataset.om.split(':').map(Number); const j = i + d; if (j < 0 || j >= o.items.length) return; [o.items[i], o.items[j]] = [o.items[j], o.items[i]]; renderOrder(); }
+    if (f) { const [i, j, d] = f.dataset.of.split(':').map(Number); const a = o.items[i].files, k = j + d; if (k < 0 || k >= a.length) return; [a[j], a[k]] = [a[k], a[j]]; renderOrder(); }
+  });
+  let dragFrom = null;
+  $('#ordList').addEventListener('dragstart', (e) => { const li = e.target.closest('.ord-it'); if (li) { dragFrom = +li.dataset.oi; li.classList.add('drag'); } });
+  $('#ordList').addEventListener('dragover', (e) => { if (dragFrom != null && e.target.closest('.ord-it')) e.preventDefault(); });
+  $('#ordList').addEventListener('drop', (e) => {
+    const li = e.target.closest('.ord-it'); if (!li || dragFrom == null) return; e.preventDefault();
+    const to = +li.dataset.oi, a = ordEdit.items; const [it] = a.splice(dragFrom, 1); a.splice(to, 0, it); dragFrom = null; renderOrder();
+  });
+  $('#ordList').addEventListener('dragend', () => { dragFrom = null; $$('#ordList .drag').forEach((x) => x.classList.remove('drag')); });
+  $('#ordHas').onclick = () => { const a = ordEdit.items; ordEdit.items = [...a.filter((x) => x.has), ...a.filter((x) => !x.has)]; renderOrder(); };
+  $('#ordReset').onclick = () => { const c = db.contracts[ordEdit.key]; const docs = docsOf(c.key).filter((d) => d.itemId); const got = gotMap(c);
+    ordEdit.items = lists(c.type).map((x) => ({ x, files: docs.filter((d) => d.itemId === x.id), has: docs.some((d) => d.itemId === x.id) || !!got[x.id] })); renderOrder(); };
+  $('#ordSave').onclick = async () => {
+    const c = db.contracts[ordEdit.key]; if (!c) return;
+    const ids = ordEdit.items.map((it) => it.x.id);
+    c.fileOrder = {}; ordEdit.items.forEach((it) => { if (it.files.length > 1) c.fileOrder[it.x.id] = it.files.map((d) => d.id); });
+    if ($('#ordAll').checked) {
+      // 같은 구분(공사·용역·물품) 모든 계약의 기본 순서로: 서류 목록 자체를 이 순서로
+      const cur = lists(c.type), rank = new Map(ids.map((id, i) => [id, i]));
+      db.checklists = db.checklists || JSON.parse(JSON.stringify(defaults));
+      db.checklists[c.type] = [...cur].sort((a, b) => (rank.has(a.id) ? rank.get(a.id) : 1e6) - (rank.has(b.id) ? rank.get(b.id) : 1e6));
+      delete c.printOrder;
+      toast(`${c.type} 모든 계약의 인쇄 순서를 이 순서로 바꿨습니다.`, 'ok');
+    } else { c.printOrder = ids; toast('이 계약의 인쇄 순서를 저장했습니다. [한 번에 인쇄]·[PDF로 저장]에 이 순서로 들어갑니다.', 'ok'); }
+    c.updatedAt = Date.now(); await saveDb(true); $('#dlgOrder').close(); render();
+  };
+  async function printContract(c, mode) {
+    const docs = printDocs(c);
     try {
       progress('인쇄할 서류를 합치는 중', .3);
-      const r = await JH.pdfbuild.build(c, lists(c.type), docs, getFile, { cover: true, holder: true });
+      const r = await JH.pdfbuild.build(c, printList(c), docs, getFile, { cover: true, holder: true });
       progress(null);
       let msg = `${r.pages}쪽`;
       if (r.missing.length) msg += ` · 필수 누락 ${r.missing.length}건(표지에 표시)`;
@@ -765,6 +832,7 @@
           <div class="actions">
             <button class="btn primary" data-act="print">한 번에 인쇄</button>
             <button class="btn" data-act="save">PDF로 저장</button>
+            <button class="btn ghost" data-act="printorder" title="인쇄본에 들어가는 서류 순서를 바꿉니다">인쇄 순서 편집${c.printOrder ? ' <small>(바꿈)</small>' : ''}</button>
             <button class="btn" data-act="folder">폴더 열기</button>
             ${c.url ? `<a class="btn ghost" href="${esc(c.url)}" target="_blank" rel="noopener">나라장터에서 보기</a>` : ''}
             <span class="spacer"></span>
@@ -796,7 +864,7 @@
               let mark, side;
               if (!ds.length && inner.length) { mark = '<span class="mark ok">✓</span>'; side = '<span class="muted">묶음 파일 안</span>'; }
               else if (!ds.length && !orig && !rcv && altItem) { mark = '<span class="mark opt">–</span>'; side = `<span class="optional">대신 ${esc(itemView(c, altItem).name)} 있음</span>`; }
-              else if (ds.length) { const warn = ds.some((d) => (d.kind === 'hwp' && !d.pdfPath) || d.kind === 'other'); mark = warn ? '<span class="mark warn">!</span>' : '<span class="mark ok">✓</span>'; side = `<span class="num">${ds.length}개</span>`; }
+              else if (ds.length) { const warn = ds.some((d) => (d.kind === 'hwp' && !d.pdfPath) || (d.kind === 'other' && !/\.(xlsx?|docx?)$/i.test(d.name))); mark = warn ? '<span class="mark warn">!</span>' : '<span class="mark ok">✓</span>'; side = `<span class="num">${ds.length}개</span>`; }
               else if (orig) { mark = '<span class="mark orig">원</span>'; side = '<span>원본 받음</span>'; }
               else if (rcv) { mark = '<span class="mark rcv">✓</span>'; side = '<span class="rcv-t">받음 표시</span>'; }
               else if (x.required) { mark = '<span class="mark miss">✕</span>'; side = '<span class="missing">누락</span>'; }
@@ -1357,6 +1425,7 @@
       else if (act === 'additem') { pickTarget = { key: ui.sel, item: t.dataset.item }; $('#fileIn').click(); }
       else if (act === 'print') await printContract(c, 'print');
       else if (act === 'save') await printContract(c, 'save');
+      else if (act === 'printorder') openOrder(c);
       else if (act === 'folder') await S.open(folderOf(c));
       else if (act === 'pay') openPay(c);
       else if (act === 'edit') openContract(c);
@@ -1671,7 +1740,7 @@
 
   root.JH.app = {
     get cfg() { return cfg; }, set cfg(v) { cfg = v; }, get db() { return db; }, get org() { return org; },
-    defaults, lists, saveCfg, saveDb, fetchContracts, enrichContracts, fillFromDocs, openForms, render, toast, banner, start, ingest, setView, progress,
+    defaults, lists, printList, saveCfg, saveDb, fetchContracts, enrichContracts, fillFromDocs, openForms, render, toast, banner, start, ingest, setView, progress,
     setChecklists(v) { db.checklists = v; return saveDb(true); },
   };
   document.addEventListener('DOMContentLoaded', () => {});

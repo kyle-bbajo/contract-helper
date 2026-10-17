@@ -191,6 +191,7 @@
       return root.JH.notice.logic.zipStore([{ name: 'mimetype', data: enc.encode('application/hwp+zip') }, { name: 'Contents/section0.xml', data: enc.encode(sec) }]);
     },
     async hwpConvert() { throw new Error('시연판에는 한글 프로그램이 없습니다. 실제 프로그램은 설치된 한글로 .hwp를 바꿉니다. 시연판에서는 .hwpx를 올려 보세요'); },
+    async office2pdf() { throw new Error('시연판에서는 엑셀·워드→PDF 변환을 하지 않습니다. 실제 프로그램은 설치된 오피스로 자동 변환합니다.'); },
     async hwpSec() { return { ok: true, state: 'nodll', dll: '', folder: '한글보안모듈' }; },
     async hwp2pdf() { throw new Error('시연판에서는 한글→PDF 변환을 하지 않습니다. 실제 프로그램은 설치된 한글로 자동 변환합니다.'); },
     async open() { throw new Error('시연판에서는 폴더를 열 수 없습니다. 실제 프로그램은 탐색기로 엽니다.'); },

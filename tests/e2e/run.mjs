@@ -226,6 +226,19 @@ try {
   assert.deepEqual(routed.xl, { c: '시청사 옥상 방수공사', item: 'c-estimate' }, '엑셀 견적서 글자 읽어 분류');
   await waitFor(() => page.$('.row[data-drop-item="c-estimate"] .file:has-text("gyeonjeok.xlsx") .ft:has-text("엑셀")'), 10000, '엑셀 표시');
   step('계약 화면 맨 위 [업로드], 서류 줄 [+ 추가]로 그 서류에 직접 넣기 · 다른 계약 서류는 그 계약으로 자동 · 엑셀(.xlsx) 글자 읽어 분류');
+  // 인쇄 순서 편집: 있는 서류만 위로 → 견적서를 맨 위로 끌어 놓기 → 저장하면 인쇄 순서가 바뀜
+  await page.click('[data-act="printorder"]');
+  await page.waitForSelector('#dlgOrder[open]');
+  await page.click('#ordHas');
+  const est = await page.$$eval('#ordList .ord-it', (li) => li.findIndex((x) => /견적서/.test(x.textContent)));
+  await page.dragAndDrop(`#ordList .ord-it[data-oi="${est}"]`, '#ordList .ord-it[data-oi="0"]');
+  assert.match(await page.textContent('#ordList .ord-it[data-oi="0"]'), /견적서/);
+  await page.click('#ordSave');
+  await waitFor(() => page.$('.toast:has-text("인쇄 순서를 저장했습니다")'), 10000, '인쇄 순서 저장');
+  const po = await page.evaluate(() => { const c = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사'); return { first: JH.app.printList(c)[0].id, n: JH.app.printList(c).length, all: JH.app.lists(c.type).length }; });
+  assert.equal(po.first, 'c-estimate'); assert.equal(po.n, po.all, '서류 종류는 하나도 빠지지 않음');
+  await waitFor(async () => /바꿈/.test(await page.textContent('[data-act="printorder"]')), 5000, '바꿈 표시');
+  step('[인쇄 순서 편집]: 끌어 놓기·↑↓로 서류 순서를 바꿔 저장 → 한 번에 인쇄·PDF·표지가 그 순서');
 
   // ===== 메모(감독부서·감독관·연락처·특이사항)와 찾기 =====
   // 위 칸(지출요청일 | 메모, 아래 감사 자료)은 접혀 있고 펼치면 이 PC에 기억
