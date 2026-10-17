@@ -236,6 +236,15 @@
       bidMethod: '', joint: '', regionDuty: /지역의무\s*공동도급/.test(all), briefing: false, site: '', mainWork: '', url: '', files: [],
       regions: null, licenses: null, clauses: null, uploaded: true, fileName: fileName || '' };
   }
+  // 초안에 남은 빈칸(○○, ○○○-○○○○, ○○:○○ 등): 절마다 [앞뒤 글, 위치] — 화면에서 바로 채우게 함
+  const BLANK_RE = /○{2,}(?:[-.:]\s?○{2,})*(?:%|원)?/g;
+  function blanksIn(sections) {
+    const out = [];
+    (sections || []).forEach((d, si) => { let k = 0; for (const m of String(d.body || '').matchAll(BLANK_RE)) { const b = d.body; out.push({ si, k: k++, at: m.index, text: m[0], before: b.slice(Math.max(0, m.index - 18), m.index).replace(/^.*\n/s, ''), after: b.slice(m.index + m[0].length, m.index + m[0].length + 14).replace(/\n.*$/s, ''), title: d.title }); } });
+    return out;
+  }
+  // 절 본문에서 k번째 빈칸을 값으로
+  function fillBlank(body, k, val) { let i = 0; return String(body).replace(BLANK_RE, (m) => (i++ === k ? val : m)); }
   // 공고명 검색어: 나라장터는 띄어쓰기까지 그대로 찾으므로 "사업장 폐기물"·"사업장폐기물" 둘 다, 그래도 없으면 낱말 하나로 찾아 나머지 낱말로 거름
   const squash = (x) => String(x || '').replace(/[\s·ㆍ.,()\[\]]+/g, '');
   function nameQueries(s) {
@@ -527,8 +536,9 @@
     const m = String(t).match(/^(.{0,30}?(열람\s*장소|문의\s*처?|에\s*관한\s*사항|담당\s*부서)[^:：]{0,12}[:：]\s*)(.+)$/);
     if (!m || !v) return t;
     const label = m[1];
-    const contract = `${v.담당부서 || '○○'}${v.연락처 ? ` (☎ ${v.연락처})` : ''}`;
-    const biz = v.사업부서 ? `${v.기관명 ? v.기관명 + ' ' : ''}${v.사업부서}${v.사업부서연락처 ? ` (☎ ${v.사업부서연락처})` : ''}` : '○○(사업부서)';
+    const contract = `${v.담당부서 || '○○'}${v.담당자 ? ' ' + v.담당자 : ''}${v.연락처 ? ` (☎ ${v.연락처})` : ''}`;
+    // 사업(감독)부서를 안 넣었으면 계약 담당 부서·연락처로(○○를 남기지 않음)
+    const biz = v.사업부서 ? `${v.기관명 ? v.기관명 + ' ' : ''}${v.사업부서}${v.사업부서연락처 ? ` (☎ ${v.사업부서연락처})` : ''}` : `${v.기관명 ? v.기관명 + ' ' : ''}${v.담당부서 || '○○'}${v.연락처 ? ` (☎ ${v.연락처})` : ''}`;
     if (/열람/.test(label)) return label + biz;
     if (/계약|입찰/.test(label)) return label + contract;
     if (/공사|용역|사업|기술|설계|과업|감독/.test(label)) return label + biz;
@@ -1187,7 +1197,7 @@
   }
 
   const api = { SECTION_LABEL, leafParagraphs, spliceRuns, fillNoticeXml, fillNoticeHwpx, noticeKind, WORK_TYPES, workType, subWorks, worksOf, separateIn, licensePhrase, licenseSentence, splitList, jointBody, FIELDS, SECTIONS, labelOf, money, won, blank, applyRules,
-    BID_OPS, bidSearchUrl, nameQueries, nameHas, uploadedBid, bidDetailUrl, slotify, learnSentences, learnedSections, aiPrompt, parseAi, AI_SYSTEM, STATUS, STATUS_ORDER, statusOf, parseBidNo, bidByNoUrl, normalizeBid, attachmentsOf, extractClauses, regionLabel, learn, mapMethod, mapContract,
+    BID_OPS, bidSearchUrl, blanksIn, fillBlank, nameQueries, nameHas, uploadedBid, bidDetailUrl, slotify, learnSentences, learnedSections, aiPrompt, parseAi, AI_SYSTEM, STATUS, STATUS_ORDER, statusOf, parseBidNo, bidByNoUrl, normalizeBid, attachmentsOf, extractClauses, regionLabel, learn, mapMethod, mapContract,
     localize, ourContacts, licenseExamples, isLicLine, licClause, TOPICS, topicVariants, topicPlace, applyPicks, pickOf, draft, draftFull, parseNotice, learnDocument, mergeWrapped, secKey, regionSentence, templateValues, fillHwpxXml, fillHwpx, zipStore, crc32, placeholdersIn, fmtDT };
   root.JH = root.JH || {};
   root.JH.notice = Object.assign(root.JH.notice || {}, { logic: api });

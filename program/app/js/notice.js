@@ -237,16 +237,33 @@
       catch (e) { $('#aiPasteErr').textContent = e.message + ' 답 전체(중괄호 { } 포함)를 붙여 넣어 주세요.'; }
     };
   }
+  const aiNotReady = () => app().toast('AI가 아직 준비되지 않았습니다. 설정 → AI에서 [PC AI 설치](이 PC 안에서만 처리)를 하거나 Gemini 키를 넣으면 바로 다듬을 수 있습니다.', 'err', { label: '설정 열기', run: () => JH.settings.open('ai') });
+  // 절 하나만 AI로 다듬기: 뜻·금액·날짜·업종·조항은 그대로, 문체·띄어쓰기·맞춤법·어색한 문장만. 결과는 '고침'으로 저장(되돌리기 가능)
+  async function polishSection(n, i) {
+    const who = await root.JH.ai.pick(false); if (!who) { aiNotReady(); return; }
+    const d = sectionsOf(n)[i]; if (!d) return;
+    app().progress(`${root.JH.ai.label(who)}로 「${d.title}」 다듬는 중${who === 'local' ? ' (PC AI는 30초~1분)' : ''}`, .4);
+    try {
+      const vals = Object.entries(n.v).filter(([, x]) => x).map(([k, x]) => `${k}: ${x}`).join('\n');
+      const prompt = `아래는 입찰 공고문의 「${d.title}」 절입니다. 공고문 문체로 다듬어 주세요.\n- 금액·날짜·시각·업종·법령 조항·비율은 절대 바꾸지 말 것\n- 맞춤법·띄어쓰기·어색한 문장·중복만 고칠 것, 번호(가. 나. 1) 등)와 줄 나눔은 그대로\n- ○○ 자리는 아래 이번 공고 값으로 채울 수 있으면 채우고, 없으면 그대로 둘 것\n- 다듬은 본문만 답할 것(설명·머리말 없이)\n\n[이번 공고 값]\n${vals}\n\n[본문]\n${d.body}`;
+      const r = await root.JH.ai.ask({ system: N.AI_SYSTEM, prompt, json: false });
+      const text = String(r.text || '').replace(/^```[a-z]*\n?|```$/g, '').trim();
+      if (!text) throw new Error('빈 답');
+      n.edits = { ...(n.edits || {}), [editKey(n, d)]: text }; n.updatedAt = Date.now(); save(true);
+      app().toast(`「${d.title}」을 다듬었습니다. 바뀐 곳을 확인하세요([되돌리기]로 원래대로).`, 'ok');
+    } catch (e) { console.error(e); app().toast('AI로 다듬지 못했습니다: ' + e.message, 'err'); }
+    finally { app().progress(null); render(); }
+  }
   async function writeWithAi(n) {
     const who = await root.JH.ai.pick(false);
-    if (!who) { app().toast('AI가 아직 준비되지 않았습니다. [AI 질문 복사]로 업무용 AI·Gemini 등 아무 AI 채팅에 붙여 넣고, 답을 [답 붙여넣기]로 넣으면 됩니다.', 'err', { label: '질문 복사', run: () => copy(aiQuestion(n)) }); return; }
-    app().progress(`${root.JH.ai.label(who)}가 비슷한 공고 문장을 보고 다시 쓰는 중${who === 'local' ? ' (PC AI는 1~2분 걸립니다)' : ''}`, .4);
+    if (!who) { aiNotReady(); return; }
+    app().progress(`${root.JH.ai.label(who)}로 초안 전체를 다듬는 중${who === 'local' ? ' (PC AI는 1~2분 걸립니다)' : ''}`, .4);
     try {
       const base = hasLearned(n) ? N.draft(n.v, lv(n)) : N.draft(n.v);
       const r = await root.JH.ai.ask({ system: N.AI_SYSTEM, prompt: N.aiPrompt(n.v, lv(n), base), json: true });
       n.ai = { at: Date.now(), model: r.model, by: r.by, sections: N.parseAi(r.text) };
       n.dmode = 'ai'; n.updatedAt = Date.now(); save(true);
-      app().toast('AI 초안을 만들었습니다. 내용을 꼭 확인한 뒤 쓰세요.', 'ok');
+      app().toast('AI로 다듬었습니다. 내용을 꼭 확인한 뒤 쓰세요.', 'ok');
     } catch (e) { console.error(e); app().toast('AI로 쓰지 못했습니다: ' + e.message, 'err'); }
     finally { app().progress(null); render(); }
   }
@@ -533,7 +550,6 @@
         <h2 class="ntitle" id="nTitle">${n.v.공고명 ? esc(n.v.공고명) : '<span class="muted">새 공고문 — 아래 [기본]의 공고명부터 넣으세요</span>'}</h2>
         <div class="actions">
           <button class="btn primary" data-nact="hwp">${n.lastFile ? `한글 파일로 다시 만들기` : `한글 파일로 만들기`} <small class="kind">${esc(N.noticeKind(n.v))} 양식</small></button>
-          <button class="btn" data-nact="copyall">문장 초안 전체 복사</button>
           ${n.lastFile ? `<button class="btn ghost" data-nact="openlast">최근 만든 파일 열기</button>` : ''}
           <span class="spacer"></span>
           ${st === 'draft' ? '<button class="btn ghost" data-nact="markdone" title="한글 양식 없이 문장 초안만 쓸 때">작성 완료로 표시</button>' : ''}
@@ -579,13 +595,14 @@
               <button type="button" data-dmode="basic" class="${dm === 'basic' ? 'on' : ''}" title="항목 값으로 만든 기본 문장">기본</button>
               ${n.ai ? `<button type="button" data-dmode="ai" class="${dm === 'ai' ? 'on' : ''}" title="AI가 다시 쓴 문장">AI</button>` : ''}
             </div>
-            ${aiWho ? `<button type="button" class="btn sm${n.ai ? '' : ' primary'}" data-nact="ai" title="비슷한 공고의 실제 문장과 이번 항목 값을 ${root.JH.ai.label(aiWho)}에 보내 공고문 문체로 다시 씁니다">${n.ai ? 'AI로 다시 쓰기' : 'AI로 쓰기'}</button>`
-              : `<button type="button" class="btn sm" data-nact="aiq" title="업무용 AI·Gemini·ChatGPT 등 쓰는 AI 채팅에 붙여 넣을 질문(비슷한 공고 문장 + 이번 값)을 복사합니다">AI 질문 복사</button><button type="button" class="btn sm" data-nact="aip" title="AI가 준 답을 붙여 넣으면 초안에 들어갑니다">답 붙여넣기</button>`}</div>
+            <button type="button" class="btn sm${n.ai ? '' : ' primary'}" data-nact="ai" title="${aiWho ? `초안 전체를 ${esc(root.JH.ai.label(aiWho))}로 공고문 문체에 맞게 다듬습니다(금액·날짜·업종은 그대로)` : 'AI가 아직 준비되지 않았습니다 — 누르면 설정 방법을 알려 드립니다'}">${n.ai ? 'AI로 다시 다듬기' : 'AI로 다듬기'}</button></div>
           <p class="muted small draft-note">${dm === 'ai' ? `AI 초안${stale ? ' · <b class="warn-t">항목을 바꿨습니다. 반영하려면 [AI로 다시 쓰기]</b>' : ''} — 지어낸 내용이 없는지 꼭 확인하세요.` : dm === 'learned' ? (used(n.learned).some((b) => b.doc && b.doc.sections && b.doc.sections.length >= 3)
               ? `비슷한 공고 ${used(n.learned).filter((b) => b.doc && b.doc.sections && b.doc.sections.length >= 3).length}건의 공고문 전체를 읽어, 가장 전형적인 공고의 절·문장을 이번 공고 값(공고명·업종·지역·하한율)으로 바꿨습니다. 일정·금액은 이번 값으로 씁니다.`
               : `비슷한 공고 ${used(n.learned).filter((b) => b.clauses && b.clauses.length).length}건의 실제 문장에서 배웠습니다. 왼쪽 값을 바꾸면 바로 반영됩니다.`) : '왼쪽 값을 바꾸면 바로 반영됩니다. 위에서 [비슷한 공고 찾기]를 하면 실제 공고 문장으로 배웁니다.'}</p>
-          ${draft.map((d, i) => `<div class="dsec${d.edited ? ' edited' : ''}"><div class="dsec-head"><b>${esc(d.title)}</b>${d.learned ? `<span class="lbadge" title="비슷한 공고 ${d.learned}건에 있는 절 — 실제 공고 문장을 이번 값으로 바꿈">공고 ${d.learned}건</span>` : ''}${d.check && !d.edited ? `<span class="lbadge warn" title="다른 공고의 금액·날짜 자리를 ○○로 비워 둠">○○ ${d.check}곳 확인</span>` : ''}${d.edited ? `<span class="lbadge ok" title="초안에서 직접 고친 절 — 왼쪽 값을 바꿔도 그대로">고침</span><button type="button" class="link sm" data-dreset="${i}" title="고친 것을 버리고 자동 초안으로">되돌리기</button>` : ''}<button type="button" class="link sm" data-copy="${i}">복사</button></div><textarea class="dbody" data-dedit="${i}" spellcheck="false" rows="${Math.min(30, Math.max(2, d.body.split('\n').length + Math.ceil(d.body.length / 60)))}" aria-label="${esc(d.title)} 고치기">${esc(d.body)}</textarea></div>`).join('')}
-          <p class="muted small">초안입니다. 각 절을 눌러 바로 고칠 수 있고(고친 절은 왼쪽 값을 바꿔도 그대로), [복사]·[문장 초안 전체 복사]에 고친 대로 들어갑니다. 한글 파일은 회사 양식 문장에 값만 바꾸므로, 양식 문장 자체를 바꾸려면 [공고마다 다른 문장 고르기]를 쓰세요. 회사 표준 공고문과 관계 법령에 맞는지 확인한 뒤 사용하세요.</p>
+          ${(() => { const bl = N.blanksIn(draft); return bl.length ? `<div class="blanks"><b>채울 곳 ${bl.length}곳</b> <span class="muted small">다른 공고에서 가져와 값이 없는 자리입니다. 넣으면 초안·한글 파일에 바로 들어갑니다.</span>
+            <div class="blank-list">${bl.map((b) => `<label class="blank"><span class="ctx"><small>${esc(b.title)}</small> …${esc(b.before)}<mark>${esc(b.text)}</mark>${esc(b.after)}…</span><input type="text" data-blank="${b.si}:${b.k}" placeholder="${esc(b.text.includes('원') ? '예: 금 50,000,000원' : b.text.includes(':') ? '예: 10:00' : '넣을 값')}"></label>`).join('')}</div></div>` : ''; })()}
+          ${draft.map((d, i) => `<div class="dsec${d.edited ? ' edited' : ''}"><div class="dsec-head"><b>${esc(d.title)}</b>${d.learned ? `<span class="lbadge" title="비슷한 공고 ${d.learned}건에 있는 절 — 실제 공고 문장을 이번 값으로 바꿈">공고 ${d.learned}건</span>` : ''}${d.check && !d.edited ? `<span class="lbadge warn" title="다른 공고의 금액·날짜 자리를 ○○로 비워 둠">○○ ${d.check}곳 확인</span>` : ''}${d.edited ? `<span class="lbadge ok" title="초안에서 직접 고친 절 — 왼쪽 값을 바꿔도 그대로">고침</span><button type="button" class="link sm" data-dreset="${i}" title="고친 것을 버리고 자동 초안으로">되돌리기</button>` : ''}<button type="button" class="link sm" data-polish="${i}" title="이 절만 AI로 다듬기">AI로 다듬기</button></div><textarea class="dbody" data-dedit="${i}" spellcheck="false" rows="${Math.min(30, Math.max(2, d.body.split('\n').length + Math.ceil(d.body.length / 60)))}" aria-label="${esc(d.title)} 고치기">${esc(d.body)}</textarea></div>`).join('')}
+          <p class="muted small">초안입니다. 각 절을 눌러 바로 고칠 수 있고(고친 절은 왼쪽 값을 바꿔도 그대로), 고친 대로 [한글 파일로 만들기]에 들어갑니다. 한글 파일은 회사 양식 문장에 값만 바꾸므로, 양식 문장 자체를 바꾸려면 [공고마다 다른 문장 고르기]를 쓰세요. 회사 표준 공고문과 관계 법령에 맞는지 확인한 뒤 사용하세요.</p>
         </aside>
       </div>`;
   }
@@ -609,6 +626,7 @@
     const n = cur();
     const pc = e.target.closest('.pick[data-topic]');
     if (pc && !e.target.closest('textarea')) { const tp = topics[+pc.dataset.topic]; if (tp) setTimeout(() => jumpTo(tp.key), 0); if (!e.target.closest('input')) return; }
+    const pl = e.target.closest('[data-polish]'); if (pl) { const n = cur(); if (n) polishSection(n, +pl.dataset.polish); return; }
     const dr = e.target.closest('[data-dreset]');
     if (dr && n) { const d = baseSections(n)[+dr.dataset.dreset]; if (d && n.edits) { delete n.edits[editKey(n, d)]; n.updatedAt = Date.now(); save(true); render(); } return; }
     if (ap) { setVal(ap.dataset.apply, ap.dataset.val, true); render(); return; }
@@ -658,7 +676,7 @@
     const de = e.target.closest('[data-dedit]');
     if (de) { const n = cur(); if (!n) return; const d = baseSections(n)[+de.dataset.dedit]; if (!d) return;
       n.edits = { ...(n.edits || {}), [editKey(n, d)]: de.value }; n.updatedAt = Date.now(); save();
-      const box = de.closest('.dsec'); if (box && !box.classList.contains('edited')) { box.classList.add('edited'); const h = box.querySelector('.dsec-head'); if (h && !h.querySelector('[data-dreset]')) h.querySelector('[data-copy]').insertAdjacentHTML('beforebegin', `<span class="lbadge ok">고침</span><button type="button" class="link sm" data-dreset="${de.dataset.dedit}">되돌리기</button>`); }
+      const box = de.closest('.dsec'); if (box && !box.classList.contains('edited')) { box.classList.add('edited'); const h = box.querySelector('.dsec-head'); if (h && !h.querySelector('[data-dreset]')) h.querySelector('[data-polish]').insertAdjacentHTML('beforebegin', `<span class="lbadge ok">고침</span><button type="button" class="link sm" data-dreset="${de.dataset.dedit}">되돌리기</button>`); }
       return; }
     const pt = e.target.closest('[data-picktext]');
     if (pt) { const tp = topics[+pt.dataset.picktext]; if (tp) { setPick(tp.key, pt.value); tp.current = pt.value; refreshLive(); } return; }
@@ -674,6 +692,13 @@
     if (f && f.type === 'money' && t.value) { const w = N.won(N.money(t.value)); if (w !== t.value) { t.value = w; setVal(f.key, w, true); refreshLive(); } }
   }
   const view = () => $('#view-notice');
+  // 채울 곳 칸: 다 넣고 칸을 벗어나면 그 자리에 들어감
+  view().addEventListener('change', (e) => {
+    const bi = e.target.closest('[data-blank]'); if (!bi || !bi.value.trim()) return;
+    const n = cur(); if (!n) return; const [si, k] = bi.dataset.blank.split(':').map(Number);
+    const d = sectionsOf(n)[si]; if (!d) return;
+    n.edits = { ...(n.edits || {}), [editKey(n, d)]: N.fillBlank(d.body, k, bi.value.trim()) }; n.updatedAt = Date.now(); save(true); render();
+  });
   // 찾은 공고 목록을 직접 접으면 다시 그려도 접힌 채로
   view().addEventListener('toggle', (e) => { const d = e.target; if (!d.matches || !d.matches('[data-bidsbox]')) return; const n = cur(); if (!n) return; if (d.open) openBids.add(n.id); else openBids.delete(n.id); }, true);
   view().addEventListener('toggle', (e) => { const d = e.target; if (!d.matches || !d.matches('[data-msub]')) return; const n = cur(); if (!n) return; if (d.open) openSubs.add(n.id); else openSubs.delete(n.id); }, true);

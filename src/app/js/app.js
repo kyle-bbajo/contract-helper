@@ -380,7 +380,10 @@
       if (moved) msg += ` ${moved}개는 내용이 다른 계약 서류라 그 계약으로 보냈습니다.`;
       if (skipped) msg += ` 이미 있는 파일 ${skipped}개는 건너뛰었습니다.`;
       if (R.ocrBroken) msg += ' 스캔본 글자 인식을 시작하지 못해 일부는 미분류로 갔습니다.';
-      toast(msg, inbox ? '' : 'ok', inbox ? { label: '미분류 보기', run: () => setView('inbox') } : null);
+      // 어느 계약인지·어떤 서류인지 못 찾은 것은 바로 팝업으로 보여 주고 고르게 함
+      const unsure = recs.filter((r) => !r.ignored && db.docs.some((d) => d.id === r.id && (!d.key || !d.itemId))).map((r) => r.id);
+      toast(msg, inbox ? '' : 'ok', unsure.length ? { label: '확인하기', run: () => openPreview(unsure, 0, true) } : null);
+      if (unsure.length && !$('#dlgPreview').open && !document.querySelector('dialog[open]')) setTimeout(() => openPreview(unsure, 0, true), 300);
       const keys = Object.keys(byContract);
       if (!forced && !opt.onlyMatched && keys.length === 1) ui.sel = keys[0]; // 폴더에서 자동으로 읽은 것은 보던 계약 화면을 바꾸지 않음
     } catch (e) {
@@ -1371,6 +1374,59 @@
     const bo = $('#bOfficer'); bo.value = ui.officer;
   }
 
+  // ---------- 미리 보기(팝업) · 헷갈리는 서류 확인 ----------
+  // 파일을 따로 열지 않고 창 안에서 보고, 그 자리에서 계약·서류 종류를 맞게 고름. 여러 개면 [이전]·[다음]
+  const pv = { ids: [], i: 0, confirm: false, tok: 0 };
+  function openPreview(ids, i = 0, confirmMode = false) {
+    pv.ids = ids.filter((id) => docById(id)); pv.i = Math.min(i, pv.ids.length - 1); pv.confirm = confirmMode;
+    if (!pv.ids.length) return;
+    $('#dlgPreview').showModal(); showPreview();
+  }
+  async function showPreview() {
+    const d = docById(pv.ids[pv.i]); if (!d) return;
+    const tok = ++pv.tok, c = d.key ? db.contracts[d.key] : null;
+    $('#pvTitle').textContent = pv.confirm ? `맞는지 확인해 주세요 (${pv.i + 1}/${pv.ids.length})` : d.name;
+    $('#pvName').textContent = d.name;
+    $('#pvContract').innerHTML = contractOptions(d.key || '').replace('<option value="">계약 고르기</option>', '<option value="">미분류(계약 모름)</option>');
+    const fillItems = (key) => { const cc = key ? db.contracts[key] : null; $('#pvItem').innerHTML = cc ? itemOptions(lists(cc.type), key === d.key ? d.itemId : '', false) : '<option value="">계약을 먼저 고르세요</option>'; $('#pvItem').disabled = !cc; };
+    fillItems(d.key); $('#pvContract').onchange = (e) => fillItems(e.target.value);
+    $('#pvWhy').textContent = pv.confirm ? (c ? (d.itemId ? '' : '어떤 서류인지 찾지 못했습니다.') : '어느 계약 서류인지 찾지 못했습니다.') + ' 내용을 보고 맞게 골라 주세요.' : '';
+    $('#pvPrev').disabled = pv.i === 0; $('#pvNext').textContent = pv.i < pv.ids.length - 1 ? '다음' : '닫기';
+    $('#pvSave').textContent = pv.confirm ? '맞음 · 다음' : '이대로 저장';
+    const box = $('#pvBody'); box.innerHTML = '<p class="muted">불러오는 중…</p>';
+    try {
+      let path = d.pdfPath || d.path, kind = d.pdfPath ? 'pdf' : d.kind;
+      if (kind === 'hwp' || (kind === 'other' && /\.(xlsx?|docx?)$/i.test(d.name))) {
+        try { const r = await (kind === 'hwp' ? S.hwp2pdf(d.path) : S.office2pdf(d.path)); d.pdfPath = r.path; saveDb(); path = r.path; kind = 'pdf'; } catch (_) { /* 변환 못 하면 글자로 */ }
+      }
+      if (tok !== pv.tok) return;
+      if (kind === 'pdf') {
+        const bytes = await S.readBytes(path); const lib = await JH.lib('pdfjs');
+        const doc = await lib.getDocument({ data: bytes, isEvalSupported: false, cMapUrl: 'vendor/pdfjs/cmaps/', cMapPacked: true }).promise;
+        if (tok !== pv.tok) return; box.innerHTML = '';
+        const n = Math.min(doc.numPages, 12);
+        for (let p = 1; p <= n; p++) {
+          const page = await doc.getPage(p); const v1 = page.getViewport({ scale: 1 }); const vp = page.getViewport({ scale: Math.min(1.6, 900 / v1.width) });
+          const cv = document.createElement('canvas'); cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height);
+          await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise; if (tok !== pv.tok) return; box.append(cv);
+        }
+        if (doc.numPages > n) box.insertAdjacentHTML('beforeend', `<p class="muted">… 모두 ${doc.numPages}쪽 중 ${n}쪽까지 보여 줍니다.</p>`);
+        doc.destroy();
+      } else if (kind === 'image') {
+        const url = URL.createObjectURL(new Blob([await S.readBytes(path)])); box.innerHTML = `<img alt="${esc(d.name)}" src="${url}">`;
+      } else box.innerHTML = `<pre class="pv-text">${esc((d.text || '읽을 수 있는 글자가 없습니다.').slice(0, 4000))}</pre>`;
+    } catch (e) { if (tok === pv.tok) box.innerHTML = `<p class="warn-t">미리 볼 수 없습니다: ${esc(e.message)}</p>`; }
+  }
+  $('#pvPrev').onclick = () => { if (pv.i > 0) { pv.i--; showPreview(); } };
+  $('#pvNext').onclick = () => { if (pv.i < pv.ids.length - 1) { pv.i++; showPreview(); } else { $('#dlgPreview').close(); render(); } };
+  $('#pvOpen').onclick = () => { const d = docById(pv.ids[pv.i]); if (d) S.openFile(d.path).catch((e) => toast(e.message, 'err')); };
+  $('#pvSave').onclick = async () => {
+    const d = docById(pv.ids[pv.i]); if (!d) return;
+    const key = $('#pvContract').value || null, item = key ? $('#pvItem').value || null : null;
+    if (key !== d.key || item !== d.itemId) { await moveDoc(d, key, item, true); toast(`"${d.name}"을 ${key ? `${db.contracts[key].name}${item ? ' · ' + (lists(db.contracts[key].type).find((x) => x.id === item) || {}).name : ''}` : '미분류'}(으)로 정리했습니다.`, 'ok'); }
+    if (pv.i < pv.ids.length - 1) { pv.i++; showPreview(); } else { $('#dlgPreview').close(); render(); }
+  };
+
   // ---------- 화면: 미분류 ----------
   function contractOptions(sel) {
     const cs = contracts().sort((a, b) => b.updatedAt - a.updatedAt);
@@ -1443,7 +1499,7 @@
       else if (act === 'folder') await S.open(folderOf(c));
       else if (act === 'pay') openPay(c);
       else if (act === 'edit') openContract(c);
-      else if (act === 'view') { const d = docById(t.dataset.doc); if (S.view) await S.view(d.pdfPath || d.path); else window.open(S.fileUrl(d.pdfPath || d.path), '_blank'); }
+      else if (act === 'view') { const d = docById(t.dataset.doc); openPreview([d.id], 0); }
       else if (act === 'del') { const d = docById(t.dataset.doc); if (confirm(`"${d.name}"을 목록에서 뺄까요? 파일은 데이터 폴더의 _삭제됨으로 옮겨집니다.`)) { await removeDoc(d); render(); } }
       else if (act === 'hwp') {
         const d = docById(t.dataset.doc); t.disabled = true; t.textContent = '변환 중…';

@@ -670,7 +670,7 @@ function Handle($stream, $req) {
         try { $items = $di.EnumerateFiles('*', [IO.SearchOption]::AllDirectories) } catch { continue }
         foreach ($fi in $items) {
           $rel = $fi.FullName.Substring($wd.Length).TrimStart('\', '/')
-          if (($rel.Split([char[]]@('\', '/')).Length) -gt 3) { continue }
+          if (($rel.Split([char[]]@('\', '/')).Length) -gt 12) { continue }  # 하위 폴더 안의 폴더까지(10단계)
           if (($fi.Attributes -band [IO.FileAttributes]::Hidden) -ne 0 -or $fi.Name.StartsWith('~$') -or $fi.Name -match '\.(crdownload|part|tmp)$') { continue }
           if (-not $first) { [void]$sb.Append(',') }; $first = $false
           [void]$sb.Append('{"name":"').Append($k).Append('|').Append((& $jesc $rel.Replace('\', '/'))).Append('","size":').Append($fi.Length).Append(',"mtime":"').Append($fi.LastWriteTime.ToString('s')).Append('"}')

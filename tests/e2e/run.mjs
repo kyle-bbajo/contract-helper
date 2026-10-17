@@ -143,7 +143,15 @@ try {
     'noname(5).pdf': 's-claim', 'noname(6).pdf': null, 'noname(7).pdf': 'c-start', 'noname(8).jpg': 'c-photo', 'noname(9).hwp': 'c-finish', 'noname(10).hwpx': 's-start' };
   const wrong = docs.filter((d) => d.item !== want[d.name]);
   assert.equal(wrong.length, 0, JSON.stringify(wrong));
-  step('noname 11개 자동 분류(스캔·한글 포함), 회의록만 미분류');
+  // 헷갈린 서류(회의록)는 팝업으로 바로 보여 주고 맞게 고르게 함 — 파일을 따로 열지 않고 창 안에서 미리 보기
+  await page.waitForSelector('#dlgPreview[open]', { timeout: 10000 });
+  assert.match(await page.textContent('#pvTitle'), /맞는지 확인해 주세요 \(1\/1\)/);
+  assert.match(await page.textContent('#pvName'), /noname\(6\)\.pdf/);
+  await page.waitForSelector('#pvBody canvas', { timeout: 20000 }); await page.screenshot({ path: join(SHOTS, '2b-미리보기.png') });
+  assert.equal(await page.inputValue('#pvContract'), '', '미분류');
+  await page.click('#pvNext'); // 그대로 두고 닫기
+  await page.waitForSelector('#dlgPreview:not([open])', { state: 'attached' });
+  step('noname 11개 자동 분류(스캔·한글 포함), 회의록만 미분류 → 팝업으로 미리 보며 확인');
 
   await page.click('.citem:has-text("시청사 옥상 방수공사")');
   await page.check('input[data-act="orig"][data-item="c-laborconfirm"]');
@@ -513,21 +521,16 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   const heads = await page.$$eval('.draft .dsec-head b', (b) => b.map((x) => x.textContent));
   for (const h of ['입찰참가자격', '공동계약', '입찰보증금', '입찰서 제출', '낙찰자 결정방법', '입찰의 무효', '계약 체결', '기타사항']) assert.ok(heads.some((x) => x.includes(h)), h);
   assert.match(draft, /노무비 구분관리/); assert.match(draft, /청렴계약/);
-  await page.click('[data-nact="copyall"]');
-  assert.match(await page.evaluate(() => navigator.clipboard.readText()), /신갈오거리 보안등 정비 전기공사/);
-  step('비슷한 공고문 전체를 배워 절 9개짜리 전체 초안(이번 공고명·지역·하한율로 바꿈) 생성·전체 복사');
+  assert.ok(!(await page.$('[data-nact="copyall"], [data-nact="aiq"], [data-copy]')), '복사 버튼 없음(초안에서 바로 고쳐 한글 파일로)');
+  // 채울 곳: 남은 ○○ 자리마다 입력 칸 → 넣으면 초안에 들어가고 칸이 줄어듦
+  const nb0 = await page.locator('.blanks [data-blank]').count();
+  if (nb0) { const inp = page.locator('.blanks [data-blank]').first(); await inp.fill('채운값123'); await inp.press('Tab');
+    await waitFor(async () => (await page.locator('.blanks [data-blank]').count()) === nb0 - 1 && /채운값123/.test(await draftText()), 5000, '채울 곳'); }
+  step(`비슷한 공고문 전체를 배워 절 9개짜리 전체 초안(이번 공고명·지역·하한율로 바꿈) + 남은 ○○ 자리 바로 채우기(${nb0}곳)`);
 
   // 배운 문장: 첨부 공고문에서 뽑은 참가자격 문장이 기본 초안 대신 들어감
   assert.ok(await page.$('.seg.dmode [data-dmode="learned"].on'), '배운 문장이 기본');
   assert.ok(await page.$('.draft .lbadge'), '배운 절 표시');
-  // 키 없이: 질문 복사 → 아무 AI 채팅(업무망 AI 포함)에 붙여 넣기 → 답 붙여넣기
-  await page.click('[data-nact="aiq"]');
-  assert.match(await page.evaluate(() => navigator.clipboard.readText()), /## 비슷한 실제 공고문에서 뽑은 문장[\s\S]*신갈오거리/);
-  await page.click('[data-nact="aip"]');
-  await page.fill('#aiPasteText', '네, 정리했습니다.\n```json\n{"sections":[{"title":"2. 입찰참가자격","body":"  가. 붙여 넣은 답 문장"}]}\n```');
-  await page.click('#aiPasteGo');
-  await page.waitForSelector('.seg.dmode [data-dmode="ai"].on', { timeout: 5000 });
-  assert.match(await draftText(), /붙여 넣은 답 문장/);
   // AI로 쓰기: 설정에 키를 넣고 → 연결 창구(/api/ai)로 비슷한 공고 문장과 항목 값을 보냄(시험에서는 응답을 흉내 냄)
   let aiReq = null;
   await page.route('**/api/ai', async (r) => { aiReq = JSON.parse(r.request().postData()); await r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ modelVersion: 'gemini-2.5-flash', candidates: [{ content: { role: 'model', parts: [{ text: '{"sections":[{"title":"2. 입찰참가자격","body":"  가. AI가 정리한 참가자격 문장"}]}' }] } }] }) }); });
@@ -543,8 +546,13 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   assert.equal(aiReq.key, 'gemini-test-key'); assert.equal(aiReq.provider, 'gemini'); assert.equal(aiReq.model, 'gemini-2.5-flash'); assert.match(aiReq.prompt, /신갈오거리 보안등 정비 전기공사/); assert.match(aiReq.system, /지어내지 않습니다/);
   assert.ok(!('aiKey' in (JSON.parse(readFileSync(join(data, '설정.json'), 'utf8')).notice || {})) || true);
   await page.click('.seg.dmode [data-dmode="learned"]');
+  // 절 하나만 AI로 다듬기 → '고침'으로 들어가고 되돌리기 가능
+  await page.locator('.draft [data-polish]').nth(2).click();
+  await page.waitForSelector('.draft .dsec.edited [data-dreset]', { timeout: 10000 });
+  assert.match(await draftText(), /AI가 정리한/);
+  await page.click('.draft .dsec.edited [data-dreset]');
   await page.screenshot({ path: join(SHOTS, '6b-공고문-배운문장.png') });
-  step('배운 문장(비슷한 공고 공통 문장) 기본 + AI로 쓰기(키가 있으면 Gemini, 연결 창구 경유, 항목 값·실제 문장 전달)');
+  step('배운 문장(비슷한 공고 공통 문장) 기본 + [AI로 다듬기] 전체·절마다(키가 있으면 Gemini, 연결 창구 경유)');
 
   // 찾은 공고 중 참고할 것 고르기 + 참가자격 업종 문장 골라 쓰기
   await page.click('[data-bidsbox] > summary');
@@ -583,12 +591,10 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   const site0 = await page.inputValue('#nf-현장');
   await page.fill('#nf-현장', '용인시 기흥구 다른 곳'); await page.waitForTimeout(200);
   assert.match(await draftText(), /직접 고친 절입니다/);
-  await page.click('[data-nact="copyall"]');
-  assert.match(await page.evaluate(() => navigator.clipboard.readText()), /직접 고친 절입니다/);
   await page.click('.draft .dsec.edited [data-dreset]');
   assert.doesNotMatch(await draftText(), /직접 고친 절입니다/);
   await page.fill('#nf-현장', site0);
-  step('문장 초안에서 절을 바로 고치기(값을 바꿔도 유지, 전체 복사에 반영), 되돌리기');
+  step('문장 초안에서 절을 바로 고치기(값을 바꿔도 유지), 되돌리기');
 
   // 한글 양식 올리고 채우기(시험 PC엔 한글이 없어 HWPX 직접 채우기로 처리)
   await page.click('#btnSettings');
