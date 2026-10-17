@@ -78,6 +78,7 @@
       it('착공계', '4대 사회보험 가입증명서', '사회보험가입증명,보험가입증명서,가입증명서', { id: 'c-insjoin' }),
       it('착공계', '고용·산재 가입증명원', '고용산재가입,가입증명원,고용보험가입,산재보험가입', { note: '공사명·공사기간·계약금액 필수', id: 'c-empjoin' }),
       it('착공계', '손해배상공제(보험) 증권', '손해배상공제,손해배상보험,손해배상책임,배상책임보험,공제증권', { id: 'c-dmgins' }),
+      it('선금', '선금 보증서(선급금 이행보증증권)', '선금보증,선급금보증,선급금이행보증,선금이행보증,선급금 보증,선금 보증,선급금보증서,선급금 이행', { required: false, note: '선금 받을 때 · 보증기간이 준공일 + 60일 이상', id: 'c-advbond' }),
       it('준공계', '준공계·준공검사원', '준공계,준공검사원,준공신고', { id: 'c-finish' }),
       it('준공계', '준공사진대지', '사진대지,준공사진', { id: 'c-photo' }),
       it('준공계', '노무비 미체불 확약서', '미체불', { required: false, note: '일용근로자 해당 시', id: 'c-nounpaid' }),
@@ -100,6 +101,7 @@
       it('착수계', '노무비 지급확인제', '노무비지급확인,지급확인제', { required: false, note: '단순노무용역', id: 's-laborconfirm' }),
       it('착수계', '노무비 개인정보 수집·이용·제공 동의서', LABOR_PRIV, { id: 's-laborpriv' }),
       it('착수계', '손해배상공제(보험) 증권', '손해배상공제,손해배상보험,손해배상책임,배상책임보험,공제증권', { required: false, note: '착공계로 낼 때', id: 's-dmgins' }),
+      it('선금', '선금 보증서(선급금 이행보증증권)', '선금보증,선급금보증,선급금이행보증,선금이행보증,선급금 보증,선금 보증,선급금보증서,선급금 이행', { required: false, note: '선금 받을 때 · 보증기간이 준공일 + 60일 이상', id: 's-advbond' }),
       it('준공계', '준공계·준공검사원', '준공계,준공검사원,준공신고,완료계', { id: 's-finish' }),
       it('준공계', '준공사진대지', '사진대지,준공사진', { id: 's-photo' }),
       it('준공계', '작업결과물', '결과물,결과보고,최종보고', { required: false, note: '해당 시', id: 's-result' }),
@@ -562,7 +564,7 @@
   // 줄 단위 원문에서: 유효기간(끝 날짜), 발급일, 준공일, 검사일, 문서에 나온 가장 늦은 날짜
   function extractDates(lines) {
     const ls = (lines || []).map((x) => String(x || ''));
-    const r = { valid: '', validHow: '', issue: '', finish: '', inspect: '', last: '' };
+    const r = { valid: '', validHow: '', issue: '', finish: '', inspect: '', last: '', bondEnd: '' };
     const all = ls.flatMap(datesIn).sort(); r.last = all.length ? all[all.length - 1] : '';
     let validDays = 0;
     for (let i = 0; i < ls.length; i++) {
@@ -573,6 +575,8 @@
         if (ds.length) { r.valid = ds.sort()[ds.length - 1]; r.validHow = 'read'; }
         else if (days) validDays = +days[1];
       }
+      // 보증서·보험증권: "보증기간 2026.06.01 ~ 2027.01.31" → 끝 날짜(같은 줄에 없으면 다음 줄)
+      if (!r.bondEnd && /(보\s*증|보\s*험|공\s*제)\s*(기\s*간|기\s*한)/.test(s)) { const ds = here.length >= 2 ? here : [...here, ...datesIn(ls[i + 1])]; if (ds.length) r.bondEnd = ds.sort()[ds.length - 1]; }
       if (!r.issue && /(발\s*급|발\s*행|증\s*명)\s*일/.test(s) && here.length) r.issue = here[0];
       if (!r.finish && /(준\s*공|완\s*료)\s*(일\s*자|년\s*월\s*일|일)/.test(s) && !/검\s*사/.test(s) && here.length) r.finish = here[0];
       if (!r.inspect && /(검\s*사|검\s*수)\s*(일\s*자|일)/.test(s) && here.length) r.inspect = here[0];
@@ -653,6 +657,16 @@
   }
   // 유효기간을 따지는 증명서: 4대 사회보험·고용산재 완납증명서, 국세·지방세 납세증명서
   const isCertItem = (id) => /-(inspaid|emppaid|tax|ltax)$/.test(String(id || ''));
+  // 선금 보증서: 보증기간 끝이 준공일로부터 60일 이상 남아 있어야 유효
+  const ADV_DAYS = 60;
+  const isAdvBond = (id) => /-advbond$/.test(String(id || ''));
+  function advBondCheck(bondEnd, endDate) {
+    const a = toDate(bondEnd), b = toDate(endDate);
+    if (!a) return { status: 'unknown' };
+    if (!b) return { status: 'noend', end: ymd(a) };
+    const days = Math.round((a - b) / 864e5);
+    return { status: days >= ADV_DAYS ? 'ok' : 'short', days, end: ymd(a), need: addDays(ymd(b), ADV_DAYS) };
+  }
 
   // 업체 보완 요청 메일(빠진 서류 + 유효기간 부족으로 재발급할 서류)
   // 감독관 경유가 필요한 서류(공사·용역): 착공(착수)계·현장대리인계·예정공정표, 산출내역서, 견적서, 노무비 지급확인제, 준공계·준공검사원
@@ -703,7 +717,7 @@
     classifyItem, guessType, findMeta, vendorCore, baseNo, contractScore, matchContract, contractKey,
     API_BASE, API_OPS, TYPES, apiUrl, keyParam, monthRanges, parseApiText, parseApiBody, parseCorpList, parseCorpRows, normalizeApiItem, detectExtFinance,
     G2B, g2bUrl, scanAuditFields, summarizeChanges, chgPlan, autoKind, CHG_KINDS, changesOf, ordSnap, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
-    ordOf, viaParts, viaKey, viaStatus, itemsInName, isRecentItem, issuedTooEarly, matchCandidates, checklistStatus, holds, hasItem, classifyPages, classifyTitleLines, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail,
+    ordOf, viaParts, viaKey, viaStatus, itemsInName, isRecentItem, issuedTooEarly, isAdvBond, advBondCheck, ADV_DAYS, matchCandidates, checklistStatus, holds, hasItem, classifyPages, classifyTitleLines, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail,
   };
   root.JH = root.JH || {};
   root.JH.logic = api;

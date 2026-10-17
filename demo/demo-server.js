@@ -192,7 +192,7 @@
     },
     async hwpConvert() { throw new Error('시연판에는 한글 프로그램이 없습니다. 실제 프로그램은 설치된 한글로 .hwp를 바꿉니다. 시연판에서는 .hwpx를 올려 보세요'); },
     async office2pdf() { throw new Error('시연판에서는 엑셀·워드→PDF 변환을 하지 않습니다. 실제 프로그램은 설치된 오피스로 자동 변환합니다.'); },
-    async watch() { return { ok: true, dir: '', files: [] }; },
+    async watch() { return { ok: true, dirs: [], files: [] }; },
     async watchPick() { throw new Error('시연판에서는 PC 폴더를 볼 수 없습니다. 실제 프로그램에서는 내려받는 폴더를 골라 두면 새 파일을 자동으로 정리합니다.'); },
     async watchClear() { return { ok: true }; },
     async hwpSec() { return { ok: true, state: 'nodll', dll: '', folder: '한글보안모듈' }; },

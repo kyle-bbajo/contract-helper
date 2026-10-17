@@ -174,3 +174,17 @@ test('감독관 경유: 착공계·현장대리인계·예정공정표, 산출�
   const m = L.vendorMail({ c: { name: '시험 공사' }, via: vs.missing });
   assert.match(m.body, /감독관 경유가 필요한 서류[\s\S]*- 현장대리인계: 감독관 경유\(확인\) 후 다시 제출/);
 });
+
+test('선금 보증서: 보증기간 읽기, 준공일 + 60일 이상이면 유효', () => {
+  const d = L.extractDates(['선급금 이행보증증권', '보증기간 2026년 06월 01일 부터', '2027년 01월 31일 까지', '발행일 2026.05.30']);
+  assert.equal(d.bondEnd, '20270131');
+  assert.equal(L.extractDates(['보증기간: 2026.06.01 ~ 2026.11.30']).bondEnd, '20261130');
+  assert.deepEqual(L.advBondCheck('20270131', '2026-11-30'), { status: 'ok', days: 62, end: '20270131', need: '20270129' });
+  assert.equal(L.advBondCheck('20261230', '2026-11-30').status, 'short', '30일만 남음 → 유효하지 않음');
+  assert.equal(L.advBondCheck('20270129', '20261130').status, 'ok', '딱 60일');
+  assert.equal(L.advBondCheck('', '20261130').status, 'unknown');
+  const list = L.defaultChecklists();
+  assert.equal(L.classifyItem(list.공사, '선급금이행보증증권.pdf', ''), 'c-advbond');
+  assert.equal(L.classifyItem(list.용역, '선금보증서_한빛.pdf', ''), 's-advbond');
+  const ids = list.공사.map((x) => x.id); assert.ok(ids.indexOf('c-dmgins') < ids.indexOf('c-advbond') && ids.indexOf('c-advbond') < ids.indexOf('c-finish'), '착공계와 준공계 사이');
+});

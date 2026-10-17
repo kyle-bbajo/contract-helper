@@ -111,18 +111,32 @@
     JH.app.cfg = c; await JH.app.saveCfg(); JH.app.banner('');
     dlg.close(); JH.app.fetchContracts(true);
   };
-  // 자동으로 읽을 폴더: 고를 때 이미 들어 있던 파일은 '본 것'으로 두고(한꺼번에 올리지 않음) 그 뒤에 들어온 것부터
+  // 자동으로 읽을 폴더(여러 개): 더할 때 이미 들어 있던 파일은 '본 것'으로 두고(한꺼번에 올리지 않음) 그 뒤에 들어온 것부터
+  function showWatch(dirs) {
+    const el = $('#watchList'); if (!el) return;
+    el.innerHTML = dirs.length ? dirs.map((d, i) => `<li><span class="ok-t small">● 보는 중</span> <code>${esc(d)}</code> <button type="button" class="link sm" data-watchoff="${i}">빼기</button></li>`).join('') : '<li class="muted">꺼짐 — [폴더 더하기]로 내려받는 폴더를 고르세요</li>';
+  }
   $('#btnWatchPick').onclick = async () => {
     try {
       const r = await S.watchPick(); if (!r.ok) return;
       const now = await S.watch();
-      const db = JH.app.db; db.watchSeen = [...new Set([...(db.watchSeen || []), ...(now.files || []).map((f) => `${f.name}|${f.size}|${f.mtime}`)])].slice(-5000);
+      const k = (now.dirs || []).findIndex((d) => d.dir.toLowerCase() === String(r.dir).toLowerCase());
+      const had = (now.files || []).filter((f) => f.name.startsWith(k + '|'));
+      const db = JH.app.db; db.watchSeen = [...new Set([...(db.watchSeen || []), ...had.map((f) => `${f.name}|${f.size}|${f.mtime}`)])].slice(-8000);
       await JH.app.saveDb(true);
-      JH.app.startWatch(r.dir);
-      JH.app.toast(`이제 ${r.dir}에 새로 내려받는 계약 서류를 자동으로 정리합니다.` + ((now.files || []).length ? ` 이미 있던 파일 ${now.files.length}개는 건너뜁니다(필요하면 [업로드]로 올리세요).` : ''), 'ok');
+      JH.app.startWatch(r.dirs);
+      JH.app.toast(`이제 ${r.dir}에 새로 들어오는 서류를 자동으로 정리합니다.` + (had.length ? ` 이미 있던 파일 ${had.length}개는 건너뜁니다(필요하면 [업로드]로 올리세요).` : ''), 'ok');
     } catch (e) { JH.app.toast('폴더를 고르지 못했습니다: ' + e.message, 'err'); }
   };
-  $('#btnWatchOff').onclick = async () => { try { await S.watchClear(); JH.app.startWatch(''); JH.app.toast('자동으로 읽기를 껐습니다.'); } catch (e) { JH.app.toast(e.message, 'err'); } };
+  $('#watchList').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-watchoff]'); if (!b) return;
+    try {
+      // 빼면 뒤 폴더 번호가 당겨지므로 본 기록의 번호도 맞춤
+      const i = +b.dataset.watchoff, r = await S.watchClear(i), db = JH.app.db;
+      db.watchSeen = (db.watchSeen || []).filter((x) => !x.startsWith(i + '|')).map((x) => { const n = +x.split('|')[0]; return n > i ? (n - 1) + x.slice(String(n).length) : x; });
+      await JH.app.saveDb(true); JH.app.startWatch(r.dirs || []); JH.app.toast('그 폴더는 더 이상 읽지 않습니다.');
+    } catch (err) { JH.app.toast(err.message, 'err'); }
+  });
   $('#btnOpenData').onclick = () => S.open('').catch((e) => JH.app.toast(e.message, 'err'));
   $('#btnPickData').onclick = async () => {
     try {
@@ -242,7 +256,7 @@
   $('#btnQuit').onclick = async () => { if (!confirm('프로그램을 종료할까요? 다시 쓰려면 바탕화면의 계약업무 도우미를 누르세요.')) return; try { await S.quit(); } catch (_) {} window.close(); };
 
   root.JH.settings = {
-    open,
+    open, showWatch,
     setInfo(i) { info = i || {}; $('#aboutVer').textContent = info.version || '-'; $('#aboutDir').textContent = info.dataDir || '-'; $('#dataDir').textContent = info.dataDir || '-'; },
   };
 })(window);

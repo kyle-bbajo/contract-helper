@@ -45,7 +45,7 @@
     office2pdf: (path) => call('POST', '/api/office2pdf', { path }),
     watch: () => call('GET', '/api/watch'),
     watchPick: () => call('POST', '/api/watch', { pick: '1' }),
-    watchClear: () => call('POST', '/api/watch', { clear: '1' }),
+    watchClear: (i) => call('POST', '/api/watch', { clear: String(i) }),
     async watchFile(name) { const r = await call('GET', '/api/watchfile', { name }); return new Uint8Array(await r.arrayBuffer()); },
     // 설치된 한글로 .hwp → .hwpx(공고문 양식을 그대로 채우려고)
     hwpConvert: (path, fmt) => call('POST', '/api/hwpconvert', { path, fmt }),

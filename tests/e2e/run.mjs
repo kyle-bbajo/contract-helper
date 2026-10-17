@@ -176,7 +176,8 @@ try {
   renameSync(data, moved); data = moved;
   // 자동으로 읽을 폴더(내려받는 곳)도 이 PC 설정에 둠
   const WATCH = join(HOME, 'Downloads', '계약서류'); mkdirSync(WATCH, { recursive: true });
-  writeFileSync(join(PROG, 'local.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(PROG, 'local.json'), 'utf8')), watchDir: WATCH }));
+  const WATCH2 = join(HOME, 'Documents', '메일첨부'); mkdirSync(WATCH2, { recursive: true });
+  writeFileSync(join(PROG, 'local.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(PROG, 'local.json'), 'utf8')), watchDirs: [WATCH, WATCH2] }));
   await startServer();
   await page.goto(base);
   await waitFor(() => page.$('.toast:has-text("데이터 폴더가 옮겨진 것을 찾았습니다")'), 30000, '데이터 폴더 다시 찾기');
@@ -229,19 +230,13 @@ try {
   assert.deepEqual(routed.xl, { c: '시청사 옥상 방수공사', item: 'c-estimate' }, '엑셀 견적서 글자 읽어 분류');
   await waitFor(() => page.$('.row[data-drop-item="c-estimate"] .file:has-text("gyeonjeok.xlsx") .ft:has-text("엑셀")'), 10000, '엑셀 표시');
   step('계약 화면 맨 위 [업로드], 서류 줄 [+ 추가]로 그 서류에 직접 넣기 · 다른 계약 서류는 그 계약으로 자동 · 엑셀(.xlsx) 글자 읽어 분류');
-  // 인쇄 순서 편집: 있는 서류만 위로 → 견적서를 맨 위로 끌어 놓기 → 저장하면 인쇄 순서가 바뀜
-  await page.click('[data-act="printorder"]');
-  await page.waitForSelector('#dlgOrder[open]');
-  await page.click('#ordHas');
-  const est = await page.$$eval('#ordList .ord-it', (li) => li.findIndex((x) => /견적서/.test(x.textContent)));
-  await page.dragAndDrop(`#ordList .ord-it[data-oi="${est}"]`, '#ordList .ord-it[data-oi="0"]');
-  assert.match(await page.textContent('#ordList .ord-it[data-oi="0"]'), /견적서/);
-  await page.click('#ordSave');
-  await waitFor(() => page.$('.toast:has-text("인쇄 순서를 저장했습니다")'), 10000, '인쇄 순서 저장');
-  const po = await page.evaluate(() => { const c = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사'); return { first: JH.app.printList(c)[0].id, n: JH.app.printList(c).length, all: JH.app.lists(c.type).length }; });
-  assert.equal(po.first, 'c-estimate'); assert.equal(po.n, po.all, '서류 종류는 하나도 빠지지 않음');
-  await waitFor(async () => /바꿈/.test(await page.textContent('[data-act="printorder"]')), 5000, '바꿈 표시');
-  step('[인쇄 순서 편집]: 끌어 놓기·↑↓로 서류 순서를 바꿔 저장 → 한 번에 인쇄·PDF·표지가 그 순서');
+  // 인쇄 체크: 견적서 줄의 [인쇄]를 빼면 인쇄 목록에서 빠지고 버튼에 'n개 뺌'
+  await page.uncheck('.row[data-drop-item="c-estimate"] [data-act="noprint"]');
+  await waitFor(async () => /1개 뺌/.test(await page.textContent('[data-act="print"]')), 5000, '뺀 개수');
+  assert.ok(await page.evaluate(() => { const c = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사'); return !JH.app.printList(c).some((x) => x.id === 'c-estimate'); }), '인쇄 목록에서 빠짐');
+  await page.check('.row[data-drop-item="c-estimate"] [data-act="noprint"]');
+  await waitFor(async () => !/뺌/.test(await page.textContent('[data-act="print"]')), 5000, '다시 넣기');
+  step('서류 줄마다 [인쇄] 체크: 빼면 한 번에 인쇄·PDF·표지에서 빠짐, 다시 체크하면 들어감');
   // 내려받는 폴더에 파일이 들어오면(받는 중 → 다 받음) 자동으로 계약·서류 종류를 찾아 정리, 원래 파일은 그대로
   {
     const pdf = Buffer.from(await (async () => { const d = await PDFDocument.create(); d.addPage(); d.addPage(); return d.save(); })());
@@ -253,10 +248,21 @@ try {
     const w = await page.evaluate(() => { const d = JH.app.db.docs.find((x) => /준공사진대지/.test(x.name)); return { c: JH.app.db.contracts[d.key].name, item: d.itemId }; });
     assert.deepEqual(w, { c: '시청사 옥상 방수공사', item: 'c-photo' });
     assert.ok(existsSync(join(WATCH, '시청사 옥상 방수공사_준공사진대지.pdf')), '원래 파일은 그대로');
+    // 정리된 사본은 "서류명_계약명" 이름으로 계약 폴더에, 뜻 없는 원래 이름(noname)은 붙이지 않음
+    const cp = await page.evaluate(() => JH.app.db.docs.find((x) => /준공사진대지/.test(x.name)).path);
+    assert.match(cp, /^계약\/.+\/준공사진대지_시청사 옥상 방수공사\.pdf$/, cp);
+    const nn = await page.evaluate(() => (JH.app.db.docs.find((x) => x.name === 'noname(1).pdf') || {}).path || '');
+    assert.ok(!nn || !/noname/.test(nn.split('/').pop()), 'noname 이름은 바꿈: ' + nn);
     await new Promise((r) => setTimeout(r, 6000));
     assert.equal(await page.evaluate(() => JH.app.db.docs.filter((d) => /준공사진대지/.test(d.name)).length), 1, '한 번 읽은 파일은 다시 안 읽음');
     await page.click('#btnSettings'); await page.click('#dlgSettings .dlg-tabs button[data-tab="folder"]');
-    assert.match(await page.textContent('#watchDir'), /계약서류/); assert.ok(await page.isVisible('#watchState'));
+    // 두 번째 폴더 + 계약과 상관없는 파일(다른 기관 공고문)은 가져오지 않음
+    writeFileSync(join(WATCH2, '익산시 사업장폐기물 입찰공고문.pdf'), Buffer.from(await (async () => { const d = await PDFDocument.create(); d.addPage(); d.addPage(); d.addPage(); return d.save(); })()));
+    writeFileSync(join(WATCH2, '체육관 시설 청소 용역_준공계.pdf'), Buffer.from(await (async () => { const d = await PDFDocument.create(); d.addPage(); d.addPage(); d.addPage(); d.addPage(); return d.save(); })()));
+    await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => d.name === '체육관 시설 청소 용역_준공계.pdf')), 30000, '두 번째 폴더');
+    await new Promise((r) => setTimeout(r, 1500));
+    assert.ok(!(await page.evaluate(() => JH.app.db.docs.some((d) => /익산시/.test(d.name)))), '상관없는 공고문은 가져오지 않음(미분류에도 안 쌓임)');
+    const lt = await page.textContent('#watchList'); assert.match(lt, /계약서류/); assert.match(lt, /메일첨부/);
     await page.keyboard.press('Escape');
   }
   step('자동으로 읽을 폴더: 문서함·메일에서 내려받기만 하면(다 받아진 뒤) 계약·서류 종류를 찾아 정리, 원래 파일은 그대로·다시 안 읽음');
@@ -313,7 +319,7 @@ try {
   await page.click('#dlgMail .dlg-head button');
   // 예전 버전에서 올려 날짜 정보가 없는 서류도 계약을 열면 다시 읽음(재설치 후 이어 쓰기)
   await page.evaluate(() => { JH.app.db.docs.filter((d) => /-(tax|finish)$/.test(d.itemId || '')).forEach((d) => delete d.dates); JH.app.render(); });
-  await waitFor(() => page.evaluate(() => JH.app.db.docs.filter((d) => /-(tax|finish)$/.test(d.itemId || '')).every((d) => d.dates && (d.dates.valid || d.dates.finish))), 30000, '예전 서류 날짜 다시 읽기');
+  await waitFor(() => page.evaluate(() => { const k = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사').key; return JH.app.db.docs.filter((d) => d.key === k && /-(tax|finish)$/.test(d.itemId || '')).every((d) => d.dates && (d.dates.valid || d.dates.finish)); }), 30000, '예전 서류 날짜 다시 읽기');
   await page.waitForSelector('.row[data-drop-item="c-tax"] .valid.ok:has-text("10.31까지 유효")', { timeout: 10000 });
   // 잘못 읽었으면 날짜를 고침 → 다시 판정
   await page.fill('.row[data-drop-item="c-inspaid"] input[data-act="validset"]', '2026-10-30');

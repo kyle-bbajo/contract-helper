@@ -160,12 +160,9 @@
         <button type="button" class="btn" id="btnPickData">폴더 바꾸기</button>
       </div>
       <h3 class="sub-h">자동으로 읽을 폴더</h3>
-      <p class="help">문서함·메일에서 계약 서류를 <b>이 폴더로 내려받기만</b> 하면, 프로그램이 켜져 있는 동안 몇 초마다 새 파일을 찾아 계약별·서류 종류별로 정리합니다(내려받는 중인 파일은 다 받아진 뒤에). 원래 파일은 그대로 두고, 한 번 읽은 파일은 다시 읽지 않습니다. 예: 다운로드\계약서류</p>
-      <div class="path-box"><code id="watchDir">꺼짐</code> <span class="ok-t small" id="watchState" hidden>● 보는 중</span></div>
-      <div class="dlg-actions">
-        <button type="button" class="btn ghost" id="btnWatchOff">끄기</button>
-        <button type="button" class="btn primary" id="btnWatchPick">폴더 고르기</button>
-      </div>
+      <p class="help">문서함·메일에서 서류를 내려받는 폴더(예: 다운로드)를 골라 두면, 프로그램이 켜져 있는 동안 몇 초마다 새 파일을 읽어 <b>우리 계약에 맞는 서류만</b> 사본을 만들어 계약별·서류 종류별로 정리합니다(이름도 "서류명_계약명"으로). 원래 파일은 그대로 두고, 계약과 상관없는 파일(다른 공고문·개인 파일 등)은 가져오지 않습니다. 폴더는 여러 개 골라도 됩니다.</p>
+      <ul class="watch-list" id="watchList"><li class="muted">꺼짐</li></ul>
+      <div class="dlg-actions"><button type="button" class="btn primary" id="btnWatchPick">폴더 더하기</button></div>
     </div>
     <div class="tab" data-pane="lists">
       <div class="lists-head">
@@ -368,20 +365,6 @@
       <button type="button" class="btn ghost danger" id="payUndo">지출 처리 취소</button>
       <button type="button" class="btn primary" id="paySave">지출 완료로 표시</button>
     </div>
-  </div>
-</dialog>
-
-<dialog id="dlgOrder" class="dlg" aria-labelledby="ordTitle">
-  <form method="dialog" class="dlg-head">
-    <h2 id="ordTitle">인쇄 순서 편집</h2>
-    <button class="btn icon" value="close" aria-label="닫기">✕</button>
-  </form>
-  <div class="dlg-body">
-    <p class="help">끌어서 놓거나 ↑↓로 옮기세요. 한 서류에 파일이 여럿이면 그 안 순서도 바꿀 수 있습니다. 표지(목록표)도 이 순서로 나옵니다. 새로 올린 파일은 자기 서류 자리에 알아서 들어갑니다.</p>
-    <div class="ord-tools"><button type="button" class="link sm" id="ordHas">있는 서류만 위로</button><button type="button" class="link sm" id="ordReset">기본 순서로</button></div>
-    <ol class="ord-list" id="ordList"></ol>
-    <label class="ord-all"><input type="checkbox" id="ordAll"> 같은 구분(공사·용역·물품)의 모든 계약에 이 순서를 기본으로</label>
-    <div class="dlg-actions"><button type="button" class="btn primary" id="ordSave">저장</button></div>
   </div>
 </dialog>
 

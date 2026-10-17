@@ -651,17 +651,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .stage-head .via-sum { margin-left: auto; }
 .stage-head .via-sum + .sum { margin-left: 10px; }
 .stage-head .via-sum.bad-t { color: var(--seal); font-weight: 600; }
-/* 인쇄 순서 편집 */
-.ord-tools { display: flex; gap: 14px; margin: 0 0 6px; }
-.ord-list { list-style: none; margin: 0; padding: 0; max-height: 56vh; overflow: auto; border: 1px solid var(--rule); border-radius: var(--radius); }
-.ord-it { display: grid; grid-template-columns: auto 26px 1fr auto; align-items: start; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--rule-soft); background: var(--sheet); cursor: grab; }
-.ord-it:last-child { border-bottom: 0; }
-.ord-it.empty .nm b { color: var(--muted); font-weight: 500; }
-.ord-it.drag { opacity: .45; }
-.ord-it .grip { color: var(--muted); letter-spacing: -2px; padding-top: 1px; }
-.ord-it .no { color: var(--muted); font-size: 12px; text-align: right; padding-top: 2px; }
-.ord-it .mv { display: flex; gap: 2px; }
-.ord-files { margin: 4px 0 0; padding-left: 16px; font-size: 12px; color: var(--ink-2); }
-.ord-files li { display: flex; align-items: center; gap: 4px; }
-.ord-files li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ord-all { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 13px; }
+.orig-toggle.prt.off { color: var(--muted); text-decoration: line-through; }
+.watch-list { list-style: none; margin: 0 0 6px; padding: 0; display: grid; gap: 4px; }
+.watch-list li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.watch-list code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }

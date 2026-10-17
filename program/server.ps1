@@ -72,14 +72,16 @@ function Find-DataDir([string]$id) {
   return $best
 }
 function Set-DataDir([string]$dir, [string]$id) {
-  $o = @{ dataDir = $dir; dataId = $id }; if ($script:WatchDir) { $o.watchDir = $script:WatchDir }
+  $o = @{ dataDir = $dir; dataId = $id }; if ($script:WatchDirs.Count) { $o.watchDirs = @($script:WatchDirs) }
   [IO.File]::WriteAllText($LocalCfg, ($o | ConvertTo-Json -Compress), $Utf8)
 }
 
 $script:Relocated = $false; $script:Lost = $false; $script:OldDir = ''
 $cfg0 = Read-LocalCfg
 # 자동으로 읽을 폴더(내려받은 계약 서류를 넣는 곳) — 이 PC에만 기억
-$script:WatchDir = ''; if ($cfg0 -and $cfg0.watchDir) { $script:WatchDir = [string]$cfg0.watchDir }
+$script:WatchDirs = New-Object System.Collections.ArrayList
+if ($cfg0 -and $cfg0.watchDirs) { foreach ($w in @($cfg0.watchDirs)) { if ($w) { [void]$script:WatchDirs.Add([string]$w) } } }
+elseif ($cfg0 -and $cfg0.watchDir) { [void]$script:WatchDirs.Add([string]$cfg0.watchDir) }
 if ($cfg0 -and $cfg0.dataDir -and (Test-Path -LiteralPath ([string]$cfg0.dataDir))) {
   $script:DataDir = [string]$cfg0.dataDir
 } elseif ($cfg0 -and $cfg0.dataDir) {
@@ -388,7 +390,7 @@ function Handle($stream, $req) {
   $q = $req.Query
 
   switch ($path) {
-    '/api/ping' { Send-Json $stream 200 @{ ok = $true; version = $Version; dataDir = $script:DataDir; watchDir = $script:WatchDir; relocated = $script:Relocated; lost = $script:Lost; oldDir = $script:OldDir; os = [Environment]::OSVersion.VersionString }; return }
+    '/api/ping' { Send-Json $stream 200 @{ ok = $true; version = $Version; dataDir = $script:DataDir; watchDirs = @($script:WatchDirs); relocated = $script:Relocated; lost = $script:Lost; oldDir = $script:OldDir; os = [Environment]::OSVersion.VersionString }; return }
 
     '/api/file' {
       $full = Resolve-DataPath $q['path']
@@ -633,45 +635,59 @@ function Handle($stream, $req) {
     }
 
     '/api/watch' {
-      # 자동으로 읽을 폴더: GET 목록(하위 2단계까지) · POST pick=1 폴더 고르기 · POST clear=1 끄기
-      if ($req.Method -eq 'POST' -and $q['clear'] -eq '1') { $script:WatchDir = ''; Set-DataDir $script:DataDir $script:DataId; Send-Json $stream 200 @{ ok = $true; dir = '' }; return }
+      # 자동으로 읽을 폴더(여러 개): GET 목록 · POST pick=1 폴더 더하기 · POST clear=번호 빼기
+      $jesc = { param($t) ([string]$t).Replace('\', '\\').Replace('"', '\"') }
+      if ($req.Method -eq 'POST' -and $q.ContainsKey('clear')) {
+        $i = [int]$q['clear']; if ($i -ge 0 -and $i -lt $script:WatchDirs.Count) { $script:WatchDirs.RemoveAt($i) }
+        Set-DataDir $script:DataDir $script:DataId; Send-Json $stream 200 @{ ok = $true; dirs = @($script:WatchDirs) }; return
+      }
       if ($req.Method -eq 'POST' -and $q['pick'] -eq '1') {
         try {
           Add-Type -AssemblyName System.Windows.Forms
           $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
           $dlg.Description = '계약 서류를 내려받는 폴더를 고르세요. 여기에 들어오는 파일을 자동으로 읽어 계약별로 정리합니다.'
-          $dl = Join-Path $env:USERPROFILE 'Downloads'; if ($script:WatchDir) { $dlg.SelectedPath = $script:WatchDir } elseif (Test-Path -LiteralPath $dl) { $dlg.SelectedPath = $dl }
+          $dl = Join-Path $env:USERPROFILE 'Downloads'; if (Test-Path -LiteralPath $dl) { $dlg.SelectedPath = $dl }
           $owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true }
           if ($dlg.ShowDialog($owner) -ne [System.Windows.Forms.DialogResult]::OK) { Send-Json $stream 200 @{ ok = $false; cancelled = $true }; return }
-          $pick = [IO.Path]::GetFullPath($dlg.SelectedPath)
+          $pick = [IO.Path]::GetFullPath($dlg.SelectedPath).TrimEnd('\', '/')
           $root = [IO.Path]::GetFullPath($script:DataDir).TrimEnd('\', '/')
-          if ($pick.StartsWith($root, 'OrdinalIgnoreCase')) { Send-Error $stream 400 '데이터 폴더 안은 고를 수 없습니다(이미 정리된 서류가 있는 곳).'; return }
-          $script:WatchDir = $pick; Set-DataDir $script:DataDir $script:DataId
-          Send-Json $stream 200 @{ ok = $true; dir = $script:WatchDir }
+          if ($pick.StartsWith($root, 'OrdinalIgnoreCase') -or $root.StartsWith($pick + [IO.Path]::DirectorySeparatorChar, 'OrdinalIgnoreCase')) { Send-Error $stream 400 '데이터 폴더(또는 그것을 품은 폴더)는 고를 수 없습니다.'; return }
+          if (-not ($script:WatchDirs | Where-Object { $_ -ieq $pick })) { [void]$script:WatchDirs.Add($pick) }
+          Set-DataDir $script:DataDir $script:DataId
+          Send-Json $stream 200 @{ ok = $true; dir = $pick; dirs = @($script:WatchDirs) }
         } catch { Send-Error $stream 500 $_.Exception.Message }
         return
       }
-      if (-not $script:WatchDir -or -not (Test-Path -LiteralPath $script:WatchDir)) { Send-Json $stream 200 @{ ok = $true; dir = $script:WatchDir; missing = [bool]$script:WatchDir; files = @() }; return }
       $sb = New-Object System.Text.StringBuilder
-      $wd = [IO.Path]::GetFullPath($script:WatchDir).TrimEnd('\', '/')
-      [void]$sb.Append('{"ok":true,"dir":"').Append($wd.Replace('\', '\\').Replace('"', '\"')).Append('","files":[')
-      $first = $true; $di = New-Object IO.DirectoryInfo($wd)
-      foreach ($fi in $di.EnumerateFiles('*', [IO.SearchOption]::AllDirectories)) {
-        $rel = $fi.FullName.Substring($wd.Length).TrimStart('\', '/')
-        if (($rel.Split([char[]]@('\', '/')).Length) -gt 3) { continue }
-        if (($fi.Attributes -band [IO.FileAttributes]::Hidden) -ne 0 -or $fi.Name.StartsWith('~$') -or $fi.Name -match '\.(crdownload|part|tmp)$') { continue }
-        if (-not $first) { [void]$sb.Append(',') }; $first = $false
-        [void]$sb.Append('{"name":"').Append($rel.Replace('\', '/').Replace('"', '\"')).Append('","size":').Append($fi.Length).Append(',"mtime":"').Append($fi.LastWriteTime.ToString('s')).Append('"}')
+      [void]$sb.Append('{"ok":true,"dirs":[')
+      for ($k = 0; $k -lt $script:WatchDirs.Count; $k++) { if ($k) { [void]$sb.Append(',') }; [void]$sb.Append('{"dir":"').Append((& $jesc $script:WatchDirs[$k])).Append('","missing":').Append(([string](-not (Test-Path -LiteralPath $script:WatchDirs[$k]))).ToLower()).Append('}') }
+      [void]$sb.Append('],"files":[')
+      $first = $true
+      for ($k = 0; $k -lt $script:WatchDirs.Count; $k++) {
+        $wd = [IO.Path]::GetFullPath($script:WatchDirs[$k]).TrimEnd('\', '/')
+        if (-not (Test-Path -LiteralPath $wd)) { continue }
+        $di = New-Object IO.DirectoryInfo($wd)
+        try { $items = $di.EnumerateFiles('*', [IO.SearchOption]::AllDirectories) } catch { continue }
+        foreach ($fi in $items) {
+          $rel = $fi.FullName.Substring($wd.Length).TrimStart('\', '/')
+          if (($rel.Split([char[]]@('\', '/')).Length) -gt 3) { continue }
+          if (($fi.Attributes -band [IO.FileAttributes]::Hidden) -ne 0 -or $fi.Name.StartsWith('~$') -or $fi.Name -match '\.(crdownload|part|tmp)$') { continue }
+          if (-not $first) { [void]$sb.Append(',') }; $first = $false
+          [void]$sb.Append('{"name":"').Append($k).Append('|').Append((& $jesc $rel.Replace('\', '/'))).Append('","size":').Append($fi.Length).Append(',"mtime":"').Append($fi.LastWriteTime.ToString('s')).Append('"}')
+        }
       }
       [void]$sb.Append(']}')
       Send-Bytes $stream 200 'application/json; charset=utf-8' ($Utf8.GetBytes($sb.ToString())) $null; return
     }
 
     '/api/watchfile' {
-      # 자동으로 읽을 폴더 안 파일 하나 읽기(그 폴더 밖은 안 됨)
-      if (-not $script:WatchDir) { Send-Error $stream 404 'no watch dir'; return }
-      $wd = [IO.Path]::GetFullPath($script:WatchDir).TrimEnd('\', '/')
-      $full = [IO.Path]::GetFullPath([IO.Path]::Combine($wd, (Normalize-Rel ([string]$q['name']))))
+      # 자동으로 읽을 폴더 안 파일 하나 읽기("번호|폴더 안 경로", 그 폴더 밖은 안 됨)
+      $nm = [string]$q['name']; $bar = $nm.IndexOf('|')
+      if ($bar -lt 1) { Send-Error $stream 400 'name'; return }
+      $k = [int]$nm.Substring(0, $bar); $rel = $nm.Substring($bar + 1)
+      if ($k -lt 0 -or $k -ge $script:WatchDirs.Count) { Send-Error $stream 404 'no watch dir'; return }
+      $wd = [IO.Path]::GetFullPath($script:WatchDirs[$k]).TrimEnd('\', '/')
+      $full = [IO.Path]::GetFullPath([IO.Path]::Combine($wd, (Normalize-Rel $rel)))
       if (-not $full.StartsWith($wd + [IO.Path]::DirectorySeparatorChar, 'OrdinalIgnoreCase') -or -not (Test-Path -LiteralPath $full -PathType Leaf)) { Send-Error $stream 404 'not found'; return }
       try { $bytes = [IO.File]::ReadAllBytes($full) } catch { Send-Error $stream 409 '파일이 아직 쓰이는 중입니다'; return }
       Send-Bytes $stream 200 'application/octet-stream' $bytes $null; return
