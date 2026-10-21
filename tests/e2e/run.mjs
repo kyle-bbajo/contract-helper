@@ -449,6 +449,58 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   await page.waitForSelector('.citem.on .st:has-text("지출 대기")', { timeout: 5000 }); // 4대보험은 앞에서 10.30으로 고쳐 유효 → 남은 미비 없음
   step('파일 없이 [받음] 체크(줄마다·빠진 서류 한 번에) → 누락에서 빠짐');
 
+  // 지출 회차: 기성계(경유) → 기성검사원 지정통보 → 기성부분 검사조서 → 청구 서류 → 지출결의 → 지출 처리, 그다음 청구 서류는 준공으로
+  {
+    const blank = Buffer.from(await (async () => { const d = await PDFDocument.create(); d.addPage(); return d.save(); })());
+    const up = async (names) => { const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('[data-act="addhere"]')]); await fc.setFiles(names.map((n) => ({ name: n, mimeType: 'application/pdf', buffer: blank }))); await waitFor(() => page.evaluate((ns) => ns.every((n) => JH.app.db.docs.some((d) => d.name === n)), names), 30000, '올림'); };
+    const info = () => page.evaluate(() => { const c = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사'); return { pays: (c.pays || []).map((r) => ({ kind: r.kind, n: r.n, paid: !!r.paidDate })), docs: JH.app.db.docs.filter((d) => d.key === c.key && /기성|청구|납세/.test(d.name)).map((d) => [d.name, d.itemId, (c.pays || []).findIndex((r) => r.id === d.pay)]) }; });
+    await page.waitForSelector('.rounds.none [data-act="roundadd"][data-kind="prog"]', { timeout: 5000 });
+    await up(['제1회 기성계.pdf', '1회 기성검사원 지정통보.pdf', '제1회 기성부분 검사조서.pdf']);
+    let r = await info();
+    assert.deepEqual(r.pays, [{ kind: 'prog', n: 1, paid: false }], '기성 1회 저절로 생김');
+    assert.deepEqual(r.docs.sort(), [['1회 기성검사원 지정통보.pdf', 'c-prognotice', 0], ['제1회 기성계.pdf', 'c-progfin', 0], ['제1회 기성부분 검사조서.pdf', 'c-proginsp', 0]].sort());
+    await page.waitForSelector('.round[open] .rnext:has-text("감독관 경유")', { timeout: 5000 }).catch(() => {});
+    await page.check('.round[open] [data-act="rvia"]');
+    await page.waitForSelector('.round[open] .rnext:has-text("업체에 청구 서류 요청")', { timeout: 5000 });
+    assert.ok(await page.$('.round[open] [data-act="rmail"].primary'), '검사조서까지 오면 청구 서류 요청 메일이 눈에 띄게');
+    await page.click('.round[open] [data-act="rmail"]');
+    await page.waitForSelector('#dlgMail[open]');
+    assert.match(await page.inputValue('#mailSubj'), /1회 기성 대금 청구 서류 제출 요청/);
+    assert.match(await page.inputValue('#mailBody'), /대금청구서[\s\S]*세금계산서/);
+    await page.keyboard.press('Escape');
+    await up(['1회 기성금 청구서.pdf', '국세 납세증명서.pdf']); // 하나는 이름에 회차, 하나는 힌트 없음 → 열린 회차로
+    r = await info();
+    assert.ok(r.docs.find((x) => x[0] === '1회 기성금 청구서.pdf')[2] === 0 && r.docs.find((x) => x[0] === '국세 납세증명서.pdf')[2] === 0, '청구 서류도 그 회차로');
+    for (const id of ['c-ltax', 'c-inspaid', 'c-emppaid', 'c-invoice', 'c-pay']) await page.check(`.round[open] .row[data-drop-item="${id}"] [data-act="rrecv"]`);
+    await page.waitForSelector('.round[open] .pill.ready', { timeout: 5000 });
+    await page.click('.round[open] [data-act="roundpay"]');
+    await page.waitForSelector('#dlgPay[open]'); assert.match(await page.textContent('#payTitle'), /1회 기성 지출 처리/);
+    await page.fill('#payDate', '2026-10-20'); await page.click('#paySave');
+    await page.waitForSelector('.round.paid .pill.paid:has-text("지출 10.20")', { timeout: 5000 });
+    await up(['대금청구서_최종.pdf']); // 열린 회차가 없으면 준공(마지막)으로
+    r = await info();
+    assert.equal(r.docs.find((x) => x[0] === '대금청구서_최종.pdf')[2], -1, '준공 목록');
+    assert.deepEqual(r.pays, [{ kind: 'prog', n: 1, paid: true }]);
+    // 노무비 회차 직접 만들기 → 현황판 '기성·노무비 진행 중'
+    await page.click('[data-act="roundadd"][data-kind="labor"]');
+    await page.waitForSelector('.round[open] .rlabel:has-text("월분 노무비")', { timeout: 5000 });
+    await page.waitForSelector('.citem.on .pill.sub:has-text("노무비")', { timeout: 5000 });
+    // 회차 서류를 준공으로 옮기면 기성 칸 → 준공 칸
+    const docId = await page.evaluate(() => JH.app.db.docs.find((d) => d.name === '제1회 기성부분 검사조서.pdf').id);
+    await page.selectOption(`.round [data-act="docpay"][data-doc="${docId}"]`, '');
+    await waitFor(() => page.evaluate((id) => { const d = JH.app.db.docs.find((x) => x.id === id); return !d.pay && d.itemId === 'c-inspect'; }, docId), 10000, '준공으로 옮김');
+    await page.evaluate((id) => { const d = JH.app.db.docs.find((x) => x.id === id); const c = JH.app.db.contracts[d.key]; d.pay = c.pays[0].id; d.itemId = 'c-proginsp'; JH.app.render(); }, docId);
+    // 장기 공사(기성 12회): 회차마다 칸 하나로 한눈에, 누르면 그 회차가 펼쳐짐
+    await page.evaluate(() => { const c = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사'); for (let n = 2; n <= 12; n++) c.pays.push({ id: 'p' + n, kind: 'prog', n, at: n, received: {}, via: {}, ...(n < 6 ? { paidDate: `202610${String(n).padStart(2, '0')}` } : {}) }); JH.app.render(); });
+    assert.equal(await page.$$eval('.rtrack .rt', (e) => e.length), 13);
+    assert.equal(await page.$$eval('.rtrack .rt.paid', (e) => e.length), 5);
+    await page.screenshot({ path: join(SHOTS, 'rounds.png'), fullPage: false }).catch(() => {});
+    await page.click('.rtrack .rt[data-round="p9"]');
+    await page.waitForSelector('details.round[data-round="p9"][open]', { timeout: 5000 });
+    await page.evaluate(() => { const c = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사'); c.pays = c.pays.filter((r) => !/^p\d+$/.test(r.id)); JH.app.render(); });
+  }
+  step('지출 회차(선금·기성·노무비): 기성계·지정통보·검사조서가 오면 기성 회차 저절로 → 감독관 경유 → 청구 서류 요청 메일 → 청구 서류도 그 회차로 → 지출 처리로 완료, 다음 청구는 준공으로 · 기성 12회도 한눈에');
+
   // 예산 구분: 직접 고른 것을 풀면 '모름' → 서류에 e나라도움·보조금 같은 말이 있으면 외부 → 설정의 외부 예산 사업 이름으로도 외부
   await page.click('.memo [data-act="budgetauto"]');
   await page.waitForSelector('.memo .bsrc .unk', { timeout: 5000 });

@@ -728,3 +728,44 @@ body.resizing { cursor: col-resize; user-select: none; }
 .doors .door p { font-size: 14.5px; max-width: none; padding-right: 8px; position: relative; }
 .doors .door-seal { width: 88px; height: 88px; right: -4px; top: -4px; }
 .doors .door h2 { padding-right: 64px; min-height: 52px; }
+
+/* ---------- 지출 회차(선금·기성·노무비) ---------- */
+.rounds { margin-top: 22px; max-width: 1060px; display: grid; gap: 8px; }
+.rounds-head { display: flex; align-items: baseline; gap: 10px 14px; flex-wrap: wrap; }
+.rounds-head h3 { margin: 0; font-size: 16px; }
+.rounds-head .radd { margin-left: auto; display: flex; gap: 6px; }
+.rounds.none { padding: 12px 16px; border: 1px dashed var(--rule); border-radius: 10px; background: var(--sheet); }
+.round { background: var(--sheet); border: 1px solid var(--rule); border-left: 4px solid var(--ink); border-radius: 10px; }
+.round.paid { border-left-color: var(--seal); }
+.round > summary { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; cursor: pointer; list-style: none; padding: 10px 14px; }
+.round > summary::-webkit-details-marker { display: none; }
+.round > summary::before { content: '▸'; color: var(--muted); font-size: 12px; }
+.round[open] > summary::before { content: '▾'; }
+.round .rlabel { font-size: 15px; min-width: 6.5em; }
+.round > summary .btn { margin-left: 4px; }
+.rsteps { display: flex; gap: 4px; flex-wrap: wrap; }
+.rstep { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 700; padding: 2px 8px 2px 6px; border-radius: 99px; background: var(--rule-soft); color: var(--muted); white-space: nowrap; }
+.rstep i { font-style: normal; font-weight: 600; }
+.rstep.ok { background: var(--ok-soft); color: var(--ok); }
+.rstep.now { background: var(--ink); color: #fff; }
+.rnext { flex: 1 1 200px; font-size: 13px; color: var(--ink-2); min-width: 0; }
+.round.final { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; padding: 10px 14px 10px 30px; border-left-color: var(--rule); border-style: dashed; }
+.rbody { border-top: 1px solid var(--rule-soft); padding: 8px 12px 12px; display: grid; gap: 10px; }
+.rstage { border: 1px solid var(--rule-soft); border-radius: 8px; }
+.rstage .stage-head { padding: 8px 12px; }
+.rstage .stage-head h4 { margin: 0; font-size: 14px; }
+.rstage.done .stage-no { background: var(--ok); }
+.rfoot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rfoot .spacer { flex: 1; }
+.rplan { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; }
+.rmonth { font-size: 13px; display: flex; gap: 6px; align-items: center; }
+.final-head { margin: 26px 0 -14px; font-size: 16px; max-width: 1060px; }
+.pill.sub { font-size: 11px; padding: 1px 7px; margin-left: 4px; opacity: .92; }
+.file select.paysel { max-width: 120px; }
+@media (max-width: 720px) { .rounds-head .radd { margin-left: 0; } .round .rlabel { min-width: 0; } }
+.rtrack { display: flex; flex-wrap: wrap; gap: 4px; }
+.rtrack .rt { min-width: 38px; padding: 4px 7px; border-radius: 6px; border: 1px solid var(--rule); background: var(--sheet); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; color: var(--muted); }
+.rtrack .rt small { font-size: 10px; margin-right: 1px; }
+.rtrack .rt.paid { background: var(--seal); border-color: var(--seal); color: #fff; }
+.rtrack .rt.ready { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
+.rtrack .rt.missing { background: var(--seal-soft); border-color: var(--seal); color: var(--seal); }

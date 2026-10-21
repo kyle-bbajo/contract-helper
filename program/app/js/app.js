@@ -31,7 +31,7 @@
   const cardOpen = (() => { try { return JSON.parse(localStorage.getItem('jh.cards') || '{}') || {}; } catch (_) { return {}; } })();
   const ui = { view: 'home', sel: null, q: '', officer: '', officerTouched: false, type: '', state: '', board: '', sort: (() => { try { return localStorage.getItem('jh.sort') || 'end-desc'; } catch (_) { return 'end-desc'; } })() };
 
-  const CHECKLIST_VER = 4; // 4: 선금 보증서
+  const CHECKLIST_VER = 5; // 4: 선금 보증서 · 5: 준공검사원 지정통보
   const lists = (type) => (db.checklists && db.checklists[type]) || defaults[type] || defaults.공사;
   const contracts = () => Object.values(db.contracts).filter((c) => !c.archived);
   // 계약별 서류: 화면을 그리는 동안은 한 번 만든 색인(docIndex)으로 찾음(서류 수천 개여도 계약마다 다시 훑지 않음)
@@ -48,12 +48,100 @@
 
   // 파일 없이 갖춘 것으로 보는 서류: 종이 원본(원본) + 이미 받았거나 처리한 서류(받음 — 지난 계약 등)
   const gotMap = (c) => ({ ...(c.originals || {}), ...(c.received || {}) });
+
+  // ---------- 지출 회차(선금·기성·노무비) ----------
+  // c.pays = [{ id, kind: adv|prog|labor, n, month, at, paidDate, payMemo, payPlan, received, via }]
+  // 회차 서류는 d.pay = 회차 id. d.pay가 없는 서류는 마지막 준공금(기존 서류 목록)
+  const roundsOf = (c) => (L.hasRounds(c.type) ? (c.pays || []) : []);
+  const KIND_ORDER = { adv: 0, prog: 1, labor: 2 };
+  const sortedRounds = (c) => [...roundsOf(c)].sort((a, b) => (KIND_ORDER[a.kind] - KIND_ORDER[b.kind]) || ((a.n || 0) - (b.n || 0)) || ((a.at || 0) - (b.at || 0)));
+  const roundById = (c, id) => roundsOf(c).find((r) => r.id === id) || null;
+  const roundDocs = (c, r) => docsOf(c.key).filter((d) => d.pay === r.id);
+  const finalDocs = (c) => docsOf(c.key).filter((d) => !d.pay || !roundById(c, d.pay));
+  // 분류할 때 쓰는 서류 목록: 계약 구분 목록 + 회차에만 쓰는 서류(기성계·기성 검사조서·노무비 청구서 …)
+  function classList(c) {
+    const base = lists(c.type); if (!L.hasRounds(c.type)) return base;
+    const ids = new Set(base.map((x) => x.id));
+    return base.concat(L.roundOnly(c.type).filter((x) => !ids.has(x.id)));
+  }
+  const roundDir = (c, r) => `${folderOf(c)}/${L.safeName(L.roundLabel(r), 30)}`;
+  function addRound(c, kind, o = {}) {
+    c.pays = c.pays || [];
+    const same = c.pays.filter((x) => x.kind === kind);
+    const r = { id: L.uid(), kind, at: Date.now(), received: {}, via: {} };
+    if (kind === 'prog') r.n = o.n || (Math.max(0, ...same.map((x) => x.n || 0)) + 1);
+    if (kind === 'labor') { r.n = (Math.max(0, ...same.map((x) => x.n || 0)) + 1); if (o.month) r.month = o.month; }
+    c.pays.push(r); c.updatedAt = Date.now();
+    return r;
+  }
+  // 서류 하나가 어느 회차로 가는지(없으면 null = 준공 목록). 필요하면 회차를 새로 만듦
+  function routeDoc(c, itemId, name, title, forcePay, body) {
+    if (!c || !itemId || !L.hasRounds(c.type)) return null;
+    if (forcePay) {
+      const r = roundById(c, forcePay); if (!r) return null;
+      const suf = itemId.replace(/^[csg]-/, ''), map = { finish: 'progfin', notice: 'prognotice', inspect: 'proginsp' };
+      return { pay: r.id, itemId: r.kind === 'prog' && map[suf] ? itemId.replace(suf, map[suf]) : itemId };
+    }
+    const open = sortedRounds(c).filter((r) => !r.paidDate);
+    const t = L.routeRound(c.type, itemId, name, title, open, body);
+    if (!t) return null;
+    let r = t.id ? roundById(c, t.id) : null;
+    if (!r) {
+      const rs = sortedRounds(c).filter((x) => x.kind === t.kind), openK = rs.filter((x) => !x.paidDate);
+      if (t.kind === 'prog' && t.n) r = rs.find((x) => x.n === t.n) || addRound(c, 'prog', { n: t.n });
+      else if (t.kind === 'labor' && t.month) r = rs.find((x) => x.month === t.month) || addRound(c, 'labor', { month: t.month });
+      else if (t.kind === 'adv') r = rs[0] || addRound(c, 'adv');
+      else {
+        r = openK[0] || null;
+        // 번호 없는 기성계인데 열린 회차에 이미 기성계가 있으면 다음 회차
+        if (r && /-(progfin|laborclaim)$/.test(t.itemId) && roundDocs(c, r).some((d) => d.itemId === t.itemId)) r = null;
+        if (!r) r = addRound(c, t.kind);
+      }
+    }
+    return { pay: r.id, itemId: t.itemId };
+  }
+  // 회차 하나의 상태: 단계별로 들어온 서류, 빠진 서류, 증명서 유효기간(기준: 지출 예정일 > 지출일 > 기성 검사조서 + 2주 > 오늘 + 2주), 감독관 경유
+  function roundStatus(c, r) {
+    const steps = L.roundSteps(r.kind, c.type, lists(c.type));
+    const docs = roundDocs(c, r), got = r.received || {}, all = docsOf(c.key);
+    const has = (x) => (x.link ? L.hasItem(all, gotMap(c), x.id) || !!got[x.id] : L.hasItem(docs, got, x.id));
+    const insp = docs.filter((d) => /-proginsp$/.test(d.itemId || '')).map((d) => dateOfDoc(d, 'inspect')).filter(Boolean).sort().pop();
+    const t14 = new Date(); t14.setDate(t14.getDate() + 14);
+    const basis = r.payPlan ? { date: r.payPlan, how: '지출 예정일(직접 넣음)', manual: true }
+      : r.paidDate ? { date: r.paidDate, how: '지출일' }
+      : insp ? { date: L.addDays(insp, 14), how: `기성부분 검사조서 ${L.fmtDate(insp)} + 2주` }
+      : { date: ymd(t14), how: '오늘 + 2주 (검사조서가 오면 그 날짜 + 2주로 바뀜)', guess: true };
+    const missing = [], certs = [], via = [];
+    let adv = null;
+    const st = steps.map((g) => {
+      const req = g.items.filter((x) => x.required);
+      const done = req.filter(has).length;
+      req.filter((x) => !has(x)).forEach((x) => missing.push(x));
+      for (const x of g.items) {
+        if (L.isCertItem(x.id)) {
+          const ds = docs.filter((d) => d.itemId === x.id); if (!ds.length) continue;
+          const best = ds.map((d) => ({ d, valid: d.validOverride || (d.dates && d.dates.valid) || '' })).filter((v) => v.valid).sort((a, b) => (a.valid < b.valid ? 1 : -1))[0];
+          certs.push({ item: x, valid: best ? best.valid : '', status: !best ? 'unknown' : best.valid < basis.date ? 'short' : 'ok', doc: (best || { d: ds[0] }).d });
+        }
+        if (/-(progfin|laborclaim)$/.test(x.id) && has(x) && !(r.via || {})[x.id]) via.push(x.name);
+        if (x.link && L.isAdvBond(x.id) && has(x)) adv = advOf(c);
+      }
+      return { ...g, req: req.length, done, complete: done === req.length };
+    });
+    const expired = certs.filter((x) => x.status === 'short');
+    const advShort = !!(adv && adv.status === 'short');
+    const need = missing.length + expired.length + via.length + (advShort ? 1 : 0);
+    const anything = docs.length > 0 || Object.values(got).some(Boolean);
+    const state = r.paidDate ? 'paid' : !anything ? 'empty' : need ? 'missing' : 'ready';
+    const cur = st.findIndex((g) => !g.complete);
+    return { label: L.roundLabel(r), steps: st, docs, missing, certs, expired, unknownValid: certs.filter((x) => x.status === 'unknown'), via, adv, advShort, basis, need, state, cur };
+  }
   function statusOf(c) {
     if (stCache && stCache.has(c.key)) return stCache.get(c.key);
     const st = statusOf0(c); if (stCache) stCache.set(c.key, st); return st;
   }
   function statusOf0(c) {
-    const docs = docsOf(c.key);
+    const docs = finalDocs(c);
     const st = L.checklistStatus(lists(c.type), docs, gotMap(c));
     const anything = docs.length > 0 || Object.values(gotMap(c)).some(Boolean);
     const end = L.toDate(c.endDate);
@@ -67,6 +155,8 @@
     st.state = c.paidDate ? 'paid' : !anything ? 'empty' : st.need ? 'missing' : 'ready';
     st.untyped = docs.filter((d) => !d.itemId).length;
     st.origCount = Object.values(c.originals || {}).filter(Boolean).length;
+    st.rounds = sortedRounds(c).map((r) => ({ r, s: roundStatus(c, r) }));
+    st.roundOpen = st.rounds.find((x) => x.s.state !== 'paid') || null;
     return st;
   }
 
@@ -83,7 +173,7 @@
   function payBasis(c) {
     if (c.payPlan) return { date: c.payPlan, how: '지출 예정일(직접 넣음)', manual: true };
     if (c.paidDate) return { date: String(c.paidDate).replace(/\D/g, '').slice(0, 8), how: '지출일' };
-    const docs = docsOf(c.key);
+    const docs = finalDocs(c);
     const pick = (re, kind, label) => docs.filter((d) => re.test(d.itemId || '')).map((d) => ({ date: dateOfDoc(d, kind), label })).filter((x) => x.date);
     const cands = [...pick(/-inspect$/, 'inspect', '준공조서'), ...pick(/-finish$/, 'finish', '준공계')].sort((a, b) => (a.date < b.date ? 1 : -1));
     if (cands[0]) return { date: L.addDays(cands[0].date, 14), how: `${cands[0].label} ${L.fmtDate(cands[0].date)} + 2주` };
@@ -91,7 +181,7 @@
     return null;
   }
   function validity(c) {
-    const basis = payBasis(c), docs = docsOf(c.key), out = [];
+    const basis = payBasis(c), docs = finalDocs(c), out = [];
     for (const x of lists(c.type)) {
       if (!L.isCertItem(x.id)) continue;
       const ds = docs.filter((d) => d.itemId === x.id);
@@ -317,7 +407,7 @@
       // 3) 나머지 서류는 내용으로 계약 찾기 → 서류 종류 → 저장
       // 먼저 확실히 한 계약으로 가는 서류를 모아 두고(같이 올린 묶음), 애매한 서류는 그 묶음 계약 쪽으로
       batchKeys = new Set(recs.map((r) => r.key || (() => { const m = L.matchCandidates(contracts(), L.norm(L.stem(r.name)) + '|' + r.text); return m.top.length === 1 ? m.top[0].key : null; })()).filter(Boolean));
-      const byContract = {}, auditLines = {}; let inbox = 0, multiForm = 0;
+      const byContract = {}, auditLines = {}, roundsHit = new Set(); let inbox = 0, multiForm = 0;
       for (let i = 0; i < recs.length; i++) {
         const r = recs[i];
         progress(`정리하는 중 ${i + 1}/${recs.length}`, i / recs.length);
@@ -329,17 +419,17 @@
           const m = L.matchCandidates(contracts(), hay);
           if (m.score >= 6 && m.top.length === 1 && m.top[0].key !== forced.key && L.contractScore(forced, hay) < m.score) { c = m.top[0]; r.rerouted = true; }
         }
-        let itemId = c ? (forced && forceItem ? forceItem : L.classifyItem(lists(c.type), r.name, r.title)) : null;
+        let itemId = c ? (forced && forceItem ? forceItem : L.classifyItem(classList(c), r.name, r.title)) : null;
         // 한 파일에 여러 양식(착공계 묶음 등): 쪽마다 서류 이름을 찾아 함께 든 서류로 표시
         let also = [], pagesOf = null;
         if (c) {
           try {
             progress(`여러 양식이 든 파일인지 보는 중 ${i + 1}/${recs.length}`, i / recs.length);
             const heads = await R.pageHeads(r.bytes, r.kind);
-            pagesOf = heads ? L.classifyPages(lists(c.type), heads) : r.kind === 'hwp' ? L.classifyTitleLines(lists(c.type), r.lines) : null;
+            pagesOf = heads ? L.classifyPages(classList(c), heads) : r.kind === 'hwp' ? L.classifyTitleLines(classList(c), r.lines) : null;
           } catch (e) { console.warn('쪽별 서류 찾기 실패', e); }
           // 파일 이름에 서류가 여럿이면(견적서_산출내역.pdf) 그것도 함께 든 서류로
-          const named = forced && forceItem ? [] : L.itemsInName(lists(c.type), r.name);
+          const named = forced && forceItem ? [] : L.itemsInName(classList(c), r.name);
           if (named.length > 1) { pagesOf = pagesOf || {}; for (const id of named) if (!pagesOf[id]) pagesOf[id] = []; }
           if (pagesOf) {
             const ids = Object.keys(pagesOf);
@@ -349,13 +439,19 @@
         }
         // 내려받은 폴더에서 온 파일: 우리 계약과 맞지 않으면(다른 공고문·개인 파일 등) 가져오지 않음
         if (opt.onlyMatched && !c) { r.ignored = true; continue; }
-        const item = c && itemId ? lists(c.type).find((x) => x.id === itemId) : null;
-        const dir = c ? folderOf(c) : INBOX;
+        // 선금·기성·노무비 서류면 그 회차로(회차가 없으면 만듦). 회차 서류는 계약 폴더 안 회차 폴더에
+        const rt = c && itemId ? routeDoc(c, itemId, r.name, r.title, forced && forced.key === c.key ? opt.pay : null, r.text) : null;
+        if (rt) { itemId = rt.itemId; also = also.filter((id) => id !== itemId); }
+        const rnd = rt ? roundById(c, rt.pay) : null;
+        if (rnd) roundsHit.add(c.key + '|' + rnd.id);
+        const item = c && itemId ? classList(c).find((x) => x.id === itemId) : null;
+        const dir = c ? (rnd ? roundDir(c, rnd) : folderOf(c)) : INBOX;
         const fname = tidyName(item, c, r.name);
         const saved = await S.save(dir, fname, r.bytes);
         textDirty = true; db.docs.push({
           id: r.id, key: c ? c.key : null, itemId: item ? item.id : null, path: saved.path, name: r.name, kind: r.kind,
           size: r.size, mime: r.mime, addedAt: new Date().toISOString(), ocr: r.ocr, meta: r.meta, text: r.text, title: r.title, dates: r.dates, manual: !!forced && !r.rerouted, facts: L.docFacts(r.lines),
+          ...(rnd ? { pay: rnd.id } : {}),
           ...(also.length ? { also, pagesOf } : {}),
         });
         if (c) { byContract[c.key] = (byContract[c.key] || 0) + 1; c.updatedAt = Date.now(); } else inbox++;
@@ -376,6 +472,7 @@
       if (newContracts) msg += ` 계약서에서 새 계약 ${newContracts}건을 만들었습니다.`;
       if (auditFilled) msg += ` 서류에서 감사·검사 칸 ${auditFilled}개를 채웠습니다.`;
       if (multiForm) msg += ` 여러 양식이 든 파일 ${multiForm}개는 안에 든 서류마다 표시했습니다.`;
+      if (roundsHit.size) msg += ` 지출 회차 서류: ${[...roundsHit].map((k) => { const [ck, rid] = k.split('|'); const rc = db.contracts[ck], rr = rc && roundById(rc, rid); return rr ? L.roundLabel(rr) : ''; }).filter(Boolean).join(', ')}.`;
       const moved = recs.filter((r) => r.rerouted).length;
       if (moved) msg += ` ${moved}개는 내용이 다른 계약 서류라 그 계약으로 보냈습니다.`;
       if (skipped) msg += ` 이미 있는 파일 ${skipped}개는 건너뛰었습니다.`;
@@ -399,11 +496,15 @@
   }
 
   // 서류를 다른 계약·종류로 옮김(파일도 해당 폴더로 이동)
-  async function moveDoc(d, key, itemId, manual = true) {
+  async function moveDoc(d, key, itemId, manual = true, pay) {
     const c = key ? db.contracts[key] : null;
-    const list = c ? lists(c.type) : [];
+    const list = c ? classList(c) : [];
     const item = itemId ? list.find((x) => x.id === itemId) : null;
-    const dir = c ? folderOf(c) : INBOX;
+    // 회차: 다른 계약으로 가면 풂, pay를 주면 그 회차로('' = 준공 목록)
+    if (pay !== undefined) { if (pay) d.pay = pay; else delete d.pay; }
+    if (!c || c.key !== d.key) delete d.pay;
+    const rnd = c && d.pay ? roundById(c, d.pay) : null; if (!rnd) delete d.pay;
+    const dir = c ? (rnd ? roundDir(c, rnd) : folderOf(c)) : INBOX;
     const name = tidyName(item, c, d.name);
     const r = await S.move(d.path, dir, name);
     d.path = r.path;
@@ -424,7 +525,7 @@
       if (d.manual) continue;
       const c = L.matchContract(contracts(), L.norm(L.stem(d.name)) + '|' + (d.text || ''));
       if (!c) continue;
-      await moveDoc(d, c.key, L.classifyItem(lists(c.type), d.name, d.title), false); moved++;
+      await moveDoc(d, c.key, L.classifyItem(classList(c), d.name, d.title), false); moved++;
     }
     return moved;
   }
@@ -467,7 +568,7 @@
         const { lines, ocr } = await R.read(bytes, kind);
         const text = L.norm(lines.join(' ')).slice(0, 6000), title = L.norm(lines.slice(0, 8).join(' ')).slice(0, 300);
         let c = contracts().find((x) => x.folder && (dir === x.folder || dir.startsWith(x.folder + '/'))) || L.matchContract(contracts(), L.norm(L.stem(name)) + '|' + text);
-        const doc = { id: L.uid(), key: c ? c.key : null, itemId: c ? L.classifyItem(lists(c.type), name, title) : null, path: f.path, name, kind, size: f.size,
+        const doc = { id: L.uid(), key: c ? c.key : null, itemId: c ? L.classifyItem(classList(c), name, title) : null, path: f.path, name, kind, size: f.size,
           addedAt: new Date().toISOString(), ocr, meta: L.findMeta(lines), text, title, dates: L.extractDates(lines), manual: false };
         db.docs.push(doc); textDirty = true; added++;
         if (c && /^미분류\//.test(f.path)) await moveDoc(doc, c.key, doc.itemId, false);
@@ -630,7 +731,7 @@
   }
   // 인쇄할 서류: 줄마다 [인쇄] 체크를 뺀 서류(c.noPrint)는 한 번에 인쇄·PDF·표지 목록에서 뺌
   const printList = (c) => lists(c.type).filter((x) => !(c.noPrint || {})[x.id]);
-  const printDocs = (c) => docsOf(c.key).filter((d) => d.itemId && !(c.noPrint || {})[d.itemId]);
+  const printDocs = (c) => finalDocs(c).filter((d) => d.itemId && !(c.noPrint || {})[d.itemId]);
   async function printContract(c, mode) {
     const docs = printDocs(c);
     try {
@@ -649,6 +750,22 @@
         printBytes(r.bytes);
         toast(`인쇄 창을 열었습니다 (${msg}).`, r.errors.length ? 'err' : 'ok');
       }
+    } catch (e) { console.error(e); toast('인쇄 파일을 만들지 못했습니다: ' + e.message, 'err'); }
+    finally { progress(null); }
+  }
+  // 회차 하나만 인쇄: 그 회차 서류(선금 보증서는 계약 것)를 단계 순서대로, 표지에 회차 이름
+  async function printRound(c, r, mode) {
+    const s = roundStatus(c, r), items = s.steps.flatMap((g) => g.items);
+    const docs = [...s.docs, ...docsOf(c.key).filter((d) => items.some((x) => x.link && x.id === d.itemId))].filter((d) => d.itemId);
+    const c2 = { ...c, name: `${c.name} — ${s.label}`, originals: {}, received: r.received || {} };
+    try {
+      progress('인쇄할 서류를 합치는 중', .3);
+      const out = await JH.pdfbuild.build(c2, items, docs, getFile, { cover: true, holder: true });
+      progress(null);
+      const msg = `${out.pages}쪽` + (out.missing.length ? ` · 필수 누락 ${out.missing.length}건(표지에 표시)` : '');
+      if (S.demo) await S.showPdf(out.bytes, `${c2.name} — 미리보기`, `${msg}. 실제 프로그램에서는 ${mode === 'save' ? '회차 폴더에 저장됩니다' : '바로 인쇄 창이 열립니다'}.`);
+      else if (mode === 'save') { const sv = await S.save(roundDir(c, r), `지출서류_${L.safeName(s.label, 20)}_${ymd()}.pdf`, out.bytes); toast(`PDF로 저장했습니다 (${msg}).`, 'ok', { label: '폴더 열기', run: () => S.open(sv.path) }); }
+      else { printBytes(out.bytes); toast(`인쇄 창을 열었습니다 (${msg}).`, 'ok'); }
     } catch (e) { console.error(e); toast('인쇄 파일을 만들지 못했습니다: ' + e.message, 'err'); }
     finally { progress(null); }
   }
@@ -726,7 +843,7 @@
       const memoHit = raw && !L.norm([c.name, c.vendor, c.no, ...(c.nums || [])].join(' ')).includes(q) ? [m.dept, m.person, m.phone, m.note, c.officer].find((x) => x && L.norm(x).includes(q)) : '';
       return `<div class="citem${c.key === ui.sel ? ' on' : ''}" role="listitem" tabindex="0" data-key="${esc(c.key)}">
         <div class="nm" title="${esc(c.name)}">${hl(c.name || '이름 없는 계약')}</div>
-        <div class="st">${pillFor(st, c)}</div>
+        <div class="st">${pillFor(st, c)}${st.roundOpen && st.state !== 'paid' ? roundPill(st.roundOpen, true) : ''}</div>
         <div class="meta"><span>${hl(c.vendor || '업체 미상')}</span><span>${esc(c.type)}</span>${isExt(c) ? '<span class="ext-dot" title="외부 예산(e나라도움 등)">외부</span>' : ''}${/^date/.test(ui.sort) ? ((c.contractDate || c.startDate) ? `<span class="date">계약 ${esc(L.fmtDate(c.contractDate || c.startDate))}</span>` : '') : c.endDate ? `<span class="date"${st.late ? ' style="color:var(--seal)"' : ''}>준공 ${esc(L.fmtDate(c.endDate))}</span>` : ''}${m.note || m.person ? `<span class="memo-dot" title="${esc([m.dept, m.person, m.phone].filter(Boolean).join(' ') + (m.note ? '\n' + m.note : ''))}">메모</span>` : ''}</div>
         ${memoHit ? `<div class="hit">${hl(String(memoHit).replace(/\s+/g, ' ').slice(0, 80))}</div>` : ''}
         <div class="bar-mini"><i style="width:${pct}%"></i></div></div>`;
@@ -755,6 +872,13 @@
     return (withInbox ? '<option value="__inbox">미분류로 보내기</option>' : '') + '<option value="">서류 종류 고르기</option>' +
       list.map((x) => `<option value="${esc(x.id)}"${x.id === sel ? ' selected' : ''}>${esc(x.group)} · ${esc(x.name)}</option>`).join('');
   }
+  // 서류 줄의 '회차' 고르기(회차가 있는 계약만): 준공(마지막) / 1회 기성 / …
+  function payOptions(d) {
+    const c = d.key && db.contracts[d.key]; const rs = c ? sortedRounds(c) : [];
+    if (!rs.length) return '';
+    const cur = d.pay && roundById(c, d.pay) ? d.pay : '';
+    return `<select data-act="docpay" data-doc="${d.id}" aria-label="지출 회차" class="paysel">${[['', '준공(마지막)'], ...rs.map((r) => [r.id, L.roundLabel(r)])].map(([v, t]) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
+  }
   const isoOf = (s) => { const m = String(s || '').replace(/\D/g, ''); return m.length >= 8 ? `${m.slice(0, 4)}-${m.slice(4, 6)}-${m.slice(6, 8)}` : ''; };
   function fileRow(d, list) {
     const tag = d.missing ? '<span class="ft warn" title="데이터 폴더에서 이 파일을 찾을 수 없습니다">파일 없음</span>'
@@ -768,12 +892,12 @@
       const v = d.validOverride || (d.dates && d.dates.valid) || '';
       const how = d.validOverride ? '직접' : d.dates && d.dates.validHow === 'calc' ? '계산' : v ? '읽음' : '';
       dt = `<label class="vdate${v ? '' : ' empty'}" title="증명서에 적힌 유효기간 마지막 날. 잘못 읽었으면 고치세요.">유효기간<input type="date" data-act="validset" data-doc="${d.id}" value="${isoOf(v)}">${how ? `<small>${how}</small>` : ''}</label>`;
-    } else if (/-(finish|inspect)$/.test(d.itemId || '')) {
-      const v = dateOfDoc(d, /-inspect$/.test(d.itemId) ? 'inspect' : 'finish');
+    } else if (/-(finish|inspect|progfin|proginsp)$/.test(d.itemId || '')) {
+      const v = dateOfDoc(d, /-(inspect|proginsp)$/.test(d.itemId) ? 'inspect' : 'finish');
       dt = `<label class="vdate${v ? '' : ' empty'}" title="지출요청일(이 날짜 + 2주) 계산에 씁니다">날짜<input type="date" data-act="docdate" data-doc="${d.id}" value="${isoOf(v)}">${d.dateOverride ? '<small>직접</small>' : ''}</label>`;
     }
     return `<div class="file">${tag}<span class="fn" title="${esc(d.name)}">${esc(d.name)}</span>${conv}${dt}
-      <select data-act="moveitem" data-doc="${d.id}" aria-label="서류 종류">${itemOptions(list, d.itemId, true)}</select>
+      <select data-act="moveitem" data-doc="${d.id}" aria-label="서류 종류">${itemOptions(list, d.itemId, true)}</select>${payOptions(d)}
       <button class="link" data-act="view" data-doc="${d.id}">보기</button>
       <button class="x" data-act="del" data-doc="${d.id}" title="빼기" aria-label="빼기">✕</button></div>`;
   }
@@ -807,7 +931,7 @@
   }
   // 업체에 다시 받을 서류: 업체·메일로 받는 서류 중 빠진 것 + 유효기간이 지출요청일보다 먼저 끝나는 증명서
   // 감독관 경유: 들어온 서류(파일·묶음 안·원본·받음) 중 경유 체크 안 된 것
-  const viaOf = (c) => { const docs = docsOf(c.key), got = gotMap(c); return L.viaStatus(c, lists(c.type), (id) => L.hasItem(docs, got, id) || docs.some((d) => (d.also || []).includes(id))); };
+  const viaOf = (c) => { const docs = finalDocs(c), got = gotMap(c); return L.viaStatus(c, lists(c.type), (id) => L.hasItem(docs, got, id) || docs.some((d) => (d.also || []).includes(id))); };
   function vendorNeeds(c, st) {
     const missing = st.missing.filter((x) => L.ORIGINAL_SOURCES.includes(x.source)).map((x) => itemView(c, x).name);
     const reissue = st.expired.map((x) => ({ name: itemView(c, x.item).name, valid: x.valid }));
@@ -859,6 +983,90 @@
       </div>
       <p class="memo-foot">이 PC에만 저장되고 인쇄본에는 들어가지 않습니다.</p></div></details>`;
   }
+  // ---------- 지출 회차 화면 ----------
+  const NEXT = {
+    prog: ['업체 기성계 접수(감독관 경유 확인)', '감독부서에 기성검사원 지정통보 발송', '기성부분 검사조서 접수', '업체에 청구 서류 요청·접수', '지출결의'],
+    labor: ['노무비 청구서(감독관 경유)·지급 내역 받기', '지출결의'],
+    adv: ['선금 청구서·보증서 받기', '지출결의'],
+  };
+  function roundPill(x, small) {
+    const s = x.s, r = x.r, cls = small ? ' sub' : '';
+    const lb = small ? `${esc(s.label)} ` : '';
+    if (s.state === 'paid') return `<span class="pill paid${cls}">${lb}지출 ${esc(L.fmtDate(r.paidDate).slice(5))}</span>`;
+    if (s.state === 'empty') return `<span class="pill none${cls}">${lb}시작 전</span>`;
+    if (s.state === 'missing') return `<span class="pill miss${cls}">${lb}미비 ${s.need}</span>`;
+    return `<span class="pill ready${cls}">${lb}지출 대기</span>`;
+  }
+  function nextText(x) {
+    const s = x.s;
+    if (s.state === 'paid') return `${L.fmtDate(x.r.paidDate)} 지출 완료${x.r.payMemo ? ` · ${x.r.payMemo}` : ''}`;
+    if (s.cur < 0) return s.need ? '서류 보완(유효기간·경유) 후 지출 처리' : '[지출 처리]로 완료 표시';
+    return '다음: ' + ((NEXT[x.r.kind] || [])[s.cur] || s.steps[s.cur].name);
+  }
+  function roundRow(c, r, x, rs, list) {
+    const docs = rs.docs;
+    const got = r.received || {}, all = docsOf(c.key);
+    const ds = x.link ? all.filter((d) => d.itemId === x.id) : docs.filter((d) => d.itemId === x.id);
+    const inner = x.link ? [] : docs.filter((d) => d.itemId !== x.id && (d.also || []).includes(x.id));
+    const rcv = !!got[x.id] || (x.link && !!gotMap(c)[x.id]);
+    let mark, side;
+    if (ds.length || inner.length) { mark = '<span class="mark ok">✓</span>'; side = ds.length ? `<span class="num">${ds.length}개</span>` : '<span class="muted">묶음 파일 안</span>'; }
+    else if (rcv) { mark = '<span class="mark rcv">✓</span>'; side = '<span class="rcv-t">받음 표시</span>'; }
+    else if (x.required) { mark = '<span class="mark miss">✕</span>'; side = '<span class="missing">누락</span>'; }
+    else { mark = '<span class="mark opt">–</span>'; side = '<span class="optional">해당 시</span>'; }
+    if (x.link) side += ' <span class="muted small">(아래 선금 칸과 같은 서류)</span>';
+    const cv = rs.certs.find((v) => v.item.id === x.id);
+    if (cv) {
+      if (cv.status === 'short') { mark = '<span class="mark miss">!</span>'; side = `<span class="valid bad" title="지출요청일 ${esc(L.fmtDate(rs.basis.date))}보다 먼저 끝남">${esc(L.fmtDate(cv.valid).slice(5))}까지 · 재발급</span>`; }
+      else if (cv.status === 'unknown') side = '<span class="valid unk">유효기간 확인</span>';
+      else side = `<span class="valid ok">${esc(L.fmtDate(cv.valid).slice(5))}까지 유효</span>`;
+    }
+    if (x.link && L.isAdvBond(x.id) && ds.length) { const a = advOf(c); if (a && a.status === 'short') { mark = '<span class="mark miss">!</span>'; side = `<span class="valid bad">${esc(L.fmtDate(a.end))}까지 · 준공일+${a.days}일 — 유효하지 않음</span>`; } else if (a && a.status === 'ok') side = `<span class="valid ok">${esc(L.fmtDate(a.end))}까지 · 준공일+${a.days}일 유효</span>`; }
+    const present = !!(ds.length || inner.length || rcv);
+    const via = /-(progfin|laborclaim)$/.test(x.id) ? (() => { const on = !!(r.via || {})[x.id]; return `<div class="via${present ? '' : ' off'}"><span class="via-l">감독관 경유</span><label class="via-c${on ? ' on' : present ? ' no' : ''}"><input type="checkbox" data-act="rvia" data-round="${esc(r.id)}" data-item="${esc(x.id)}"${on ? ' checked' : ''}> 경유함</label></div>`; })() : '';
+    const tog = ds.length || x.link ? '' : `<label class="orig-toggle recv" title="파일 없이 이미 받았거나 처리했으면 체크"><input type="checkbox" data-act="rrecv" data-round="${esc(r.id)}" data-item="${esc(x.id)}"${got[x.id] ? ' checked' : ''}> 받음</label>`;
+    const add = x.link ? '' : `<button class="add-item" data-act="additem" data-item="${esc(x.id)}" data-pay="${esc(r.id)}" title="${esc(x.name)}(으)로 바로 넣기">+ 추가</button>`;
+    return `<div class="row"${x.link ? '' : ` data-drop-item="${esc(x.id)}" data-drop-pay="${esc(r.id)}"`}>${mark}<div class="rname">${esc(x.name)}${x.note ? `<span class="note">${esc(x.note)}</span>` : ''}${via}</div>
+      <div class="rside">${tog}${side}${add}</div>${ds.length || inner.length ? `<div class="files">${ds.map((d) => fileRow(d, list)).join('')}${inner.map((d) => `<div class="file inner"><span class="ft">묶음</span><span class="fn" title="${esc(d.name)}">${esc(d.name)}</span><button class="link sm" data-act="view" data-doc="${d.id}">보기</button></div>`).join('')}</div>` : ''}</div>`;
+  }
+  function roundBlock(c, x, st) {
+    const r = x.r, s = x.s, list = classList(c);
+    const open = ui.roundOpen && r.id in ui.roundOpen ? ui.roundOpen[r.id] : (s.state !== 'paid' && !!st.roundOpen && st.roundOpen.r.id === r.id);
+    const chips = s.steps.map((g, i) => `<span class="rstep${g.complete ? ' ok' : i === s.cur && s.state !== 'paid' ? ' now' : ''}" title="${esc(g.name)}${g.req ? ` · 필수 ${g.done}/${g.req}` : ''}">${g.complete ? '✓' : i + 1}<i>${esc(g.name.replace(/\(.*\)/, ''))}</i></span>`).join('');
+    const vendorNeed = s.missing.filter((y) => L.ORIGINAL_SOURCES.includes(y.source) && !y.link).length + s.expired.length + s.via.length;
+    const askNow = s.state !== 'paid' && (r.kind !== 'prog' || s.cur >= 3) && vendorNeed;
+    return `<details class="round${s.state === 'paid' ? ' paid' : ''}" data-round="${esc(r.id)}"${open ? ' open' : ''}>
+      <summary><b class="rlabel">${esc(s.label)}</b><span class="rsteps">${chips}</span><span class="rnext${s.state === 'paid' ? ' ok-t' : ''}">${esc(nextText(x))}</span>${roundPill(x)}
+        <button type="button" class="btn sm${s.state === 'ready' ? ' primary' : ''}" data-act="roundpay" data-round="${esc(r.id)}">${r.paidDate ? '지출 수정' : '지출 처리'}</button></summary>
+      <div class="rbody">
+        ${r.kind === 'labor' ? `<label class="rmonth">몇 월분<select data-act="rmonth" data-round="${esc(r.id)}"><option value="">모름</option>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}"${r.month === i + 1 ? ' selected' : ''}>${i + 1}월분</option>`).join('')}</select></label>` : ''}
+        ${s.steps.map((g, i) => `<section class="rstage${g.complete ? ' done' : ''}"><div class="stage-head"><span class="stage-no">${i + 1}</span><h4>${esc(g.name)}</h4>${g.req ? `<span class="sum num">필수 ${g.done}/${g.req}</span>` : ''}</div>
+          ${g.items.map((it) => roundRow(c, r, it, s, list)).join('')}</section>`).join('')}
+        <div class="rfoot">
+          <label class="rplan">지출요청일 <input type="date" data-act="rpayplan" data-round="${esc(r.id)}" value="${isoOf(s.basis.date)}"><small class="muted">${esc(s.basis.how)} — 증명서 유효기간을 이 날짜로 따짐</small>${r.payPlan ? ` <button type="button" class="link sm" data-act="rpayauto" data-round="${esc(r.id)}">자동으로</button>` : ''}</label>
+          <span class="spacer"></span>
+          <button type="button" class="btn${askNow ? ' primary' : ''}" data-act="rmail" data-round="${esc(r.id)}"${vendorNeed ? '' : ' disabled'}>${r.kind === 'prog' ? '청구 서류 요청 메일' : '보완 요청 메일'}${vendorNeed ? ` <small>(${vendorNeed})</small>` : ''}</button>
+          <button type="button" class="btn" data-act="rprint" data-round="${esc(r.id)}"${s.docs.length ? '' : ' disabled'}>이 회차 인쇄</button>
+          <button type="button" class="btn" data-act="rsave" data-round="${esc(r.id)}"${s.docs.length ? '' : ' disabled'}>PDF로 저장</button>
+          <button type="button" class="btn ghost danger" data-act="rdel" data-round="${esc(r.id)}">회차 지우기</button>
+        </div>
+      </div></details>`;
+  }
+  function roundsCard(c, st) {
+    if (!L.hasRounds(c.type)) return '';
+    const hasAdv = roundsOf(c).some((r) => r.kind === 'adv');
+    const add = `<span class="radd"><button type="button" class="btn sm" data-act="roundadd" data-kind="prog">+ 기성</button><button type="button" class="btn sm" data-act="roundadd" data-kind="labor">+ 노무비</button>${hasAdv ? '' : '<button type="button" class="btn sm" data-act="roundadd" data-kind="adv">+ 선금</button>'}</span>`;
+    if (!st.rounds.length) return `<section class="rounds none"><div class="rounds-head"><h3>지출 회차</h3><span class="muted small">선금·기성·노무비처럼 중간에 나가는 지출을 회차마다 확인합니다. 기성계·기성 검사조서·노무비 청구서가 들어오면 회차가 저절로 생깁니다.</span>${add}</div></section>`;
+    const paid = st.rounds.filter((x) => x.s.state === 'paid').length;
+    // 회차가 많은 장기 공사(10회 이상)도 한눈에: 회차마다 칸 하나(지출 완료·지출 대기·미비·시작 전), 누르면 그 회차를 펼침
+    const short = (r) => (r.kind === 'prog' ? `${r.n}회` : r.kind === 'adv' ? '선금' : r.month ? `${r.month}월` : `노${r.n}`);
+    const track = `<div class="rtrack" role="list" aria-label="회차별 지출">${st.rounds.map((x) => `<button type="button" role="listitem" class="rt ${x.s.state}" data-act="rjump" data-round="${esc(x.r.id)}" title="${esc(x.s.label)} · ${esc({ paid: '지출 완료 ' + L.fmtDate(x.r.paidDate), ready: '지출 대기', missing: '미비 ' + x.s.need, empty: '시작 전' }[x.s.state])}">${x.r.kind === 'labor' ? '<small>노</small>' : ''}${esc(short(x.r))}</button>`).join('')}</div>`;
+    const fin = st.state === 'paid' ? `<span class="pill paid">지출 ${esc(L.fmtDate(c.paidDate).slice(5))}</span>` : pillFor(st, c);
+    return `<section class="rounds"><div class="rounds-head"><h3>지출 회차</h3><span class="muted small">중간 지출 ${paid}/${st.rounds.length} 완료 · 회차 서류는 계약 폴더 안 회차 폴더에 따로 정리</span>${add}</div>
+      ${st.rounds.length > 1 ? track : ''}
+      ${st.rounds.map((x) => roundBlock(c, x, st)).join('')}
+      <div class="round final"><b class="rlabel">준공(마지막)</b><span class="rnext muted">아래 서류 목록 — 준공계 → 준공검사원 지정통보 → 준공조서 → 청구 서류 → 지출결의</span>${fin}</div></section>`;
+  }
   function renderDetail() {
     const el = $('#detail');
     const c = ui.sel && db.contracts[ui.sel];
@@ -868,7 +1076,7 @@
         <button class="btn primary" data-act="add">업로드</button></div>`;
       return;
     }
-    const list = lists(c.type), docs = docsOf(c.key), st = statusOf(c);
+    const list = lists(c.type), docs = finalDocs(c), st = statusOf(c);
     const srcLabel = { api: '나라장터', doc: '계약서에서 만듦', manual: '직접 추가' }[c.source] || '';
     const period = c.startDate || c.endDate ? `${L.fmtDate(c.startDate) || '?'} – ${L.fmtDate(c.endDate) || '?'}` : (c.period || '');
     const groups = [];
@@ -902,6 +1110,8 @@
       <div class="dropin" id="dropin"><button class="btn primary" data-act="addhere">업로드</button>
         <span>이 계약 서류로 올립니다. 서류 종류는 자동으로 찾고, 파일을 여기에 끌어다 놓아도 됩니다.</span></div>
       <div class="dtop">${reqCard(c, st)}${memoCard(c)}${auditCard(c)}</div>
+      ${roundsCard(c, st)}
+      ${st.rounds && st.rounds.length ? '<h3 class="final-head">준공(마지막 지출) 서류</h3>' : ''}
       <div class="stages">
         ${untyped.length ? `<section class="stage"><div class="stage-head"><span class="stage-no" style="background:var(--amber)">?</span><h3>서류 종류를 정해 주세요</h3><span class="where">이 계약 서류인데 어떤 서류인지 찾지 못했습니다</span></div>
           <div class="row"><span class="mark warn">!</span><div class="rname">종류 미정 ${untyped.length}개</div><div class="rside"></div><div class="files">${untyped.map((d) => fileRow(d, list)).join('')}</div></div></section>` : ''}
@@ -967,7 +1177,7 @@
   // 예전 버전에서 올린 서류(날짜를 아직 안 읽은 증명서·준공계·준공조서)는 계약을 열 때 한 번 읽어 둠 — 다시 설치해도 그대로 이어서 씀
   const datesPending = new Set();
   async function backfillDates(c) {
-    const need = docsOf(c.key).filter((d) => !d.missing && !datesPending.has(d.id) && ((!d.dates && (L.isCertItem(d.itemId) || /-(finish|inspect)$/.test(d.itemId || ''))) || (L.isAdvBond(d.itemId) && !(d.dates && 'bondEnd' in d.dates))));
+    const need = docsOf(c.key).filter((d) => !d.missing && !datesPending.has(d.id) && ((!d.dates && (L.isCertItem(d.itemId) || /-(finish|inspect|progfin|proginsp)$/.test(d.itemId || ''))) || (L.isAdvBond(d.itemId) && !(d.dates && 'bondEnd' in d.dates))));
     if (!need.length) return;
     need.forEach((d) => datesPending.add(d.id));
     for (const d of need) {
@@ -1394,13 +1604,13 @@
   // ---------- 화면: 현황판 ----------
   function boardRows() {
     return filtered(true).map((c) => ({ c, st: statusOf(c) }))
-      .filter(({ st }) => !ui.board || (ui.board === 'late' ? st.late : ui.board === 'missing' ? (st.state === 'missing' || st.state === 'empty') : st.state === ui.board))
+      .filter(({ st }) => !ui.board || (ui.board === 'late' ? st.late : ui.board === 'round' ? !!st.roundOpen : ui.board === 'missing' ? (st.state === 'missing' || st.state === 'empty') : st.state === ui.board))
       .sort((a, b) => (b.st.late - a.st.late) || ((L.toDate(a.c.endDate) || 9e15) - (L.toDate(b.c.endDate) || 9e15)));
   }
   function renderBoard() {
     const all = filtered(true).map((c) => ({ c, st: statusOf(c) }));
-    const cnt = { '': all.length, missing: 0, ready: 0, late: 0, paid: 0 };
-    all.forEach(({ st }) => { if (st.state === 'missing' || st.state === 'empty') cnt.missing++; if (st.state === 'ready') cnt.ready++; if (st.state === 'paid') cnt.paid++; if (st.late) cnt.late++; });
+    const cnt = { '': all.length, missing: 0, ready: 0, late: 0, paid: 0, round: 0 };
+    all.forEach(({ st }) => { if (st.state === 'missing' || st.state === 'empty') cnt.missing++; if (st.state === 'ready') cnt.ready++; if (st.state === 'paid') cnt.paid++; if (st.late) cnt.late++; if (st.roundOpen) cnt.round++; });
     const rows = boardRows();
     const chip = (k, label, alert) => `<button class="chip${ui.board === k ? ' on' : ''}${alert && cnt[k] ? ' alert' : ''}" data-board="${k}">${label} <b>${cnt[k]}</b></button>`;
     $('#view-board').innerHTML = `
@@ -1408,7 +1618,7 @@
         <div class="right"><select id="bOfficer" aria-label="담당자">${$('#fOfficer').innerHTML}</select>
           <button class="btn" data-act="excel" title="지금 보이는 계약을 엑셀 파일로 저장하고 엽니다"${rows.length ? '' : ' disabled'}>${XLS_ICON}엑셀로 받기 <span class="num">${rows.length}건</span></button>
           <span class="btn-group" role="group" aria-label="감사·검사 서식 받기"><button class="btn" data-act="quickform" data-fk="audit" title="행정사무감사 「수의계약 현황(1,000만원 이상)」 한글 파일 — 나라장터·서류에서 채워 바로 받기">행정사무감사 서식</button><button class="btn" data-act="quickform" data-fk="inspect" title="종합감사 「계약집행 현황(총괄)」 엑셀 — 나라장터·서류에서 채워 바로 받기">종합감사 서식</button><button class="btn ghost" data-act="forms" title="기간·구분·기준 금액·넣을 계약을 고르고 빈칸 확인">고르기</button></span></div></div>
-      <div class="chips">${chip('', '전체')}${chip('missing', '서류 미비')}${chip('ready', '지출 대기')}${chip('late', '준공 지남·미지출', true)}${chip('paid', '지출 완료')}</div>
+      <div class="chips">${chip('', '전체')}${chip('missing', '서류 미비')}${chip('ready', '지출 대기')}${chip('late', '준공 지남·미지출', true)}${chip('round', '기성·노무비 진행 중')}${chip('paid', '지출 완료')}</div>
       ${rows.length ? `<table class="grid"><thead><tr><th>계약</th><th>구분</th><th>준공일</th><th>서류</th><th class="r">원본</th><th>지출</th><th>상태</th></tr></thead><tbody>
         ${rows.map(({ c, st }) => `<tr data-key="${esc(c.key)}">
           <td><div class="nm">${esc(c.name)}</div><div class="sub">${esc(c.vendor || '')}${c.amount ? ` · ${esc(L.won(c.amount))}` : ''}</div>${(() => { const m = memoOf(c); const who = [m.dept, m.person, m.phone].filter(Boolean).join(' '); return who || m.note ? `<div class="sub memo-line" title="${esc(m.note || '')}">${who ? `감독 ${esc(who)}` : ''}${m.note ? `${who ? ' · ' : ''}${esc(m.note.replace(/\s+/g, ' ').slice(0, 40))}` : ''}</div>` : ''; })()}</td>
@@ -1416,8 +1626,8 @@
           <td class="date"${st.late ? ' style="color:var(--seal);font-weight:650"' : ''}>${esc(L.fmtDate(c.endDate) || '-')}</td>
           <td><div class="prog${st.reqDone === st.reqTotal ? ' full' : ''}"><span class="track"><i style="width:${st.reqTotal ? Math.round(st.reqDone / st.reqTotal * 100) : 0}%"></i></span><span class="num">${st.reqDone}/${st.reqTotal}</span></div></td>
           <td class="r num">${st.origCount || ''}</td>
-          <td class="date">${esc(L.fmtDate(c.paidDate) || '')}</td>
-          <td>${pillFor(st, c)}</td></tr>`).join('')}
+          <td class="date">${esc(L.fmtDate(c.paidDate) || '')}${st.rounds.length ? `<div class="sub">중간 ${st.rounds.filter((x) => x.s.state === 'paid').length}/${st.rounds.length}</div>` : ''}</td>
+          <td>${pillFor(st, c)}${st.roundOpen ? `<div>${roundPill(st.roundOpen, true)}</div>` : ''}</td></tr>`).join('')}
         </tbody></table>` : `<div class="empty-line">해당하는 계약이 없습니다.</div>`}`;
     const bo = $('#bOfficer'); bo.value = ui.officer;
   }
@@ -1543,7 +1753,25 @@
     try {
       if (act === 'add') $('#fileIn').click();
       else if (act === 'addhere') { pickTarget = { key: ui.sel }; $('#fileIn').click(); }
-      else if (act === 'additem') { pickTarget = { key: ui.sel, item: t.dataset.item }; $('#fileIn').click(); }
+      else if (act === 'additem') { pickTarget = { key: ui.sel, item: t.dataset.item, pay: t.dataset.pay || null }; $('#fileIn').click(); }
+      else if (act === 'roundadd') {
+        const o = {}; if (t.dataset.kind === 'labor') { const d = new Date(); d.setMonth(d.getMonth() - 1); o.month = d.getMonth() + 1; }
+        const r = addRound(c, t.dataset.kind, o); ui.roundOpen = { ...(ui.roundOpen || {}), [r.id]: true }; render(); await saveDb(true);
+        toast(`${L.roundLabel(r)} 회차를 만들었습니다. 서류를 이 회차 줄에 끌어다 놓거나, 그냥 올려도 이름·내용으로 찾아 넣습니다.`, 'ok');
+      } else if (act === 'roundpay') { e.preventDefault(); const r = roundById(c, t.dataset.round); if (r) openPay(r, `${L.roundLabel(r)} 지출 처리`);
+      } else if (act === 'rjump') {
+        ui.roundOpen = { ...(ui.roundOpen || {}), [t.dataset.round]: true }; render();
+        const el = document.querySelector(`details.round[data-round="${t.dataset.round}"]`); if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      } else if (act === 'rmail') { const r = roundById(c, t.dataset.round); if (r) openMail(c, r);
+      } else if (act === 'rprint' || act === 'rsave') { const r = roundById(c, t.dataset.round); if (r) await printRound(c, r, act === 'rsave' ? 'save' : 'print');
+      } else if (act === 'rpayauto') { const r = roundById(c, t.dataset.round); if (r) { delete r.payPlan; c.updatedAt = Date.now(); render(); await saveDb(true); }
+      } else if (act === 'rdel') {
+        const r = roundById(c, t.dataset.round); if (!r) return;
+        const ds = roundDocs(c, r);
+        if (!confirm(`${L.roundLabel(r)} 회차를 지울까요?${ds.length ? ` 이 회차 서류 ${ds.length}개는 준공(마지막) 목록으로 옮겨집니다.` : ''}`)) return;
+        for (const d of ds) await moveDoc(d, c.key, d.itemId, true, '');
+        c.pays = (c.pays || []).filter((x) => x !== r); c.updatedAt = Date.now(); await saveDb(true); render();
+      }
       else if (act === 'print') await printContract(c, 'print');
       else if (act === 'save') await printContract(c, 'save');
       else if (act === 'folder') await S.open(folderOf(c));
@@ -1582,6 +1810,27 @@
   async function onChange(e) {
     const t = e.target;
     try {
+      const rOf = () => { const c = db.contracts[ui.sel]; return c ? roundById(c, t.dataset.round) : null; };
+      if (t.dataset.act === 'rvia' || t.dataset.act === 'rrecv') {
+        const c = db.contracts[ui.sel], r = rOf(); if (!r) return; const k = t.dataset.act === 'rvia' ? 'via' : 'received';
+        r[k] = r[k] || {}; if (t.checked) r[k][t.dataset.item] = true; else delete r[k][t.dataset.item];
+        c.updatedAt = Date.now(); render(); await saveDb(); return;
+      }
+      if (t.dataset.act === 'rpayplan' || t.dataset.act === 'rmonth') {
+        const c = db.contracts[ui.sel], r = rOf(); if (!r) return;
+        if (t.dataset.act === 'rpayplan') { const v = t.value.replace(/-/g, ''); if (v) r.payPlan = v; else delete r.payPlan; }
+        else { const old = roundDir(c, r); if (t.value) r.month = +t.value; else delete r.month; if (roundDir(c, r) !== old) for (const d of roundDocs(c, r)) await moveDoc(d, c.key, d.itemId, d.manual); }
+        c.updatedAt = Date.now(); await saveDb(true); render(); return;
+      }
+      if (t.dataset.act === 'docpay') {
+        const d = docById(t.dataset.doc), c = db.contracts[d.key]; const r = t.value ? roundById(c, t.value) : null;
+        // 기성 회차 ↔ 준공: 준공계·지정통보·조서를 기성계·기성 지정통보·기성 검사조서로 바꿔 줌
+        const suf = String(d.itemId || '').replace(/^[csg]-/, ''); let item = d.itemId;
+        const toProg = { finish: 'progfin', notice: 'prognotice', inspect: 'proginsp' }, toFin = { progfin: 'finish', prognotice: 'notice', proginsp: 'inspect' };
+        if (r && r.kind === 'prog' && toProg[suf]) item = d.itemId.replace(suf, toProg[suf]);
+        if (!r && toFin[suf]) item = d.itemId.replace(suf, toFin[suf]);
+        await moveDoc(d, c.key, item, true, r ? r.id : ''); render(); toast(`${r ? L.roundLabel(r) : '준공(마지막)'}으로 옮겼습니다.`, 'ok'); return;
+      }
       if (t.dataset.act === 'noprint') {
         const c = db.contracts[ui.sel]; c.noPrint = c.noPrint || {};
         if (t.checked) delete c.noPrint[t.dataset.item]; else c.noPrint[t.dataset.item] = true;
@@ -1604,7 +1853,7 @@
         render();
       } else if (t.dataset.act === 'assign') {
         const d = docById(t.dataset.doc); const c = db.contracts[t.value]; if (!c) return;
-        await moveDoc(d, c.key, L.classifyItem(lists(c.type), d.name, d.title));
+        await moveDoc(d, c.key, L.classifyItem(classList(c), d.name, d.title));
         toast(`"${c.name}"으로 옮겼습니다.`, 'ok', { label: '계약 보기', run: () => { ui.sel = c.key; setView('contracts'); } });
         render();
       } else if (t.dataset.act === 'validset' || t.dataset.act === 'docdate') {
@@ -1619,9 +1868,15 @@
   }
 
   // 업체 보완 요청 메일
-  function openMail(c) {
-    const st = statusOf(c), n = vendorNeeds(c, st);
-    const m = L.vendorMail({ c, org: cfg.insttNm, dept: (cfg.notice && cfg.notice.dept) || '', officer: cfg.officer, phone: (cfg.notice && cfg.notice.phone) || '', missing: n.missing, reissue: n.reissue, via: n.via, basis: st.basis || {} });
+  function openMail(c, r) {
+    let st = statusOf(c), n = vendorNeeds(c, st), round = '';
+    if (r) {
+      const s = roundStatus(c, r); round = s.label;
+      n = { missing: s.missing.filter((x) => L.ORIGINAL_SOURCES.includes(x.source) && !x.link).map((x) => x.name), reissue: s.expired.map((x) => ({ name: x.item.name, valid: x.valid })), via: s.via };
+      if (s.advShort) n.reissue.push({ name: `선금 보증서(보증기간이 준공일 ${L.fmtDate(c.endDate)} + ${L.ADV_DAYS}일 이상이어야 함)`, valid: s.adv.end });
+      st = { basis: s.basis, unknownValid: s.unknownValid };
+    }
+    const m = L.vendorMail({ c, org: cfg.insttNm, dept: (cfg.notice && cfg.notice.dept) || '', officer: cfg.officer, phone: (cfg.notice && cfg.notice.phone) || '', missing: n.missing, reissue: n.reissue, via: n.via, basis: st.basis || {}, round });
     $('#mailTo').value = memoOf(c).vmail || ''; $('#mailSubj').value = m.title; $('#mailBody').value = m.body;
     $('#mailNote').textContent = st.unknownValid.length ? `유효기간을 읽지 못한 증명서 ${st.unknownValid.length}개는 빠져 있습니다. 서류 줄에서 날짜를 넣으면 반영됩니다.` : '';
     $('#dlgMail').showModal();
@@ -1682,15 +1937,17 @@
     editing.archived = true; await saveDb(true); $('#dlgContract').close(); ui.sel = null; render();
   };
   // 지출 처리
-  function openPay(c) {
-    editing = c;
+  function openPay(c, title) {
+    editing = c; $('#payTitle').textContent = title || '지출 처리';
     $('#payDate').value = c.paidDate ? L.fmtDate(c.paidDate).replace(/\./g, '-') : new Date(Date.now() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 10);
     $('#payMemo').value = c.payMemo || ''; $('#payUndo').hidden = !c.paidDate;
     $('#dlgPay').showModal();
   }
-  $('#paySave').onclick = async () => { editing.paidDate = $('#payDate').value.replace(/-/g, ''); editing.payMemo = $('#payMemo').value.trim(); editing.updatedAt = Date.now(); await saveDb(true); $('#dlgPay').close(); render(); };
-  $('#payUndo').onclick = async () => { editing.paidDate = ''; editing.payMemo = ''; await saveDb(true); $('#dlgPay').close(); render(); };
+  const touch = () => { const c = db.contracts[ui.sel]; if (c) c.updatedAt = Date.now(); };
+  $('#paySave').onclick = async () => { editing.paidDate = $('#payDate').value.replace(/-/g, ''); editing.payMemo = $('#payMemo').value.trim(); editing.updatedAt = Date.now(); touch(); await saveDb(true); $('#dlgPay').close(); render(); };
+  $('#payUndo').onclick = async () => { editing.paidDate = ''; editing.payMemo = ''; touch(); await saveDb(true); $('#dlgPay').close(); render(); };
 
+  document.addEventListener('toggle', (e) => { const d = e.target; if (d.matches && d.matches('details.round[data-round]')) ui.roundOpen = { ...(ui.roundOpen || {}), [d.dataset.round]: d.open }; }, true);
   document.addEventListener('input', (e) => {
     const t = e.target.closest('[data-memo]'); if (!t) return;
     const c = ui.sel && db.contracts[ui.sel]; if (!c) return;
@@ -1773,12 +2030,12 @@
   $('#btnFetch').onclick = () => fetchContracts();
   $('#btnNewContract').onclick = () => openContract(null);
   let pickTarget = null;
-  $('#fileIn').onchange = (e) => { const fs = [...e.target.files]; e.target.value = ''; const p = pickTarget || {}; pickTarget = null; ingest(fs, p.key || null, p.item || null); };
+  $('#fileIn').onchange = (e) => { const fs = [...e.target.files]; e.target.value = ''; const p = pickTarget || {}; pickTarget = null; ingest(fs, p.key || null, p.item || null, p.pay ? { pay: p.pay } : {}); };
 
   // 끌어다 놓기: 서류 줄이면 그 계약·그 서류로, 업로드 칸이면 그 계약으로, 아니면 자동 분류
   const dropTarget = (e) => {
     if (ui.view !== 'contracts' || !ui.sel || !e.target.closest) return null;
-    const row = e.target.closest('#detail [data-drop-item]'); if (row) return { el: row, key: ui.sel, item: row.dataset.dropItem };
+    const row = e.target.closest('#detail [data-drop-item]'); if (row) return { el: row, key: ui.sel, item: row.dataset.dropItem, pay: row.dataset.dropPay || null };
     const di = e.target.closest('#dropin'); if (di) return { el: di, key: ui.sel };
     return null;
   };
@@ -1796,7 +2053,7 @@
     if (!hasFiles(e)) return; e.preventDefault(); dragDepth = 0; $('#dropOverlay').hidden = true;
     const tg = dropTarget(e); clearOver();
     const files = await collectDropped(e.dataTransfer);
-    ingest(files, tg ? tg.key : null, tg ? tg.item || null : null);
+    ingest(files, tg ? tg.key : null, tg ? tg.item || null : null, tg && tg.pay ? { pay: tg.pay } : {});
   });
   async function collectDropped(dt) {
     const entries = dt.items ? [...dt.items].map((i) => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean) : [];

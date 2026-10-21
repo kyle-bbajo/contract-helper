@@ -37,6 +37,8 @@
     ...(opt.alt ? { alt: opt.alt } : {}), // 둘 중 하나만 있으면 되는 서류(예: 하자보수보증서 ↔ 하자보수 이행보증금 지급각서)
   });
 
+  // 검사원 지정통보(기성·준공 공통 말) — '준공검사원'(준공계 칸)보다 긴 말이라 지정통보가 이김
+  const NOTICE_KW = '검사원지정통보,검사자지정통보,검사원지정,검사자지정,검사공무원지정,검사원임명,지정통보';
   function defaultChecklists() {
     seq = 0;
     const g1 = '구매요구', g2 = '계약', g5 = '준공조서', g6 = '대금청구', g7 = '지출결의';
@@ -58,6 +60,7 @@
     ];
     // 대금청구: 4대보험·고용산재 완납증명서와 지역개발채권도 여기서 받음(업체가 청구 때 냄)
     const tail = (k, mid = []) => [
+      ...(k === 'g' ? [] : [it(g5, '준공검사원 지정통보', NOTICE_KW + ',준공검사원지정,준공검사자지정,준공검사공무원지정', { source: '문서함', note: '감독부서에 발송', id: k + '-notice' })]),
       it(g5, '준공조서', '준공조서,검사조서,검수조서,준공검사조서', { source: '문서함', id: k + '-inspect' }),
       it(g6, '대금청구서', '청구서,대금청구,대가청구,청구', { source: '메일', id: k + '-claim' }),
       it(g6, '국세 납세증명서', '국세,납세증명', { source: '메일', id: k + '-tax' }),
@@ -686,11 +689,91 @@
     }
     return out;
   }
-  function vendorMail({ c, org, dept, officer, phone, missing = [], reissue = [], via = [], basis }) {
+  // ---------- 지출 회차(선금·기성·노무비) — 마지막 준공금은 기존 서류 목록 ----------
+  // 처리 순서(기성): 1 업체 기성계 제출(감독관 경유)·계약팀 접수 → 2 기성검사원 지정통보 감독부서 발송 → 3 기성부분 검사조서 접수 → 4 업체에 청구 서류 요청·접수 → 5 지출결의
+  const PAY_KINDS = { adv: '선금', prog: '기성', labor: '노무비' };
+  const typeKey = (type) => (type === '용역' ? 's' : type === '물품' ? 'g' : 'c');
+  const hasRounds = (type) => type === '공사' || type === '용역';
+  // 회차에만 쓰는 서류(준공 목록에는 없음)
+  function roundOnly(type) {
+    const k = typeKey(type);
+    return [
+      it('기성계', '기성계·기성검사원', '기성계,기성검사원,기성부분검사원,기성검사신청,기성검사요청,기성신고,기성부분내역,기성내역서,기성고내역', { note: '기성부분 내역서 포함 · 감독관 경유 · 스캔본', id: k + '-progfin' }),
+      it('검사원 지정', '기성검사원 지정통보', NOTICE_KW + ',기성검사원지정,기성검사자지정,기성검사공무원지정', { source: '문서함', note: '감독부서에 발송', id: k + '-prognotice' }),
+      it('검사조서', '기성부분 검사조서', '기성부분검사조서,기성검사조서,기성부분검사결과,기성검사결과,기성부분검사', { source: '문서함', id: k + '-proginsp' }),
+      it('노무비 청구', '노무비 청구서', '노무비청구,노무비지급청구,노무비지급요청,노무비신청,노무비청구서', { note: '감독관 경유 · 스캔본', id: k + '-laborclaim' }),
+      it('노무비 청구', '전월 노무비 지급 확인(이체확인증)', '이체확인증,이체확인,이체내역,입금확인,노무비지급확인서,노무비이체', { source: '메일', required: false, note: '전달 지급분을 근로자에게 줬는지', id: k + '-laborxfer' }),
+      it('선금 청구', '선금 청구서(선금 지급 신청서)', '선금청구,선급금청구,선금지급신청,선급금지급신청,선금신청,선급금신청,선금지급요청,선급금지급요청', { source: '메일', id: k + '-advclaim' }),
+      it('선금 청구', '선금 사용계획서', '선금사용계획,선급금사용계획,선금사용', { source: '메일', required: false, note: '해당 시', id: k + '-advplan' }),
+    ].map((x) => ({ ...x, round: true }));
+  }
+  // 회차 하나의 단계별 서류. list = 그 계약 구분의 서류 목록(직접 고친 것 포함) — 청구 서류는 거기 것을 그대로 씀
+  function roundSteps(kind, type, list) {
+    const k = typeKey(type), only = roundOnly(type);
+    const pick = (suf, over = {}) => { const x = (list || []).find((y) => y.id === `${k}-${suf}`) || only.find((y) => y.id === `${k}-${suf}`); return x ? { ...x, ...over } : null; };
+    const opt = (note) => ({ required: false, note });
+    const claim = (step) => [pick('claim', { group: step }), pick('tax', { group: step }), pick('ltax', { group: step }), pick('inspaid', { group: step }),
+      pick('emppaid', { group: step, ...(k === 's' ? opt('해당 시') : {}) }), pick('bond', { group: step, ...opt('해당 시') }), pick('invoice', { group: step }), pick('laborlist', { group: step, ...opt('노무비 구분관리 대상') })];
+    const pay = (step) => [pick('pay', { group: step })];
+    const st = (name, items) => ({ name, items: items.filter(Boolean).map((x) => ({ ...x, group: name })) });
+    if (kind === 'prog') return [
+      st('기성계 제출(감독관 경유)', [pick('progfin')]),
+      st('기성검사원 지정통보', [pick('prognotice')]),
+      st('기성부분 검사조서', [pick('proginsp')]),
+      st('청구 서류', claim()),
+      st('지출결의', pay()),
+    ];
+    if (kind === 'labor') return [
+      st('노무비 청구(감독관 경유)', [pick('laborclaim'), pick('laborlist', { required: true, note: '근로자별 근로일수·금액' }), pick('laborxfer')]),
+      st('지출결의', pay()),
+    ];
+    return [ // adv
+      st('선금 청구', [pick('advclaim'), pick('advbond', { required: true, note: '보증기간이 준공일 + 60일 이상', link: true }), pick('advplan'), pick('tax'), pick('ltax')]),
+      st('지출결의', pay()),
+    ];
+  }
+  const ROUND_SUF = { progfin: 'prog', prognotice: 'prog', proginsp: 'prog', laborclaim: 'labor', laborxfer: 'labor', advclaim: 'adv', advplan: 'adv' };
+  const FINAL_TO_PROG = { finish: 'progfin', notice: 'prognotice', inspect: 'proginsp' };
+  const SHARED_PAY = /^(claim|tax|ltax|inspaid|emppaid|bond|invoice|pay|laborlist)$/;
+  // 파일 이름·제목에서 어느 지출 회차 서류인지 힌트: { kind: prog|labor|adv|final, n, month }
+  //  스캔본(noname.pdf 등)은 이름에 회차가 없으니 글자 앞부분(body)에서 '제3회 기성'을 찾음 — 구분(기성·준공)은 이름·제목으로만(본문엔 준공예정일 같은 말이 흔함)
+  function roundHint(name, title, body) {
+    const h = norm(stem(name || '')) + '|' + String(title || '');
+    const out = {};
+    if (/최종기성|준공기성|준공금|준공대가|준공검사|준공계|준공조서/.test(h)) out.kind = 'final';
+    else if (/기성/.test(h)) out.kind = 'prog';
+    else if (/노무비(청구|지급청구|지급요청|신청)|\d{1,2}월분노무비|노무비\d{1,2}월/.test(h)) out.kind = 'labor';
+    else if (/선금|선급금/.test(h)) out.kind = 'adv';
+    const n = h.match(/(?:제)?(\d{1,2})(?:회|차)(?:분)?기성/) || h.match(/기성(?:금|부분|검사|계|고)*(?:제)?(\d{1,2})(?:회|차)/);
+    const nb = !n && body && out.kind === 'prog' ? (String(body).slice(0, 2500).match(/(?:제)?(\d{1,2})(?:회|차)(?:분)?기성/) || String(body).slice(0, 2500).match(/기성(?:금|부분|검사|계|고)*(?:제)?(\d{1,2})(?:회|차)/)) : null;
+    if (n || nb) out.n = +(n || nb)[1];
+    const m = h.match(/(\d{1,2})월분/) || (out.kind === 'labor' && h.match(/(\d{1,2})월/));
+    if (m && +m[1] >= 1 && +m[1] <= 12) out.month = +m[1];
+    return out;
+  }
+  const roundLabel = (r) => (r.kind === 'prog' ? `${r.n || 1}회 기성` : r.kind === 'adv' ? '선금' : r.month ? `${r.month}월분 노무비` : `노무비 ${r.n || 1}회`);
+  // 서류 하나를 어느 회차로: 반환 { kind, n?, month?, itemId } 또는 null(준공 목록)
+  //  open = 아직 지출 안 한 회차들(앞선 것부터). 회차 전용 서류는 늘 회차로, 청구 서류는 힌트가 없으면 열려 있는 첫 회차로(없으면 준공)
+  function routeRound(type, itemId, name, title, open, body) {
+    if (!hasRounds(type) || !itemId) return null;
+    const suf = String(itemId).replace(/^[csg]-/, '');
+    const h = roundHint(name, title, body);
+    if (ROUND_SUF[suf] === 'prog' && !h.kind) h.kind = 'prog';
+    if (h.kind === 'prog' && !h.n && body) { const b = roundHint(name, title + '기성', body); if (b.n) h.n = b.n; }
+    if (ROUND_SUF[suf]) return { kind: ROUND_SUF[suf], n: h.n, month: h.month, itemId };
+    if (FINAL_TO_PROG[suf] && h.kind === 'prog') return { kind: 'prog', n: h.n, itemId: itemId.replace(suf, FINAL_TO_PROG[suf]) };
+    if (!SHARED_PAY.test(suf)) return null;
+    if (h.kind === 'final') return null;
+    if (h.kind) return { kind: h.kind, n: h.n, month: h.month, itemId };
+    const first = (open || [])[0];
+    return first ? { kind: first.kind, n: first.n, month: first.month, id: first.id, itemId } : null;
+  }
+
+  function vendorMail({ c, org, dept, officer, phone, missing = [], reissue = [], via = [], basis, round }) {
     const f = (s) => fmtDate(s);
-    const title = `[${org || '발주기관'}] 「${c.name || '계약'}」 대금 청구 서류 보완 요청`;
+    const title = round ? `[${org || '발주기관'}] 「${c.name || '계약'}」 ${round} 대금 청구 서류 제출 요청` : `[${org || '발주기관'}] 「${c.name || '계약'}」 대금 청구 서류 보완 요청`;
     const secs = [];
-    if (missing.length) secs.push(['미제출 서류', missing.map((n) => `  - ${n}`)]);
+    if (missing.length) secs.push([round ? '제출할 서류' : '미제출 서류', missing.map((n) => `  - ${n}`)]);
     if (reissue.length) secs.push(['재발급 필요 서류(유효기간 부족)', reissue.map((x) => `  - ${x.name}: 유효기간 ${f(x.valid)}까지 → ${f(basis.date)} 이후까지 유효한 증명서로 재발급`)]);
     if (via.length) secs.push(['감독관 경유가 필요한 서류', via.map((n) => `  - ${n}: 감독관 경유(확인) 후 다시 제출`)]);
     if (reissue.length && basis && basis.date) secs.push(['기준', [`  - 대금 지급 예정일(${f(basis.date)}) 기준으로 유효한 증명서가 필요합니다.`]]);
@@ -698,7 +781,8 @@
     const body = [
       '안녕하십니까.' + (who ? ` ${who}입니다.` : ''),
       '',
-      `「${c.name || ''}」${c.no ? `(계약번호 ${c.no})` : ''} 대금 지급을 위해 제출 서류를 확인한 결과, 아래 서류의 보완을 요청드리고자 합니다.`,
+      round ? `「${c.name || ''}」${c.no ? `(계약번호 ${c.no})` : ''} ${round} 검사를 마쳐 대금을 지급하고자 하오니, 아래 서류를 제출해 주시기 바랍니다.`
+        : `「${c.name || ''}」${c.no ? `(계약번호 ${c.no})` : ''} 대금 지급을 위해 제출 서류를 확인한 결과, 아래 서류의 보완을 요청드리고자 합니다.`,
       '',
       ...secs.flatMap(([h, ls], i) => [`${i + 1}. ${h}`, ...ls, '']),
       '회신 메일로 보내 주시면 확인 후 지급 절차를 진행하겠습니다.',
@@ -718,6 +802,7 @@
     API_BASE, API_OPS, TYPES, apiUrl, keyParam, monthRanges, parseApiText, parseApiBody, parseCorpList, parseCorpRows, normalizeApiItem, detectExtFinance,
     G2B, g2bUrl, scanAuditFields, summarizeChanges, chgPlan, autoKind, CHG_KINDS, changesOf, ordSnap, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
     ordOf, viaParts, viaKey, viaStatus, itemsInName, isRecentItem, issuedTooEarly, isAdvBond, advBondCheck, ADV_DAYS, matchCandidates, checklistStatus, holds, hasItem, classifyPages, classifyTitleLines, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail,
+    PAY_KINDS, typeKey, hasRounds, roundOnly, roundSteps, roundHint, roundLabel, routeRound,
   };
   root.JH = root.JH || {};
   root.JH.logic = api;
