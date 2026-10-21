@@ -134,7 +134,8 @@
     const anything = docs.length > 0 || Object.values(got).some(Boolean);
     const state = r.paidDate ? 'paid' : !anything ? 'empty' : need ? 'missing' : 'ready';
     const cur = st.findIndex((g) => !g.complete);
-    return { label: L.roundLabel(r), steps: st, docs, missing, certs, expired, unknownValid: certs.filter((x) => x.status === 'unknown'), via, adv, advShort, basis, need, state, cur };
+    const reqTotal = st.reduce((a, g) => a + g.req, 0), reqDone = st.reduce((a, g) => a + g.done, 0);
+    return { label: L.roundLabel(r), reqTotal, reqDone, steps: st, docs, missing, certs, expired, unknownValid: certs.filter((x) => x.status === 'unknown'), via, adv, advShort, basis, need, state, cur };
   }
   function statusOf(c) {
     if (stCache && stCache.has(c.key)) return stCache.get(c.key);
@@ -472,7 +473,7 @@
       if (newContracts) msg += ` 계약서에서 새 계약 ${newContracts}건을 만들었습니다.`;
       if (auditFilled) msg += ` 서류에서 감사·검사 칸 ${auditFilled}개를 채웠습니다.`;
       if (multiForm) msg += ` 여러 양식이 든 파일 ${multiForm}개는 안에 든 서류마다 표시했습니다.`;
-      if (roundsHit.size) msg += ` 지출 회차 서류: ${[...roundsHit].map((k) => { const [ck, rid] = k.split('|'); const rc = db.contracts[ck], rr = rc && roundById(rc, rid); return rr ? L.roundLabel(rr) : ''; }).filter(Boolean).join(', ')}.`;
+      if (roundsHit.size) msg += ` 지출 회차: ${[...roundsHit].map((k) => { const [ck, rid] = k.split('|'); const rc = db.contracts[ck], rr = rc && roundById(rc, rid); if (!rr) return ''; const rs = roundStatus(rc, rr); return `${L.roundLabel(rr)} 서류 ${rs.reqDone}/${rs.reqTotal}${rs.cur >= 0 ? ` (다음: ${(NEXT[rr.kind] || [])[rs.cur] || rs.steps[rs.cur].name})` : ''}`; }).filter(Boolean).join(', ')}.`;
       const moved = recs.filter((r) => r.rerouted).length;
       if (moved) msg += ` ${moved}개는 내용이 다른 계약 서류라 그 계약으로 보냈습니다.`;
       if (skipped) msg += ` 이미 있는 파일 ${skipped}개는 건너뛰었습니다.`;
@@ -997,6 +998,8 @@
     if (s.state === 'missing') return `<span class="pill miss${cls}">${lb}미비 ${s.need}</span>`;
     return `<span class="pill ready${cls}">${lb}지출 대기</span>`;
   }
+  // 진행 막대: 필수 서류 들어온 비율(지출 처리하면 꽉 참)
+  const pbar = (done, total, paid, title) => { const pct = paid ? 100 : total ? Math.round((done / total) * 100) : 0; return `<span class="pbar${paid ? ' paid' : pct === 100 ? ' full' : ''}" title="${esc(title || '')}"><span class="track"><i style="width:${pct}%"></i></span><span class="num">${paid ? '완료' : `${done}/${total}`}</span></span>`; };
   function nextText(x) {
     const s = x.s;
     if (s.state === 'paid') return `${L.fmtDate(x.r.paidDate)} 지출 완료${x.r.payMemo ? ` · ${x.r.payMemo}` : ''}`;
@@ -1036,7 +1039,7 @@
     const vendorNeed = s.missing.filter((y) => L.ORIGINAL_SOURCES.includes(y.source) && !y.link).length + s.expired.length + s.via.length;
     const askNow = s.state !== 'paid' && (r.kind !== 'prog' || s.cur >= 3) && vendorNeed;
     return `<details class="round${s.state === 'paid' ? ' paid' : ''}" data-round="${esc(r.id)}"${open ? ' open' : ''}>
-      <summary><b class="rlabel">${esc(s.label)}</b><span class="rsteps">${chips}</span><span class="rnext${s.state === 'paid' ? ' ok-t' : ''}">${esc(nextText(x))}</span>${roundPill(x)}
+      <summary><b class="rlabel">${esc(s.label)}</b>${pbar(s.reqDone, s.reqTotal, s.state === 'paid', `필수 서류 ${s.reqDone}/${s.reqTotal}`)}<span class="rsteps">${chips}</span><span class="rnext${s.state === 'paid' ? ' ok-t' : ''}">${esc(nextText(x))}</span>${roundPill(x)}
         <button type="button" class="btn sm${s.state === 'ready' ? ' primary' : ''}" data-act="roundpay" data-round="${esc(r.id)}">${r.paidDate ? '지출 수정' : '지출 처리'}</button></summary>
       <div class="rbody">
         ${r.kind === 'labor' ? `<label class="rmonth">몇 월분<select data-act="rmonth" data-round="${esc(r.id)}"><option value="">모름</option>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}"${r.month === i + 1 ? ' selected' : ''}>${i + 1}월분</option>`).join('')}</select></label>` : ''}
@@ -1055,17 +1058,17 @@
   function roundsCard(c, st) {
     if (!L.hasRounds(c.type)) return '';
     const hasAdv = roundsOf(c).some((r) => r.kind === 'adv');
-    const add = `<span class="radd"><button type="button" class="btn sm" data-act="roundadd" data-kind="prog">+ 기성</button><button type="button" class="btn sm" data-act="roundadd" data-kind="labor">+ 노무비</button>${hasAdv ? '' : '<button type="button" class="btn sm" data-act="roundadd" data-kind="adv">+ 선금</button>'}</span>`;
-    if (!st.rounds.length) return `<section class="rounds none"><div class="rounds-head"><h3>지출 회차</h3><span class="muted small">선금·기성·노무비처럼 중간에 나가는 지출을 회차마다 확인합니다. 기성계·기성 검사조서·노무비 청구서가 들어오면 회차가 저절로 생깁니다.</span>${add}</div></section>`;
+    const add = `<span class="radd"><button type="button" class="btn sm" data-act="roundadd" data-kind="prog">+ 기성 회차</button><button type="button" class="btn sm" data-act="roundadd" data-kind="labor">+ 노무비 회차</button>${hasAdv ? '' : '<button type="button" class="btn sm" data-act="roundadd" data-kind="adv">+ 선금 회차</button>'}</span>`;
+    if (!st.rounds.length) return `<section class="rounds none"><div class="rounds-head"><h3>지출 회차 <small>기성·노무비·선금</small></h3><span class="muted small">중간에 나가는 지출이 있으면 여기서 회차마다 확인합니다. <b>기성계·기성 검사조서·노무비 청구서</b>를 올리면 회차가 저절로 생기고, 오른쪽 버튼으로 직접 만들어도 됩니다.</span>${add}</div></section>`;
     const paid = st.rounds.filter((x) => x.s.state === 'paid').length;
     // 회차가 많은 장기 공사(10회 이상)도 한눈에: 회차마다 칸 하나(지출 완료·지출 대기·미비·시작 전), 누르면 그 회차를 펼침
     const short = (r) => (r.kind === 'prog' ? `${r.n}회` : r.kind === 'adv' ? '선금' : r.month ? `${r.month}월` : `노${r.n}`);
     const track = `<div class="rtrack" role="list" aria-label="회차별 지출">${st.rounds.map((x) => `<button type="button" role="listitem" class="rt ${x.s.state}" data-act="rjump" data-round="${esc(x.r.id)}" title="${esc(x.s.label)} · ${esc({ paid: '지출 완료 ' + L.fmtDate(x.r.paidDate), ready: '지출 대기', missing: '미비 ' + x.s.need, empty: '시작 전' }[x.s.state])}">${x.r.kind === 'labor' ? '<small>노</small>' : ''}${esc(short(x.r))}</button>`).join('')}</div>`;
     const fin = st.state === 'paid' ? `<span class="pill paid">지출 ${esc(L.fmtDate(c.paidDate).slice(5))}</span>` : pillFor(st, c);
-    return `<section class="rounds"><div class="rounds-head"><h3>지출 회차</h3><span class="muted small">중간 지출 ${paid}/${st.rounds.length} 완료 · 회차 서류는 계약 폴더 안 회차 폴더에 따로 정리</span>${add}</div>
+    return `<section class="rounds"><div class="rounds-head"><h3>지출 회차</h3>${pbar(paid, st.rounds.length, false, '지출 완료한 회차')}<span class="muted small">중간 지출 ${paid}/${st.rounds.length}회 완료 · 기성계·검사조서·노무비 청구서는 여기, 회차 폴더에 따로 정리</span>${add}</div>
       ${st.rounds.length > 1 ? track : ''}
       ${st.rounds.map((x) => roundBlock(c, x, st)).join('')}
-      <div class="round final"><b class="rlabel">준공(마지막)</b><span class="rnext muted">아래 서류 목록 — 준공계 → 준공검사원 지정통보 → 준공조서 → 청구 서류 → 지출결의</span>${fin}</div></section>`;
+      <div class="round final"><b class="rlabel">준공(마지막)</b>${pbar(st.reqDone, st.reqTotal, st.state === 'paid', `필수 서류 ${st.reqDone}/${st.reqTotal}`)}<span class="rnext muted">아래 서류 목록 — 준공계 → 준공검사원 지정통보 → 준공조서 → 청구 서류 → 지출결의</span>${fin}</div></section>`;
   }
   function renderDetail() {
     const el = $('#detail');
@@ -1093,6 +1096,7 @@
             ${period ? `<span>기간 <b class="date">${esc(period)}</b>${st.late ? ' <b style="color:var(--seal)">준공 지남</b>' : ''}</span>` : ''}
             ${c.officer ? `<span>담당 <b>${esc(c.officer)}</b>${c.dept ? ` (${esc(c.dept)})` : ''}</span>` : ''}
             ${c.paidDate ? `<span>지출 <b class="date">${esc(L.fmtDate(c.paidDate))}</b>${c.payMemo ? ` ${esc(c.payMemo)}` : ''}</span>` : ''}
+            ${st.rounds && st.rounds.length ? `<span>중간 지출 <b class="num">${st.rounds.filter((x) => x.s.state === 'paid').length}/${st.rounds.length}회</b>${st.roundOpen ? ` · 지금 ${esc(st.roundOpen.s.label)}` : ''}</span>` : ''}
           </div>
           <div class="actions">
             <button class="btn primary" data-act="print"${Object.keys(c.noPrint || {}).length ? ` title="인쇄에서 뺀 서류 ${Object.keys(c.noPrint).length}개는 빼고 인쇄합니다"` : ''}>한 번에 인쇄${Object.keys(c.noPrint || {}).length ? ` <small>(${Object.keys(c.noPrint).length}개 뺌)</small>` : ''}</button>
@@ -1109,8 +1113,8 @@
       <div class="dbody">
       <div class="dropin" id="dropin"><button class="btn primary" data-act="addhere">업로드</button>
         <span>이 계약 서류로 올립니다. 서류 종류는 자동으로 찾고, 파일을 여기에 끌어다 놓아도 됩니다.</span></div>
-      <div class="dtop">${reqCard(c, st)}${memoCard(c)}${auditCard(c)}</div>
       ${roundsCard(c, st)}
+      <div class="dtop">${reqCard(c, st)}${memoCard(c)}${auditCard(c)}</div>
       ${st.rounds && st.rounds.length ? '<h3 class="final-head">준공(마지막 지출) 서류</h3>' : ''}
       <div class="stages">
         ${untyped.length ? `<section class="stage"><div class="stage-head"><span class="stage-no" style="background:var(--amber)">?</span><h3>서류 종류를 정해 주세요</h3><span class="where">이 계약 서류인데 어떤 서류인지 찾지 못했습니다</span></div>
