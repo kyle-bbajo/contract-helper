@@ -160,7 +160,8 @@
     let lines = [], ocr = false;
     try {
       if (kind === 'pdf') lines = await pdfLines(bytes);
-      else if (kind === 'hwp') lines = hwpLines(bytes);
+      // 한글: 본문 글자 전체(표 안 글자 포함). 본문을 못 읽으면(암호 등) 미리보기 글자
+      else if (kind === 'hwp') { try { lines = await JH.hwp.fullLines(root.CFB, bytes); } catch (_) { lines = []; } if (!lines.length) lines = hwpLines(bytes); }
       else if (kind === 'other') lines = officeLines(bytes);
     } catch (e) { console.warn('읽기 실패', e); }
     // 스캔 PDF에 스캐너 앱 글씨(CamScanner 등)만 글자로 들어 있는 경우가 있어 '한글이 거의 없으면' 글자 인식

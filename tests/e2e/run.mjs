@@ -261,6 +261,7 @@ try {
   // 인쇄 체크: 견적서 줄의 [인쇄]를 빼면 인쇄 목록에서 빠지고 버튼에 'n개 뺌'
   // 켜자마자 돌던 자동 새로고침(나라장터·법령)이 끝나 화면이 잠잠해질 때까지
   await waitFor(() => page.evaluate(() => document.getElementById('progress').hidden), 60000, '자동 새로고침 끝'); await new Promise((r) => setTimeout(r, 1500));
+  await page.click('.citem:has-text("시청사 옥상 방수공사")'); await page.waitForSelector('#detail .cname:has-text("시청사 옥상 방수공사")');
   await page.evaluate(() => document.querySelectorAll('.toast').forEach((t) => t.remove()));
   await page.uncheck('.row[data-drop-item="c-estimate"] [data-act="noprint"]');
   await waitFor(async () => /1개 뺌/.test(await page.textContent('[data-act="print"]')), 5000, '뺀 개수');
