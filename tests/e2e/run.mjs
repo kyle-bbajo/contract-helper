@@ -455,6 +455,7 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     const up = async (names) => { const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('[data-act="addhere"]')]); await fc.setFiles(names.map((n) => ({ name: n, mimeType: 'application/pdf', buffer: blank }))); await waitFor(() => page.evaluate((ns) => ns.every((n) => JH.app.db.docs.some((d) => d.name === n)), names), 30000, '올림'); };
     const info = () => page.evaluate(() => { const c = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사'); return { pays: (c.pays || []).map((r) => ({ kind: r.kind, n: r.n, paid: !!r.paidDate })), docs: JH.app.db.docs.filter((d) => d.key === c.key && /기성|청구|납세/.test(d.name)).map((d) => [d.name, d.itemId, (c.pays || []).findIndex((r) => r.id === d.pay)]) }; });
     await page.waitForSelector('.rounds.none [data-act="roundadd"][data-kind="prog"]', { timeout: 5000 });
+    await page.evaluate(() => document.querySelectorAll('.toast').forEach((t) => t.remove())); await page.screenshot({ path: join(SHOTS, 'r1-회차없음.png') });
     await up(['제1회 기성계.pdf', '1회 기성검사원 지정통보.pdf', '제1회 기성부분 검사조서.pdf']);
     let r = await info();
     assert.deepEqual(r.pays, [{ kind: 'prog', n: 1, paid: false }], '기성 1회 저절로 생김');
@@ -462,6 +463,8 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     await page.waitForSelector('.round[open] .rnext:has-text("감독관 경유")', { timeout: 5000 }).catch(() => {});
     await page.check('.round[open] [data-act="rvia"]');
     await page.waitForSelector('.round[open] .rnext:has-text("업체에 청구 서류 요청")', { timeout: 5000 });
+    await page.evaluate(() => document.querySelectorAll('.toast').forEach((t) => t.remove())); await page.screenshot({ path: join(SHOTS, 'r2-기성진행중.png') });
+    await page.evaluate(() => document.querySelector('.round[open] .rstage:nth-of-type(4)').scrollIntoView({ block: 'center' })); await page.screenshot({ path: join(SHOTS, 'r3-청구서류.png') });
     assert.ok(await page.$('.round[open] [data-act="rmail"].primary'), '검사조서까지 오면 청구 서류 요청 메일이 눈에 띄게');
     await page.click('.round[open] [data-act="rmail"]');
     await page.waitForSelector('#dlgMail[open]');
@@ -492,9 +495,11 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     await page.evaluate((id) => { const d = JH.app.db.docs.find((x) => x.id === id); const c = JH.app.db.contracts[d.key]; d.pay = c.pays[0].id; d.itemId = 'c-proginsp'; JH.app.render(); }, docId);
     // 장기 공사(기성 12회): 회차마다 칸 하나로 한눈에, 누르면 그 회차가 펼쳐짐
     await page.evaluate(() => { const c = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사'); for (let n = 2; n <= 12; n++) c.pays.push({ id: 'p' + n, kind: 'prog', n, at: n, received: {}, via: {}, ...(n < 6 ? { paidDate: `202610${String(n).padStart(2, '0')}` } : {}) }); JH.app.render(); });
-    assert.equal(await page.$$eval('.rtrack .rt', (e) => e.length), 13);
+    assert.equal(await page.$$eval('.rtrack .rt:not(.next)', (e) => e.length), 13);
     assert.equal(await page.$$eval('.rtrack .rt.paid', (e) => e.length), 5);
-    await page.screenshot({ path: join(SHOTS, 'rounds.png'), fullPage: false }).catch(() => {});
+    await page.evaluate(() => document.querySelectorAll('.toast').forEach((t) => t.remove())); await page.evaluate(() => { document.querySelector('#detail').scrollTop = 0; window.scrollTo(0, 0); }); await page.screenshot({ path: join(SHOTS, 'r4-기성12회.png') });
+    await page.click('.views [data-view="board"]'); await page.click('.chip[data-board="round"]'); await page.waitForTimeout(300); await page.screenshot({ path: join(SHOTS, 'r5-현황판.png') });
+    await page.click('.chip[data-board=""]'); await page.click('.views [data-view="contracts"]');
     await page.click('.rtrack .rt[data-round="p9"]');
     await page.waitForSelector('details.round[data-round="p9"][open]', { timeout: 5000 });
     await page.evaluate(() => { const c = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사'); c.pays = c.pays.filter((r) => !/^p\d+$/.test(r.id)); JH.app.render(); });

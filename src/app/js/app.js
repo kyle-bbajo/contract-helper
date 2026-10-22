@@ -1063,10 +1063,10 @@
     const paid = st.rounds.filter((x) => x.s.state === 'paid').length;
     // 회차가 많은 장기 공사(10회 이상)도 한눈에: 회차마다 칸 하나(지출 완료·지출 대기·미비·시작 전), 누르면 그 회차를 펼침
     const short = (r) => (r.kind === 'prog' ? `${r.n}회` : r.kind === 'adv' ? '선금' : r.month ? `${r.month}월` : `노${r.n}`);
-    const track = `<div class="rtrack" role="list" aria-label="회차별 지출">${st.rounds.map((x) => `<button type="button" role="listitem" class="rt ${x.s.state}" data-act="rjump" data-round="${esc(x.r.id)}" title="${esc(x.s.label)} · ${esc({ paid: '지출 완료 ' + L.fmtDate(x.r.paidDate), ready: '지출 대기', missing: '미비 ' + x.s.need, empty: '시작 전' }[x.s.state])}">${x.r.kind === 'labor' ? '<small>노</small>' : ''}${esc(short(x.r))}</button>`).join('')}</div>`;
+    const track = `<div class="rtrack" role="list" aria-label="회차별 지출">${st.rounds.map((x) => `<button type="button" role="listitem" class="rt ${x.s.state}" data-act="rjump" data-round="${esc(x.r.id)}" title="${esc(x.s.label)} · ${esc({ paid: '지출 완료 ' + L.fmtDate(x.r.paidDate), ready: '지출 대기', missing: '미비 ' + x.s.need, empty: '시작 전' }[x.s.state])}">${x.r.kind === 'labor' ? '<small>노</small>' : ''}${esc(short(x.r))}</button>`).join('')}<button type="button" class="rt next" data-act="roundadd" data-kind="prog" title="다음 기성 회차를 지금 만들기(기성계가 오면 저절로 생김)">+</button></div>`;
     const fin = st.state === 'paid' ? `<span class="pill paid">지출 ${esc(L.fmtDate(c.paidDate).slice(5))}</span>` : pillFor(st, c);
-    return `<section class="rounds"><div class="rounds-head"><h3>지출 회차</h3>${pbar(paid, st.rounds.length, false, '지출 완료한 회차')}<span class="muted small">중간 지출 ${paid}/${st.rounds.length}회 완료 · 기성계·검사조서·노무비 청구서는 여기, 회차 폴더에 따로 정리</span>${add}</div>
-      ${st.rounds.length > 1 ? track : ''}
+    return `<section class="rounds"><div class="rounds-head"><h3>지출 회차</h3><span class="muted small">지금까지 <b>${paid}회 지출</b>${st.roundOpen ? ` · 진행 중 ${esc(st.roundOpen.s.label)}` : ''} · 몇 회가 될지 몰라도 됩니다 — 다음 기성계·노무비 청구서가 오면 다음 회차가 저절로 생깁니다</span>${add}</div>
+      ${track}
       ${st.rounds.map((x) => roundBlock(c, x, st)).join('')}
       <div class="round final"><b class="rlabel">준공(마지막)</b>${pbar(st.reqDone, st.reqTotal, st.state === 'paid', `필수 서류 ${st.reqDone}/${st.reqTotal}`)}<span class="rnext muted">아래 서류 목록 — 준공계 → 준공검사원 지정통보 → 준공조서 → 청구 서류 → 지출결의</span>${fin}</div></section>`;
   }
@@ -1096,7 +1096,7 @@
             ${period ? `<span>기간 <b class="date">${esc(period)}</b>${st.late ? ' <b style="color:var(--seal)">준공 지남</b>' : ''}</span>` : ''}
             ${c.officer ? `<span>담당 <b>${esc(c.officer)}</b>${c.dept ? ` (${esc(c.dept)})` : ''}</span>` : ''}
             ${c.paidDate ? `<span>지출 <b class="date">${esc(L.fmtDate(c.paidDate))}</b>${c.payMemo ? ` ${esc(c.payMemo)}` : ''}</span>` : ''}
-            ${st.rounds && st.rounds.length ? `<span>중간 지출 <b class="num">${st.rounds.filter((x) => x.s.state === 'paid').length}/${st.rounds.length}회</b>${st.roundOpen ? ` · 지금 ${esc(st.roundOpen.s.label)}` : ''}</span>` : ''}
+            ${st.rounds && st.rounds.length ? `<span>중간 지출 <b class="num">${st.rounds.filter((x) => x.s.state === 'paid').length}회</b>${st.roundOpen ? ` · 진행 중 ${esc(st.roundOpen.s.label)}` : ''}</span>` : ''}
           </div>
           <div class="actions">
             <button class="btn primary" data-act="print"${Object.keys(c.noPrint || {}).length ? ` title="인쇄에서 뺀 서류 ${Object.keys(c.noPrint).length}개는 빼고 인쇄합니다"` : ''}>한 번에 인쇄${Object.keys(c.noPrint || {}).length ? ` <small>(${Object.keys(c.noPrint).length}개 뺌)</small>` : ''}</button>
@@ -1630,7 +1630,7 @@
           <td class="date"${st.late ? ' style="color:var(--seal);font-weight:650"' : ''}>${esc(L.fmtDate(c.endDate) || '-')}</td>
           <td><div class="prog${st.reqDone === st.reqTotal ? ' full' : ''}"><span class="track"><i style="width:${st.reqTotal ? Math.round(st.reqDone / st.reqTotal * 100) : 0}%"></i></span><span class="num">${st.reqDone}/${st.reqTotal}</span></div></td>
           <td class="r num">${st.origCount || ''}</td>
-          <td class="date">${esc(L.fmtDate(c.paidDate) || '')}${st.rounds.length ? `<div class="sub">중간 ${st.rounds.filter((x) => x.s.state === 'paid').length}/${st.rounds.length}</div>` : ''}</td>
+          <td class="date">${esc(L.fmtDate(c.paidDate) || '')}${st.rounds.length ? `<div class="sub">중간 지출 ${st.rounds.filter((x) => x.s.state === 'paid').length}회</div>` : ''}</td>
           <td>${pillFor(st, c)}${st.roundOpen ? `<div>${roundPill(st.roundOpen, true)}</div>` : ''}</td></tr>`).join('')}
         </tbody></table>` : `<div class="empty-line">해당하는 계약이 없습니다.</div>`}`;
     const bo = $('#bOfficer'); bo.value = ui.officer;

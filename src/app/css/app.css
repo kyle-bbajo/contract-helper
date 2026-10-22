@@ -777,3 +777,4 @@ body.resizing { cursor: col-resize; user-select: none; }
 .rounds-head h3 small { font-size: 12px; color: var(--muted); font-weight: 600; margin-left: 4px; }
 .rounds { margin-top: 0; margin-bottom: 16px; }
 .rounds.none { border-color: var(--ink); border-style: dashed; }
+.rtrack .rt.next { border-style: dashed; color: var(--ink); background: transparent; }
