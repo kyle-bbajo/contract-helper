@@ -25,6 +25,7 @@
     $('#cfgInsttDiv').value = cfg.insttDivCd || '1'; $('#cfgOfficer').value = cfg.officer || '';
     $('#cfgMonths').value = String(cfg.months || 6);
     $('#cfgExtNames').value = (cfg.extNames || []).join('\n');
+    renderHideOff();
     note('');
     draft = JSON.parse(JSON.stringify({ 공사: JH.app.lists('공사'), 용역: JH.app.lists('용역'), 물품: JH.app.lists('물품') }));
     renderRows();
@@ -104,6 +105,19 @@
   $$('.dlg-tabs button', dlg).forEach((b) => b.addEventListener('click', () => tab(b.dataset.tab)));
   $('#btnSettings').onclick = () => open();
   $('#btnTestNara').onclick = testNara;
+  // 계약 고르기에서 뺄 담당자: 불러온 계약의 담당자를 체크 상자로(내 이름은 빼고)
+  function renderHideOff() {
+    const cfg = JH.app.cfg, m = new Map();
+    Object.values(JH.app.db.contracts || {}).forEach((c) => { if (c.officer && !c.archived) m.set(c.officer, (m.get(c.officer) || 0) + 1); });
+    const names = [...m.entries()].filter(([n]) => n !== cfg.officer).sort((a, b) => b[1] - a[1]);
+    const on = new Set(cfg.hideOfficers || []);
+    $('#cfgHideOff').innerHTML = names.length ? names.map(([n, k]) => `<label class="chk"><input type="checkbox" data-hideoff="${esc(n)}"${on.has(n) ? ' checked' : ''}> ${esc(n)} <small class="muted">${k}건</small></label>`).join('') : '<span class="muted small">나라장터에서 계약을 불러오면 담당자가 나옵니다</span>';
+  }
+  $('#cfgHideOff').addEventListener('change', async () => {
+    JH.app.cfg.hideOfficers = [...document.querySelectorAll('#cfgHideOff [data-hideoff]:checked')].map((x) => x.dataset.hideoff);
+    await JH.app.saveCfg(); JH.app.render();
+    JH.app.toast(JH.app.cfg.hideOfficers.length ? `계약 고르기에서 ${JH.app.cfg.hideOfficers.join(', ')} 담당 계약을 뺍니다.` : '계약 고르기에 모든 담당자 계약을 보입니다.', 'ok');
+  });
   $('#cfgExtNames').addEventListener('change', async () => { JH.app.cfg.extNames = readNara().extNames; await JH.app.saveCfg(); JH.app.render(); JH.app.toast('외부 예산 사업 이름을 저장했습니다.', 'ok'); });
   $('#btnSaveNara').onclick = async () => {
     const c = readNara();
@@ -116,9 +130,9 @@
     const el = $('#watchList'); if (!el) return;
     el.innerHTML = dirs.length ? dirs.map((d, i) => `<li><span class="ok-t small">● 보는 중</span> <code>${esc(d)}</code> <button type="button" class="link sm" data-watchoff="${i}">빼기</button></li>`).join('') : '<li class="muted">꺼짐 — [폴더 더하기]로 내려받는 폴더를 고르세요</li>';
   }
-  $('#btnWatchPick').onclick = async () => {
+  async function addWatch(o) {
     try {
-      const r = await S.watchPick(); if (!r.ok) return;
+      const r = await S.watchPick(o); if (!r.ok) return;
       const now = await S.watch();
       const k = (now.dirs || []).findIndex((d) => d.dir.toLowerCase() === String(r.dir).toLowerCase());
       const had = (now.files || []).filter((f) => f.name.startsWith(k + '|'));
@@ -126,8 +140,13 @@
       await JH.app.saveDb(true);
       JH.app.startWatch(r.dirs);
       JH.app.toast(`이제 ${r.dir}에 새로 들어오는 서류를 자동으로 정리합니다.` + (had.length ? ` 이미 있던 파일 ${had.length}개는 건너뜁니다(필요하면 [업로드]로 올리세요).` : ''), 'ok');
-    } catch (e) { JH.app.toast('폴더를 고르지 못했습니다: ' + e.message, 'err'); }
-  };
+      showWatch(r.dirs || []);
+    } catch (e) { JH.app.toast('폴더를 더하지 못했습니다: ' + e.message, 'err'); }
+  }
+  // 고르기 창은 몇 초 안에 안 보이면 '창 뒤에 열렸을 수 있음' 안내
+  $('#btnWatchPick').onclick = async () => { const t = setTimeout(() => { $('#watchHint').hidden = false; }, 2500); try { await addWatch({ pick: '1' }); } finally { clearTimeout(t); $('#watchHint').hidden = true; } };
+  document.addEventListener('click', (e) => { const b = e.target.closest('[data-watchknown]'); if (b) addWatch({ known: b.dataset.watchknown }); });
+  $('#btnWatchPath').onclick = () => { const v = $('#watchPath').value.trim().replace(/^"|"$/g, ''); if (!v) { $('#watchPath').focus(); return; } addWatch({ dir: v }).then(() => { $('#watchPath').value = ''; }); };
   $('#watchList').addEventListener('click', async (e) => {
     const b = e.target.closest('[data-watchoff]'); if (!b) return;
     try {

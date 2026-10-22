@@ -75,7 +75,10 @@
       }
       await saveKb();
       cfg().lawFetchedAt = new Date().toISOString(); await app().saveCfg();
-      if (!quiet || bad.length) app().toast(`법령·예규 ${ok}건을 받았습니다.` + (bad.length ? ` 못 받음: ${bad.join(', ')}` : ''), bad.length ? (ok ? '' : 'err') : 'ok');
+      // 못 받은 것이 많으면 알림이 화면을 가리지 않게 앞 3건만(이유가 모두 같으면 한 번만)
+      const why = [...new Set(bad.map((b) => (b.match(/\((.*)\)$/) || [])[1] || ''))];
+      const badTxt = !bad.length ? '' : why.length === 1 && bad.length > 3 ? ` 못 받음 ${bad.length}건: ${why[0].slice(0, 120)}` : ` 못 받음 ${bad.length}건: ${bad.slice(0, 3).join(', ')}${bad.length > 3 ? ` 외 ${bad.length - 3}건` : ''}`;
+      if (!quiet || bad.length) app().toast(`법령·예규 ${ok}건을 받았습니다.` + badTxt, bad.length ? (ok ? '' : 'err') : 'ok');
     } finally { app().progress(null); if (view() && view().classList.contains('on')) render(); }
   }
 

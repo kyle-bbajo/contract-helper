@@ -783,3 +783,20 @@ body.resizing { cursor: col-resize; user-select: none; }
 .rrev input { font-size: 12px; padding: 1px 4px; }
 .rrev small { font-weight: 500; opacity: .8; }
 .rsrc-how { margin: 0; color: var(--ink-2); line-height: 1.6; }
+/* 되돌리기·최근 작업 */
+.btn.icon-t { display: inline-flex; align-items: center; gap: 6px; }
+.btn.icon-t svg { width: 16px; height: 16px; flex: none; }
+.btn.icon-t:disabled { opacity: .45; }
+.log-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; max-height: 60vh; overflow: auto; font-size: 13px; }
+.log-list li { padding: 5px 8px; border-radius: 6px; background: var(--paper); }
+.log-list .date { color: var(--muted); margin-right: 6px; font-variant-numeric: tabular-nums; }
+.watch-add { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.watch-add input { flex: 1 1 260px; min-width: 0; }
+/* 계약 고르기(타자로 찾기) · 뺄 담당자 */
+.cpick { display: grid; gap: 4px; min-width: 0; }
+.cpick-q { font-size: 13px; padding: 4px 8px; }
+.cpick select { min-width: 0; max-width: 100%; }
+.hide-off { display: grid; gap: 6px; }
+.hide-off .lbl { font-weight: 650; font-size: 13px; }
+.chkgrid { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.chkgrid .chk { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 500; }

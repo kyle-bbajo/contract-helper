@@ -58,3 +58,17 @@ test('스캔본(noname.pdf): 이름에 회차가 없으면 읽은 글자에서 "
   assert.strictEqual(L.routeRound('공사', 'c-progfin', 'noname(2).pdf', '기성계', [], '공사명시청사옥상방수공사제4회기성부분검사원').n, 4);
   assert.strictEqual(L.roundHint('noname.pdf', '준공계', '제2회기성').kind, 'final'); // 준공 서류 본문의 '기성'에 흔들리지 않음
 });
+
+test('계약 찾기: 나라장터 업체 사업자등록번호가 서류에 있으면 그 업체 계약 점수', () => {
+  const a = { name: '시청사 옥상 방수공사', vendor: '(주)다해토건', bizno: '123-45-67890', nums: [] };
+  const b = { name: '체육관 시설 청소 용역', vendor: '한빛환경', bizno: '222-33-44444', nums: [] };
+  const hay = L.norm('사업자등록증 등록번호 123-45-67890 상호 다해토건');
+  assert.ok(L.contractScore(a, hay) > L.contractScore(b, hay));
+  assert.strictEqual(L.matchContract([a, b], hay), a);
+  // 같은 업체 계약이 둘이면 동점 → 하나로 정하지 않음(미분류)
+  assert.strictEqual(L.matchContract([a, { ...a, name: '도서관 외벽 보수공사' }], hay), null);
+  const d = L.defaultChecklists(); const all = [...d.공사, ...d.용역];
+  assert.strictEqual(L.classifyItem(all, 'scan.pdf', L.norm('지방세 납세증명(신청)서 납세자')), 'c-ltax');
+  assert.strictEqual(L.classifyItem(all, 'scan.pdf', L.norm('납세증명서 발급번호')), 'c-tax');
+  assert.strictEqual(L.classifyItem(all, 'scan.pdf', L.norm('4대보험 사업장 가입내역 확인서')), 'c-insjoin');
+});

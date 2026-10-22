@@ -149,8 +149,19 @@ try {
   assert.match(await page.textContent('#pvName'), /noname\(6\)\.pdf/);
   await page.waitForSelector('#pvBody canvas', { timeout: 20000 }); await page.screenshot({ path: join(SHOTS, '2b-미리보기.png') });
   assert.equal(await page.inputValue('#pvContract'), '', '미분류');
-  await page.click('#pvNext'); // 그대로 두고 닫기
-  await page.waitForSelector('#dlgPreview:not([open])', { state: 'attached' });
+  // 계약 고르기를 타자로 찾기: '방수' → 시청사 옥상 방수공사, 서류 종류 목록도 그 계약 것으로
+  await page.fill('#pvSearch', '방수');
+  assert.match(await page.evaluate(() => { const s = document.getElementById('pvContract'); return s.options[s.selectedIndex].text; }), /시청사 옥상 방수공사/);
+  assert.ok(!(await page.$eval('#pvItem', (x) => x.disabled)), '서류 종류 고를 수 있음');
+  // 설정에서 뺀 담당자의 계약은 고르기 목록에 안 나옴
+  const hid = await page.evaluate(() => { JH.app.db.contracts.tmpother = { key: 'tmpother', name: '다른 담당 임시 계약', type: '공사', officer: '다른담당', originals: {}, updatedAt: 1 }; JH.app.cfg.hideOfficers = ['다른담당']; return 'tmpother'; });
+  await page.fill('#pvSearch', ''); await page.click('#pvNext'); await page.waitForSelector('#dlgPreview:not([open])', { state: 'attached' });
+  await page.click('.views [data-view="inbox"]');
+  assert.ok(!(await page.$(`#view-inbox select[data-act="assign"] option[value="${hid}"]`)), '뺀 담당자 계약은 고르기에 없음');
+  assert.ok(await page.$('#view-inbox .cpick-q') && await page.$('#view-inbox [data-act="del"]:has-text("버리기")'), '미분류: 타자로 찾기·버리기');
+  await page.evaluate(() => { JH.app.cfg.hideOfficers = []; delete JH.app.db.contracts.tmpother; });
+  await page.click('.views [data-view="contracts"]');
+  if (false) await page.click('#pvNext'); // 그대로 두고 닫기
   step('noname 11개 자동 분류(스캔·한글 포함), 회의록만 미분류 → 팝업으로 미리 보며 확인');
 
   await page.click('.citem:has-text("시청사 옥상 방수공사")');
@@ -234,16 +245,23 @@ try {
     CFB.utils.cfb_add(z, '/xl/sharedStrings.xml', Buffer.from('<?xml version="1.0"?><sst><si><t>견 적 서</t></si><si><t>시청사 옥상 방수공사</t></si><si><t>합계</t></si></sst>'));
     CFB.utils.cfb_add(z, '/xl/worksheets/sheet1.xml', Buffer.from('<?xml version="1.0"?><worksheet><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c></row><row r="5"><c r="A5" t="s"><v>2</v></c><c r="B5"><v>48000000</v></c></row></sheetData></worksheet>'));
     return Buffer.from(CFB.write(z, { fileType: 'zip', type: 'buffer' })); })();
+  // 계약 화면 안 [업로드] → 그 계약으로만(엑셀 견적서는 글자를 읽어 견적서 칸) / 오른쪽 위 [업로드] → 전체 계약에서 찾아 정리
   const [fc2] = await Promise.all([page.waitForEvent('filechooser'), page.click('[data-act="addhere"]')]);
-  await fc2.setFiles([{ name: '체육관 시설 청소 용역_착수계.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await (async () => { const d = await PDFDocument.create(); d.addPage(); return d.save(); })()) },
-    { name: 'gyeonjeok.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: xlsx }]);
-  await waitFor(() => page.$('.toast:has-text("그 계약으로 보냈습니다")'), 30000, '다른 계약으로 보냄');
+  await fc2.setFiles({ name: 'gyeonjeok.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: xlsx });
+  await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => d.name === 'gyeonjeok.xlsx')), 30000, '계약 안 업로드');
+  const [fc3] = await Promise.all([page.waitForEvent('filechooser'), page.click('#btnAdd')]);
+  await fc3.setFiles({ name: '체육관 시설 청소 용역_착수계.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await (async () => { const d = await PDFDocument.create(); d.addPage(); return d.save(); })()) });
+  await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => d.name === '체육관 시설 청소 용역_착수계.pdf')), 30000, '전체 업로드');
   const routed = await page.evaluate(() => { const f = (n) => { const d = JH.app.db.docs.find((x) => x.name === n); return d && { c: (JH.app.db.contracts[d.key] || {}).name, item: d.itemId }; }; return { pdf: f('체육관 시설 청소 용역_착수계.pdf'), xl: f('gyeonjeok.xlsx') }; });
-  assert.deepEqual(routed.pdf, { c: '체육관 시설 청소 용역', item: 's-start' }, '다른 계약 서류는 그 계약으로');
+  assert.deepEqual(routed.pdf, { c: '체육관 시설 청소 용역', item: 's-start' }, '오른쪽 위 업로드는 전체 계약에서 찾음');
   assert.deepEqual(routed.xl, { c: '시청사 옥상 방수공사', item: 'c-estimate' }, '엑셀 견적서 글자 읽어 분류');
+  if (!(await page.$('.citem.on:has-text("시청사 옥상 방수공사")'))) await page.click('.citem:has-text("시청사 옥상 방수공사")');
   await waitFor(() => page.$('.row[data-drop-item="c-estimate"] .file:has-text("gyeonjeok.xlsx") .ft:has-text("엑셀")'), 10000, '엑셀 표시');
-  step('계약 화면 맨 위 [업로드], 서류 줄 [+ 추가]로 그 서류에 직접 넣기 · 다른 계약 서류는 그 계약으로 자동 · 엑셀(.xlsx) 글자 읽어 분류');
+  step('계약 화면 안 [업로드]는 그 계약으로, 서류 줄 [+ 추가]는 그 서류로, 오른쪽 위 [업로드]는 전체 계약에서 찾아 정리 · 엑셀(.xlsx) 글자 읽어 분류');
   // 인쇄 체크: 견적서 줄의 [인쇄]를 빼면 인쇄 목록에서 빠지고 버튼에 'n개 뺌'
+  // 켜자마자 돌던 자동 새로고침(나라장터·법령)이 끝나 화면이 잠잠해질 때까지
+  await waitFor(() => page.evaluate(() => document.getElementById('progress').hidden), 60000, '자동 새로고침 끝'); await new Promise((r) => setTimeout(r, 1500));
+  await page.evaluate(() => document.querySelectorAll('.toast').forEach((t) => t.remove()));
   await page.uncheck('.row[data-drop-item="c-estimate"] [data-act="noprint"]');
   await waitFor(async () => /1개 뺌/.test(await page.textContent('[data-act="print"]')), 5000, '뺀 개수');
   assert.ok(await page.evaluate(() => { const c = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사'); return !JH.app.printList(c).some((x) => x.id === 'c-estimate'); }), '인쇄 목록에서 빠짐');
@@ -258,6 +276,9 @@ try {
     assert.ok(!(await page.evaluate(() => JH.app.db.docs.some((d) => /준공사진대지/.test(d.name)))), '받는 중인 파일은 아직');
     renameSync(join(WATCH, '시청사 옥상 방수공사_준공사진대지.pdf.crdownload'), join(WATCH, '시청사 옥상 방수공사_준공사진대지.pdf')); writeFileSync(join(WATCH, '시청사 옥상 방수공사_준공사진대지.pdf'), pdf);
     await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => /준공사진대지/.test(d.name))), 30000, '폴더에서 자동으로 읽기');
+    // 폴더 더하기: 경로를 붙여 넣어도 됨(고르기 창이 안 보일 때), 없는 경로는 알려 줌
+    const added = await page.evaluate(async (d) => { const r = await JH.server.watchPick({ dir: d }); let bad = ''; try { await JH.server.watchPick({ dir: d + '_없음' }); } catch (e) { bad = e.message; } return { n: r.dirs.length, bad }; }, WATCH2);
+    assert.equal(added.n, 2, '이미 있는 폴더는 한 번만'); assert.match(added.bad, /폴더가 없습니다/);
     const w = await page.evaluate(() => { const d = JH.app.db.docs.find((x) => /준공사진대지/.test(x.name)); return { c: JH.app.db.contracts[d.key].name, item: d.itemId }; });
     assert.deepEqual(w, { c: '시청사 옥상 방수공사', item: 'c-photo' });
     assert.ok(existsSync(join(WATCH, '시청사 옥상 방수공사_준공사진대지.pdf')), '원래 파일은 그대로');
@@ -481,10 +502,17 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     assert.ok(r.docs.find((x) => x[0] === '1회 기성금 청구서.pdf')[2] === 0 && r.docs.find((x) => x[0] === '국세 납세증명서.pdf')[2] === 0, '청구 서류도 그 회차로');
     for (const id of ['c-ltax', 'c-inspaid', 'c-emppaid', 'c-invoice', 'c-pay']) await page.check(`.round[open] .row[data-drop-item="${id}"] [data-act="rrecv"]`);
     await page.waitForSelector('.round[open] .pill.ready', { timeout: 5000 });
+    // 회차 서류를 다 갖추면 목록 [지출 대기]에 '1차 기성 지출 대기'로
+    await page.click('#fState button[data-state="ready"]');
+    await page.waitForSelector('.citem:has-text("시청사 옥상 방수공사") .pill.sub:has-text("1차 기성 지출 대기")', { timeout: 5000 });
+    await page.click('#fState button[data-state=""]'); await page.click('.citem:has-text("시청사 옥상 방수공사")');
     await page.click('.round[open] [data-act="roundpay"]');
     await page.waitForSelector('#dlgPay[open]'); assert.match(await page.textContent('#payTitle'), /1차 기성 지출 처리/);
     await page.fill('#payDate', '2026-10-20'); await page.click('#paySave');
     await page.waitForSelector('.round.paid .pill.paid:has-text("지출 10.20")', { timeout: 5000 });
+    await page.click('#fState button[data-state="paid"]');
+    await page.waitForSelector('.citem:has-text("시청사 옥상 방수공사") .pill.sub:has-text("1차 기성 지출 완료 10.20")', { timeout: 5000 });
+    await page.click('#fState button[data-state=""]'); await page.click('.citem:has-text("시청사 옥상 방수공사")');
     await up(['대금청구서_최종.pdf']); // 열린 회차가 없으면 준공(마지막)으로
     r = await info();
     assert.equal(r.docs.find((x) => x[0] === '대금청구서_최종.pdf')[2], -1, '준공 목록');
@@ -509,6 +537,36 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     await page.waitForSelector('details.round[data-round="p9"][open]', { timeout: 5000 });
     await page.evaluate(() => { const c = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사'); c.pays = c.pays.filter((r) => !/^p\d+$/.test(r.id)); JH.app.render(); });
   }
+  // 되돌리기: 드롭다운으로 서류 종류를 바꿔 줄에서 사라져도 → 알림에 어디로 갔는지 + [되돌리기]로 원래 자리·원래 파일 이름
+  {
+    const pick = await page.evaluate(() => { const c = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사'); const d = JH.app.db.docs.find((x) => x.key === c.key && x.itemId === 'c-estimate' && !x.missing); return { id: d.id, path: d.path }; });
+    await page.selectOption(`select[data-act="moveitem"][data-doc="${pick.id}"]`, 'c-bank');
+    await waitFor(() => page.$('.toast:has-text("통장사본")'), 10000, '어디로 갔는지 알림');
+    const moved = await page.evaluate((id) => { const d = JH.app.db.docs.find((x) => x.id === id); return { item: d.itemId, path: d.path }; }, pick.id);
+    assert.equal(moved.item, 'c-bank'); assert.notEqual(moved.path, pick.path);
+    await page.click('#btnUndo');
+    await waitFor(() => page.evaluate((id) => JH.app.db.docs.find((x) => x.id === id).itemId === 'c-estimate', pick.id), 10000, '되돌리기');
+    assert.equal(await page.evaluate((id) => JH.app.db.docs.find((x) => x.id === id).path, pick.id), pick.path, '파일도 원래 자리·이름');
+    assert.ok(existsSync(join(data, ...pick.path.split('/'))), '원래 파일 있음');
+    // 서류 빼기 → 되돌리기(Ctrl+Z)로 다시 꺼냄
+    page.once('dialog', (dl) => dl.accept());
+    await page.click(`.row [data-act="del"][data-doc="${pick.id}"]`);
+    await waitFor(() => page.evaluate((id) => !JH.app.db.docs.some((x) => x.id === id), pick.id), 10000, '빼기');
+    await page.keyboard.press('Control+z');
+    await waitFor(() => page.evaluate((id) => JH.app.db.docs.some((x) => x.id === id), pick.id), 10000, '빼기 되돌림');
+    assert.ok(existsSync(join(data, ...(await page.evaluate((id) => JH.app.db.docs.find((x) => x.id === id).path, pick.id)).split('/'))), '_삭제됨에서 다시 꺼냄');
+    // 올린 것도 한 번에 되돌림 + 최근 작업에 어디로 갔는지
+    const blank2 = Buffer.from(await (async () => { const d = await PDFDocument.create(); d.addPage(); return d.save(); })());
+    const [fcU] = await Promise.all([page.waitForEvent('filechooser'), page.click('[data-act="addhere"]')]);
+    await fcU.setFiles({ name: '사업장 가입내역 확인서.pdf', mimeType: 'application/pdf', buffer: blank2 });
+    await waitFor(() => page.evaluate(() => (JH.app.db.log || []).some((x) => /사업장 가입내역 확인서/.test(x.text))), 30000, '올림');
+    assert.equal(await page.evaluate(() => JH.app.db.docs.find((d) => d.name === '사업장 가입내역 확인서.pdf').itemId), 'c-insjoin', '가입내역 확인서 = 4대 사회보험 가입증명서');
+    await page.click('#btnLog'); await page.waitForSelector('#dlgLog[open]');
+    assert.match(await page.textContent('#logBody'), /올림 「사업장 가입내역 확인서\.pdf」 → 시청사 옥상 방수공사 · 4대 사회보험 가입증명서/);
+    await page.click('#logUndo');
+    await waitFor(() => page.evaluate(() => !JH.app.db.docs.some((d) => d.name === '사업장 가입내역 확인서.pdf')), 10000, '올림 되돌림');
+  }
+  step('되돌리기: 서류 종류 바꿈(어디로 갔는지 알림)·빼기·올림을 [되돌리기]·Ctrl+Z·최근 작업에서 원래대로(파일 자리·이름까지)');
   step('지출 회차(선금·기성·노무비): 기성계·지정통보·검사조서가 오면 기성 회차 저절로 → 감독관 경유 → 청구 서류 요청 메일 → 청구 서류도 그 회차로 → 지출 처리로 완료, 다음 청구는 준공으로 · 기성 12회도 한눈에');
 
   // 예산 구분: 직접 고른 것을 풀면 '모름' → 서류에 e나라도움·보조금 같은 말이 있으면 외부 → 설정의 외부 예산 사업 이름으로도 외부

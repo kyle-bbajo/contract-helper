@@ -31,7 +31,7 @@
   const cardOpen = (() => { try { return JSON.parse(localStorage.getItem('jh.cards') || '{}') || {}; } catch (_) { return {}; } })();
   const ui = { view: 'home', sel: null, q: '', officer: '', officerTouched: false, type: '', state: '', board: '', sort: (() => { try { return localStorage.getItem('jh.sort') || 'end-desc'; } catch (_) { return 'end-desc'; } })() };
 
-  const CHECKLIST_VER = 5; // 4: 선금 보증서 · 5: 준공검사원 지정통보
+  const CHECKLIST_VER = 6; // 4: 선금 보증서 · 5: 준공검사원 지정통보 · 6: 사업장 가입내역 확인서(4대보험 가입증명서) 등 찾는 말 추가
   const lists = (type) => (db.checklists && db.checklists[type]) || defaults[type] || defaults.공사;
   const contracts = () => Object.values(db.contracts).filter((c) => !c.archived);
   // 계약별 서류: 화면을 그리는 동안은 한 번 만든 색인(docIndex)으로 찾음(서류 수천 개여도 계약마다 다시 훑지 않음)
@@ -367,12 +367,9 @@
     const { top } = L.matchCandidates(contracts(), hay);
     if (top.length === 1) return top[0];
     if (!top.length) return null;
+    // 같은 업체 계약이 여럿이라 하나로 정해지지 않으면: 같이 올린 서류들이 한 계약으로 가는 경우만 그 계약, 아니면 미분류(임의로 고르지 않음 → 팝업에서 고름)
     const inBatch = top.filter((c) => batchKeys.has(c.key));
     if (inBatch.length === 1) return inBatch[0];
-    const due = top.filter((c) => !c.paidDate && L.toDate(c.endDate) && L.toDate(c.endDate) <= today());
-    if (due.length === 1) return due[0];
-    const open = top.filter((c) => !c.paidDate);
-    if (open.length === 1) return open[0];
     return null;
   }
   // 정리된 사본의 파일 이름: "서류명_계약명.확장자"(예: 견적서(계약금액)_시청사 옥상 방수공사.pdf). 같은 이름이 있으면 (2), (3)…
@@ -391,13 +388,15 @@
     const files = [...fileList].filter((f) => f && f.name && !f.name.startsWith('.') && !/^(thumbs\.db|desktop\.ini)$/i.test(f.name));
     if (!files.length) return;
     if (!S.online) { toast('바탕화면의 "계약업무 도우미" 아이콘으로 실행해야 서류를 저장할 수 있습니다.', 'err'); return; }
-    const recs = []; let skipped = 0;
+    const recs = []; let skipped = 0; const dupWhere = [];
+    const snap0 = snapshot([], [], true);
     try {
       // 1) 읽기
       for (let i = 0; i < files.length; i++) {
         const f = files[i];
         progress(`내용 읽는 중 ${i + 1}/${files.length}`, i / files.length);
-        if (db.docs.some((d) => d.name === f.name && d.size === f.size)) { skipped++; continue; }
+        const dup = db.docs.find((d) => d.name === f.name && d.size === f.size);
+        if (dup) { skipped++; dupWhere.push(`「${f.name}」은 이미 ${whereOf(dup)}에 있음`); continue; }
         const bytes = new Uint8Array(await f.arrayBuffer());
         const kind = L.kindOf(f.name);
         const { lines, ocr } = await R.read(bytes, kind, f.type);
@@ -430,13 +429,7 @@
         const r = recs[i];
         progress(`정리하는 중 ${i + 1}/${recs.length}`, i / recs.length);
         let c = forced || (r.key && db.contracts[r.key]) || pickContract(L.norm(L.stem(r.name)) + '|' + r.text, r);
-        // 계약 화면에서 [업로드]로 올렸어도(서류 줄 [+ 추가]가 아니면) 다른 계약 서류가 분명하면 그 계약으로 보냄
-        //  - 내용·파일 이름에 다른 계약의 번호·이름이 있고, 지금 계약과는 맞지 않을 때만(애매하면 지금 계약)
-        if (forced && !forceItem) {
-          const hay = L.norm(L.stem(r.name)) + '|' + r.text;
-          const m = L.matchCandidates(contracts(), hay);
-          if (m.score >= 6 && m.top.length === 1 && m.top[0].key !== forced.key && L.contractScore(forced, hay) < m.score) { c = m.top[0]; r.rerouted = true; }
-        }
+        // 계약 화면 안에서 올린 서류는 그 계약으로(다른 계약으로 보내지 않음). 오른쪽 위 [업로드]는 전체 계약에서 찾아 정리
         let itemId = c ? (forced && forceItem ? forceItem : L.classifyItem(classList(c), r.name, r.title)) : null;
         // 한 파일에 여러 양식(착공계 묶음 등): 쪽마다 서류 이름을 찾아 함께 든 서류로 표시
         let also = [], pagesOf = null;
@@ -494,11 +487,15 @@
       if (roundsHit.size) msg += ` 지출 회차: ${[...roundsHit].map((k) => { const [ck, rid] = k.split('|'); const rc = db.contracts[ck], rr = rc && roundById(rc, rid); if (!rr) return ''; const rs = roundStatus(rc, rr); return `${L.roundLabel(rr)} 서류 ${rs.reqDone}/${rs.reqTotal}${rs.cur >= 0 ? ` (다음: ${(NEXT[rr.kind] || [])[rs.cur] || rs.steps[rs.cur].name})` : ''}`; }).filter(Boolean).join(', ')}.`;
       const moved = recs.filter((r) => r.rerouted).length;
       if (moved) msg += ` ${moved}개는 내용이 다른 계약 서류라 그 계약으로 보냈습니다.`;
-      if (skipped) msg += ` 이미 있는 파일 ${skipped}개는 건너뛰었습니다.`;
+      if (skipped) msg += ` 이미 있는 파일 ${skipped}개는 건너뛰었습니다(${dupWhere.slice(0, 2).join(', ')}${dupWhere.length > 2 ? ' 외' : ''}).`;
+      // 최근 작업: 파일마다 어디로 갔는지 + 이번 올림 전체를 한 번에 되돌릴 수 있게
+      const placed = recs.filter((r) => !r.ignored).map((r) => db.docs.find((d) => d.id === r.id)).filter(Boolean);
+      dupWhere.forEach((x) => logAct('올림 건너뜀: ' + x));
+      if (placed.length) { placed.forEach((d) => logAct(`올림 「${d.name}」 → ${whereOf(d)}`)); undoStack.push({ label: `서류 ${placed.length}개 올림`, s: snap0, at: Date.now() }); if (undoStack.length > 30) undoStack.shift(); paintUndo(); }
       if (R.ocrBroken) msg += ' 스캔본 글자 인식을 시작하지 못해 일부는 미분류로 갔습니다.';
       // 어느 계약인지·어떤 서류인지 못 찾은 것은 바로 팝업으로 보여 주고 고르게 함
       const unsure = recs.filter((r) => !r.ignored && db.docs.some((d) => d.id === r.id && (!d.key || !d.itemId))).map((r) => r.id);
-      toast(msg, inbox ? '' : 'ok', unsure.length ? { label: '확인하기', run: () => openPreview(unsure, 0, true) } : null);
+      toast(msg, inbox ? '' : 'ok', unsure.length ? { label: '확인하기', run: () => openPreview(unsure, 0, true) } : recs.length ? undoAction() : null);
       if (unsure.length && !$('#dlgPreview').open && !document.querySelector('dialog[open]')) setTimeout(() => openPreview(unsure, 0, true), 300);
       const keys = Object.keys(byContract);
       if (!forced && !opt.onlyMatched && keys.length === 1) ui.sel = keys[0]; // 폴더에서 자동으로 읽은 것은 보던 계약 화면을 바꾸지 않음
@@ -534,7 +531,8 @@
     if (!noSave) await saveDb(true);
   }
   async function removeDoc(d) {
-    await S.remove(d.path); if (d.pdfPath) { try { await S.remove(d.pdfPath); } catch (_) {} }
+    const r = await S.remove(d.path); let pr = null; if (d.pdfPath) { try { pr = await S.remove(d.pdfPath); } catch (_) {} }
+    trashed.set(d.id, { doc: d, path: r && r.path, pdf: pr && pr.path });
     db.docs = db.docs.filter((x) => x !== d); textDirty = true; await saveDb(true);
     toast(`"${d.name}"을 빼고 데이터 폴더의 _삭제됨으로 옮겼습니다.`);
   }
@@ -553,6 +551,67 @@
   // ---------- 폴더 정리 상태 맞추기 ----------
   // 탐색기에서 계약 폴더 이름을 바꾸거나 옮긴 파일을 이름·크기로 다시 찾고, 직접 넣은 파일은 읽어서 분류
   const DOC_EXT = /\.(pdf|jpe?g|png|gif|bmp|webp|hwpx?|xlsx|xls|docx)$/i;
+  // ---------- 되돌리기(직전 작업) + 최근 작업 ----------
+  // 작업 전에 그 계약(들)과 서류 상태를 떠 두고, [되돌리기]하면 그대로 돌려놓음(파일도 원래 폴더·이름으로).
+  // 올린 서류는 지움(_삭제됨으로), 빼기한 서류는 _삭제됨에서 다시 꺼냄. 최근 작업 목록에는 서류가 어디로 갔는지 남김
+  const undoStack = [], trashed = new Map();
+  const clone = (o) => (o == null ? o : JSON.parse(JSON.stringify(o)));
+  const dirOf = (p) => String(p || '').split('/').slice(0, -1).join('/'), baseOf = (p) => String(p || '').split('/').pop();
+  function snapshot(keys, docIds = [], all = false) {
+    keys = [...new Set((keys || []).filter(Boolean))];
+    const ids = new Set(docIds.filter(Boolean));
+    const docs = db.docs.filter((d) => all || keys.includes(d.key) || ids.has(d.id));
+    return { all, keys, contracts: all ? clone(db.contracts) : Object.fromEntries(keys.map((k) => [k, clone(db.contracts[k] || null)])),
+      docs: docs.map((d) => ({ ...d })), ids: new Set(db.docs.map((d) => d.id)) };
+  }
+  let recording = 0;
+  async function recorded(label, keys, docIds, fn, opt = {}) {
+    if (recording) return fn();
+    const s = snapshot(keys, docIds, opt.all); recording++;
+    try { const r = await fn(); pushUndo(label, s); return r; } finally { recording--; }
+  }
+  function pushUndo(label, s) {
+    undoStack.push({ label, s, at: Date.now() }); if (undoStack.length > 30) undoStack.shift();
+    logAct(label); paintUndo();
+  }
+  function logAct(text) { db.log = db.log || []; db.log.push({ at: new Date().toISOString(), text }); if (db.log.length > 300) db.log.splice(0, db.log.length - 300); }
+  function paintUndo() { const b = $('#btnUndo'); if (!b) return; const u = undoStack[undoStack.length - 1]; b.disabled = !u; b.title = u ? `되돌리기: ${u.label} (Ctrl+Z)` : '되돌릴 작업이 없습니다'; }
+  async function undo() {
+    const u = undoStack.pop(); if (!u) { toast('되돌릴 작업이 없습니다.'); return; }
+    const s = u.s;
+    try {
+      progress('되돌리는 중', .5);
+      // 1) 작업 뒤에 생긴 서류(올림 등): 파일을 _삭제됨으로 옮기고 목록에서 뺌
+      const fresh = db.docs.filter((d) => !s.ids.has(d.id) && (s.all || s.keys.includes(d.key) || (!d.key && s.keys.includes(null))));
+      for (const d of (s.all ? db.docs.filter((x) => !s.ids.has(x.id)) : fresh)) { try { await S.remove(d.path); if (d.pdfPath) await S.remove(d.pdfPath); } catch (_) {} }
+      db.docs = db.docs.filter((d) => s.ids.has(d.id));
+      // 2) 그때 있던 서류: 빼기했으면 _삭제됨에서 꺼내고, 옮겼으면 원래 자리로
+      for (const sd of s.docs) {
+        let d = db.docs.find((x) => x.id === sd.id);
+        if (!d) { const t = trashed.get(sd.id); if (t && t.path) { try { const r = await S.move(t.path, dirOf(sd.path), baseOf(sd.path)); sd.path = r.path; if (t.pdf && sd.pdfPath) { const p2 = await S.move(t.pdf, dirOf(sd.pdfPath), baseOf(sd.pdfPath)); sd.pdfPath = p2.path; } } catch (_) {} db.docs.push({ ...sd }); trashed.delete(sd.id); } continue; }
+        if (d.path !== sd.path && !d.missing) { try { const r = await S.move(d.path, dirOf(sd.path), baseOf(sd.path)); sd.path = r.path; } catch (_) {} }
+        if (d.pdfPath && sd.pdfPath && d.pdfPath !== sd.pdfPath) { try { const r = await S.move(d.pdfPath, dirOf(sd.pdfPath), baseOf(sd.pdfPath)); sd.pdfPath = r.path; } catch (_) {} }
+        for (const k of Object.keys(d)) if (!(k in sd)) delete d[k];
+        Object.assign(d, sd);
+      }
+      // 3) 계약(체크·회차·지출 표시 등)
+      if (s.all) db.contracts = s.contracts;
+      else for (const [k, c] of Object.entries(s.contracts)) { if (c) db.contracts[k] = c; else delete db.contracts[k]; }
+      textDirty = true; logAct(`되돌림: ${u.label}`); await saveDb(true);
+      toast(`되돌렸습니다: ${u.label}`, 'ok');
+    } catch (e) { console.error(e); toast('되돌리지 못했습니다: ' + e.message, 'err'); }
+    finally { progress(null); paintUndo(); render(); }
+  }
+  const undoAction = () => ({ label: '되돌리기', run: undo });
+  // 최근 작업: 올린 서류가 어디로 갔는지·무엇을 바꿨는지(최근 300개)
+  function openLog() {
+    const rows = (db.log || []).slice().reverse().slice(0, 150);
+    const t = (s) => { const d = new Date(s); const p = (n) => String(n).padStart(2, '0'); return `${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+    $('#logBody').innerHTML = rows.length ? `<ol class="log-list">${rows.map((r) => `<li><span class="date">${esc(t(r.at))}</span> ${esc(r.text)}</li>`).join('')}</ol>` : '<p class="muted">아직 기록이 없습니다.</p>';
+    $('#logUndo').disabled = !undoStack.length; $('#logUndo').textContent = undoStack.length ? `되돌리기: ${undoStack[undoStack.length - 1].label}` : '되돌릴 작업 없음';
+    $('#dlgLog').showModal();
+  }
+
   // 서류 파일을 계약 폴더 안 정리 폴더(0 계약·1차 기성 …·준공)로 옮기고 단계 번호를 붙임 — 이미 제자리면 건드리지 않음(켤 때마다 확인)
   async function relayout() {
     const todo = db.docs.filter((d) => {
@@ -838,7 +897,7 @@
       if (ui.officer && c.officer !== ui.officer) return false;
       if (ui.type && c.type !== ui.type) return false;
       if (q && !hits(c, q)) return false;
-      if (!ignoreState && ui.state) { const s = statusOf(c).state; if (ui.state === 'missing' ? !(s === 'missing' || s === 'empty') : s !== ui.state) return false; }
+      if (!ignoreState && ui.state && !inState(statusOf(c), ui.state)) return false;
       return true;
     }).sort(SORTS[ui.sort] || SORTS['end-desc']);
   }
@@ -884,7 +943,7 @@
       const memoHit = raw && !L.norm([c.name, c.vendor, c.no, ...(c.nums || [])].join(' ')).includes(q) ? [m.dept, m.person, m.phone, m.note, c.officer].find((x) => x && L.norm(x).includes(q)) : '';
       return `<div class="citem${c.key === ui.sel ? ' on' : ''}" role="listitem" tabindex="0" data-key="${esc(c.key)}">
         <div class="nm" title="${esc(c.name)}">${hl(c.name || '이름 없는 계약')}</div>
-        <div class="st">${pillFor(st, c)}${st.roundOpen && st.state !== 'paid' ? roundPill(st.roundOpen, true) : ''}</div>
+        <div class="st">${pillFor(st, c)}${roundFocus(st) && st.state !== 'paid' ? roundPill(roundFocus(st), true) : ''}</div>
         <div class="meta"><span>${hl(c.vendor || '업체 미상')}</span><span>${esc(c.type)}</span>${isExt(c) ? '<span class="ext-dot" title="외부 예산(e나라도움 등)">외부</span>' : ''}${/^date/.test(ui.sort) ? ((c.contractDate || c.startDate) ? `<span class="date">계약 ${esc(L.fmtDate(c.contractDate || c.startDate))}</span>` : '') : c.endDate ? `<span class="date"${st.late ? ' style="color:var(--seal)"' : ''}>준공 ${esc(L.fmtDate(c.endDate))}</span>` : ''}${m.note || m.person ? `<span class="memo-dot" title="${esc([m.dept, m.person, m.phone].filter(Boolean).join(' ') + (m.note ? '\n' + m.note : ''))}">메모</span>` : ''}</div>
         ${memoHit ? `<div class="hit">${hl(String(memoHit).replace(/\s+/g, ' ').slice(0, 80))}</div>` : ''}
         <div class="bar-mini"><i style="width:${pct}%"></i></div></div>`;
@@ -1030,10 +1089,22 @@
     labor: ['노무비 청구서(감독관 경유)·지급 내역 받기', '지출결의'],
     adv: ['선금 청구서·보증서 받기', '지출결의'],
   };
+  // 계약이 어느 상태 목록에 드는지: 준공(마지막) 상태 + 회차(선금·기성·노무비) 상태
+  //  - 서류 미비: 준공이나 아직 지출 안 한 회차에 빠진 서류 / 지출 대기: 준공이나 회차 하나라도 서류를 다 갖춤 / 지출 완료: 준공이나 회차 하나라도 지출함
+  function inState(st, k) {
+    const rs = st.rounds || [];
+    if (k === 'missing') return st.state === 'missing' || st.state === 'empty' || rs.some((x) => x.s.state === 'missing');
+    if (k === 'ready') return st.state === 'ready' || rs.some((x) => x.s.state === 'ready');
+    if (k === 'paid') return st.state === 'paid' || rs.some((x) => x.s.state === 'paid');
+    if (k === 'round') return !!st.roundOpen;
+    return true;
+  }
+  // 목록에 같이 보일 회차 하나: 지출 대기인 회차 > 진행 중인 회차 > 마지막으로 지출한 회차
+  const roundFocus = (st) => { const rs = st.rounds || []; return rs.find((x) => x.s.state === 'ready') || st.roundOpen || [...rs].reverse().find((x) => x.s.state === 'paid') || null; };
   function roundPill(x, small) {
     const s = x.s, r = x.r, cls = small ? ' sub' : '';
     const lb = small ? `${esc(s.label)} ` : '';
-    if (s.state === 'paid') return `<span class="pill paid${cls}">${lb}지출 ${esc(L.fmtDate(r.paidDate).slice(5))}</span>`;
+    if (s.state === 'paid') return `<span class="pill paid${cls}">${lb}${small ? '지출 완료' : '지출'} ${esc(L.fmtDate(r.paidDate).slice(5))}</span>`;
     if (s.state === 'empty') return `<span class="pill none${cls}">${lb}시작 전</span>`;
     if (s.state === 'missing') return `<span class="pill miss${cls}">${lb}미비 ${s.need}</span>`;
     return `<span class="pill ready${cls}">${lb}지출 대기</span>`;
@@ -1648,13 +1719,13 @@
   // ---------- 화면: 현황판 ----------
   function boardRows() {
     return filtered(true).map((c) => ({ c, st: statusOf(c) }))
-      .filter(({ st }) => !ui.board || (ui.board === 'late' ? st.late : ui.board === 'round' ? !!st.roundOpen : ui.board === 'missing' ? (st.state === 'missing' || st.state === 'empty') : st.state === ui.board))
+      .filter(({ st }) => !ui.board || (ui.board === 'late' ? st.late : inState(st, ui.board)))
       .sort((a, b) => (b.st.late - a.st.late) || ((L.toDate(a.c.endDate) || 9e15) - (L.toDate(b.c.endDate) || 9e15)));
   }
   function renderBoard() {
     const all = filtered(true).map((c) => ({ c, st: statusOf(c) }));
     const cnt = { '': all.length, missing: 0, ready: 0, late: 0, paid: 0, round: 0 };
-    all.forEach(({ st }) => { if (st.state === 'missing' || st.state === 'empty') cnt.missing++; if (st.state === 'ready') cnt.ready++; if (st.state === 'paid') cnt.paid++; if (st.late) cnt.late++; if (st.roundOpen) cnt.round++; });
+    all.forEach(({ st }) => { for (const k of ['missing', 'ready', 'paid', 'round']) if (inState(st, k)) cnt[k]++; if (st.late) cnt.late++; });
     const rows = boardRows();
     const chip = (k, label, alert) => `<button class="chip${ui.board === k ? ' on' : ''}${alert && cnt[k] ? ' alert' : ''}" data-board="${k}">${label} <b>${cnt[k]}</b></button>`;
     $('#view-board').innerHTML = `
@@ -1671,7 +1742,7 @@
           <td><div class="prog${st.reqDone === st.reqTotal ? ' full' : ''}"><span class="track"><i style="width:${st.reqTotal ? Math.round(st.reqDone / st.reqTotal * 100) : 0}%"></i></span><span class="num">${st.reqDone}/${st.reqTotal}</span></div></td>
           <td class="r num">${st.origCount || ''}</td>
           <td class="date">${esc(L.fmtDate(c.paidDate) || '')}${st.rounds.length ? `<div class="sub">중간 지출 ${st.rounds.filter((x) => x.s.state === 'paid').length}회</div>` : ''}</td>
-          <td>${pillFor(st, c)}${st.roundOpen ? `<div>${roundPill(st.roundOpen, true)}</div>` : ''}</td></tr>`).join('')}
+          <td>${pillFor(st, c)}${roundFocus(st) ? `<div>${roundPill(roundFocus(st), true)}</div>` : ''}</td></tr>`).join('')}
         </tbody></table>` : `<div class="empty-line">해당하는 계약이 없습니다.</div>`}`;
     const bo = $('#bOfficer'); bo.value = ui.officer;
   }
@@ -1690,6 +1761,7 @@
     $('#pvTitle').textContent = pv.confirm ? `맞는지 확인해 주세요 (${pv.i + 1}/${pv.ids.length})` : d.name;
     $('#pvName').textContent = d.name;
     $('#pvContract').innerHTML = contractOptions(d.key || '').replace('<option value="">계약 고르기</option>', '<option value="">미분류(계약 모름)</option>');
+    $('#pvSearch').value = '';
     const fillItems = (key) => { const cc = key ? db.contracts[key] : null; $('#pvItem').innerHTML = cc ? itemOptions(lists(cc.type), key === d.key ? d.itemId : '', false) : '<option value="">계약을 먼저 고르세요</option>'; $('#pvItem').disabled = !cc; };
     fillItems(d.key); $('#pvContract').onchange = (e) => fillItems(e.target.value);
     $('#pvWhy').textContent = pv.confirm ? (c ? (d.itemId ? '' : '어떤 서류인지 찾지 못했습니다.') : '어느 계약 서류인지 찾지 못했습니다.') + ' 내용을 보고 맞게 골라 주세요.' : '';
@@ -1721,19 +1793,46 @@
   }
   $('#pvPrev').onclick = () => { if (pv.i > 0) { pv.i--; showPreview(); } };
   $('#pvNext').onclick = () => { if (pv.i < pv.ids.length - 1) { pv.i++; showPreview(); } else { $('#dlgPreview').close(); render(); } };
+  // 버리기: 우리 서류가 아니면 _삭제됨으로(되돌리기 가능) 하고 다음 파일로
+  $('#pvTrash').onclick = async () => {
+    const d = docById(pv.ids[pv.i]); if (!d) return;
+    await recorded(`「${d.name}」 버리기`, [d.key], [d.id], () => removeDoc(d));
+    toast(`「${d.name}」을 버렸습니다(_삭제됨으로).`, 'ok', undoAction());
+    pv.ids = pv.ids.filter((id) => id !== d.id);
+    if (!pv.ids.length) { $('#dlgPreview').close(); render(); return; }
+    pv.i = Math.min(pv.i, pv.ids.length - 1); showPreview();
+  };
   $('#pvOpen').onclick = () => { const d = docById(pv.ids[pv.i]); if (d) S.openFile(d.path).catch((e) => toast(e.message, 'err')); };
   $('#pvSave').onclick = async () => {
     const d = docById(pv.ids[pv.i]); if (!d) return;
     const key = $('#pvContract').value || null, item = key ? $('#pvItem').value || null : null;
-    if (key !== d.key || item !== d.itemId) { await moveDoc(d, key, item, true); toast(`"${d.name}"을 ${key ? `${db.contracts[key].name}${item ? ' · ' + (lists(db.contracts[key].type).find((x) => x.id === item) || {}).name : ''}` : '미분류'}(으)로 정리했습니다.`, 'ok'); }
+    if (key !== d.key || item !== d.itemId) { const before = whereOf(d); await recorded(`「${d.name}」 정리`, [d.key, key], [d.id], () => moveDoc(d, key, item, true)); logAct(`「${d.name}」 ${before} → ${whereOf(d)}`); toast(`"${d.name}"을 ${key ? `${db.contracts[key].name}${item ? ' · ' + (lists(db.contracts[key].type).find((x) => x.id === item) || {}).name : ''}` : '미분류'}(으)로 정리했습니다.`, 'ok', undoAction()); }
     if (pv.i < pv.ids.length - 1) { pv.i++; showPreview(); } else { $('#dlgPreview').close(); render(); }
   };
 
   // ---------- 화면: 미분류 ----------
   function contractOptions(sel) {
     const cs = contracts().sort((a, b) => b.updatedAt - a.updatedAt);
-    return '<option value="">계약 고르기</option>' + cs.map((c) => `<option value="${esc(c.key)}"${c.key === sel ? ' selected' : ''}>${esc(c.name)}${c.vendor ? ` (${esc(c.vendor)})` : ''}</option>`).join('');
+    // 설정에서 뺀 담당자의 계약은 고르기 목록에서 뺌(지금 골라져 있는 계약은 남김). data-q: 타자로 찾을 때 쓰는 글(이름·업체·번호·담당자)
+    const hide = new Set((cfg.hideOfficers || []).map((x) => L.norm(x)).filter(Boolean));
+    return '<option value="">계약 고르기</option>' + cs.filter((c) => c.key === sel || !hide.has(L.norm(c.officer || ''))).map((c) => `<option value="${esc(c.key)}" data-q="${esc(L.norm([c.name, c.vendor, c.no, ...(c.nums || []), c.officer].join(' ')))}"${c.key === sel ? ' selected' : ''}>${esc(c.name)}${c.vendor ? ` (${esc(c.vendor)})` : ''}${c.officer ? ` · ${esc(c.officer)}` : ''}</option>`).join('');
   }
+  // 계약 고르기 + 타자로 찾기: 글자를 치면 맞는 계약만 남기고 첫 번째를 고름, Enter면 그 계약으로 정함
+  const contractPicker = (selectHtml) => `<div class="cpick"><input type="search" class="cpick-q" placeholder="계약 찾기: 이름·업체·번호 입력" autocomplete="off" aria-label="계약 찾기">${selectHtml}</div>`;
+  document.addEventListener('input', (e) => {
+    const q = e.target.closest && e.target.closest('.cpick-q'); if (!q) return;
+    const sel = q.parentElement.querySelector('select'), t = L.norm(q.value);
+    let first = null;
+    for (const o of sel.options) { if (!o.value) continue; const hit = !t || (o.dataset.q || '').includes(t) || (/\d{3,}/.test(t) && (o.dataset.q || '').replace(/\D/g, '').includes(t.replace(/\D/g, ''))); o.hidden = !hit; if (hit && !first) first = o; }
+    if (sel.id === 'pvContract' && first && t) { sel.value = first.value; sel.dispatchEvent(new Event('change')); }
+    q.title = t ? `${[...sel.options].filter((o) => o.value && !o.hidden).length}건` : '';
+  });
+  document.addEventListener('keydown', (e) => {
+    const q = e.target.closest && e.target.closest('.cpick-q'); if (!q || e.key !== 'Enter') return;
+    e.preventDefault();
+    const sel = q.parentElement.querySelector('select'); const first = [...sel.options].find((o) => o.value && !o.hidden);
+    if (first) { sel.value = first.value; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+  });
   function renderInbox() {
     const docs = inboxDocs();
     $('#view-inbox').innerHTML = `
@@ -1742,8 +1841,8 @@
       ${docs.length ? `<table class="grid"><thead><tr><th>파일</th><th>읽은 내용</th><th>계약</th><th></th></tr></thead><tbody>
         ${docs.map((d) => `<tr class="inbox-row"><td><div class="nm">${esc(d.name)}</div><div class="sub">${KIND_LABEL[d.kind]}${d.ocr ? ' · 스캔 인식' : ''} · ${esc(L.fmtDate(d.addedAt))}</div></td>
           <td class="sub">${esc([d.meta && d.meta.name, d.meta && d.meta.vendor].filter(Boolean).join(' / ') || (d.text ? d.text.slice(0, 40) + '…' : '읽을 수 있는 글자가 없음'))}</td>
-          <td><select data-act="assign" data-doc="${d.id}" aria-label="계약">${contractOptions('')}</select></td>
-          <td style="white-space:nowrap"><button class="link" data-act="view" data-doc="${d.id}">보기</button> &nbsp; <button class="x" data-act="del" data-doc="${d.id}" aria-label="빼기">✕</button></td></tr>`).join('')}
+          <td>${contractPicker(`<select data-act="assign" data-doc="${d.id}" aria-label="계약">${contractOptions('')}</select>`)}</td>
+          <td style="white-space:nowrap"><button class="link" data-act="view" data-doc="${d.id}">보기</button> &nbsp; <button class="btn sm ghost" data-act="del" data-doc="${d.id}" title="우리 서류가 아니면 버림(_삭제됨으로 옮김, 되돌리기 가능)">버리기</button></td></tr>`).join('')}
         </tbody></table>` : `<div class="empty-line">미분류 서류가 없습니다.</div>`}`;
   }
 
@@ -1873,7 +1972,7 @@
         const toProg = { finish: 'progfin', notice: 'prognotice', inspect: 'proginsp' }, toFin = { progfin: 'finish', prognotice: 'notice', proginsp: 'inspect' };
         if (r && r.kind === 'prog' && toProg[suf]) item = d.itemId.replace(suf, toProg[suf]);
         if (!r && toFin[suf]) item = d.itemId.replace(suf, toFin[suf]);
-        await moveDoc(d, c.key, item, true, r ? r.id : ''); render(); toast(`${r ? L.roundLabel(r) : '준공(마지막)'}으로 옮겼습니다.`, 'ok'); return;
+        await moveDoc(d, c.key, item, true, r ? r.id : ''); render(); return;
       }
       if (t.dataset.act === 'noprint') {
         const c = db.contracts[ui.sel]; c.noPrint = c.noPrint || {};
@@ -1988,8 +2087,9 @@
     $('#dlgPay').showModal();
   }
   const touch = () => { const c = db.contracts[ui.sel]; if (c) c.updatedAt = Date.now(); };
-  $('#paySave').onclick = async () => { editing.paidDate = $('#payDate').value.replace(/-/g, ''); editing.payMemo = $('#payMemo').value.trim(); editing.updatedAt = Date.now(); touch(); await saveDb(true); $('#dlgPay').close(); render(); };
-  $('#payUndo').onclick = async () => { editing.paidDate = ''; editing.payMemo = ''; touch(); await saveDb(true); $('#dlgPay').close(); render(); };
+  const payWhat = () => { const c = db.contracts[ui.sel]; return c && editing !== c && editing.kind ? `${L.roundLabel(editing)} (${c.name})` : (c ? c.name : ''); };
+  $('#paySave').onclick = () => recorded(`지출 처리 ${payWhat()}`, [ui.sel], [], async () => { editing.paidDate = $('#payDate').value.replace(/-/g, ''); editing.payMemo = $('#payMemo').value.trim(); editing.updatedAt = Date.now(); touch(); await saveDb(true); $('#dlgPay').close(); render(); });
+  $('#payUndo').onclick = () => recorded(`지출 처리 취소 ${payWhat()}`, [ui.sel], [], async () => { editing.paidDate = ''; editing.payMemo = ''; touch(); await saveDb(true); $('#dlgPay').close(); render(); });
 
   document.addEventListener('toggle', (e) => { const d = e.target; if (d.matches && d.matches('details.round[data-round]')) ui.roundOpen = { ...(ui.roundOpen || {}), [d.dataset.round]: d.open }; }, true);
   document.addEventListener('input', (e) => {
@@ -2021,8 +2121,35 @@
     if (e.key === '/' && !typing && !document.querySelector('dialog[open]') && MOD[ui.view] === 'jichul') { e.preventDefault(); if (ui.view !== 'contracts') setView('contracts'); $('#q').focus(); $('#q').select(); }
     if (e.key === 'Escape' && document.activeElement === $('#q') && $('#q').value) { $('#q').value = ''; ui.q = ''; renderList(); }
   });
-  document.addEventListener('click', onAct);
-  document.addEventListener('change', onChange);
+  // 바꾸는 작업은 되돌릴 수 있게 감쌈(작업 전 상태를 떠 둠). 서류가 다른 칸·계약으로 가면 어디로 갔는지 알림 + [되돌리기]
+  const ACT_LABEL = { recvall: '빠진 서류 모두 받음 표시', budget: '예산 구분 바꿈', budgetauto: '예산 구분 자동으로', payauto: '지출요청일 자동으로', roundadd: '지출 회차 만들기', rpayauto: '회차 지출요청일 자동으로', rdel: '지출 회차 지우기', del: '서류 빼기' };
+  const CHG_LABEL = { noprint: '인쇄 체크', via: '감독관 경유 체크', rvia: '감독관 경유 체크', recv: '받음 체크', rrecv: '받음 체크', orig: '원본 체크', validset: '유효기간 날짜 고침', docdate: '서류 날짜 고침', payplan: '지출요청일 고침', rpayplan: '회차 지출요청일 고침', rmonth: '노무비 월 고침', moveitem: '서류 종류 바꿈', assign: '서류를 계약으로 옮김', docpay: '서류 회차 바꿈' };
+  const docLabel = (id) => { const d = id && docById(id); return d ? `「${d.name}」 ` : ''; };
+  const whereOf = (d) => { if (!d) return ''; const c = d.key && db.contracts[d.key]; if (!c) return '미분류'; const it = d.itemId && classList(c).find((x) => x.id === d.itemId); const r = d.pay && roundById(c, d.pay); return `${c.name}${r ? ' · ' + L.roundLabel(r) : ''} · ${it ? it.name : '종류 미정'}`; };
+  document.addEventListener('click', (e) => {
+    const t = e.target.closest('[data-act]'); const act = t && t.dataset.act;
+    if (!act || !ACT_LABEL[act] || t.tagName === 'SELECT' || (t.tagName === 'INPUT' && e.type === 'click')) return onAct(e);
+    const c = ui.sel && db.contracts[ui.sel];
+    return recorded(docLabel(t.dataset.doc) + ACT_LABEL[act] + (c ? ` (${c.name})` : ''), [c && c.key], [t.dataset.doc], () => onAct(e));
+  });
+  document.addEventListener('change', (e) => {
+    const t = e.target, act = t.dataset && t.dataset.act;
+    if (!act || !CHG_LABEL[act]) return onChange(e);
+    const d = t.dataset.doc && docById(t.dataset.doc), before = d ? whereOf(d) : '';
+    const keys = [ui.sel, d && d.key, act === 'assign' ? t.value : null];
+    const moving = act === 'moveitem' || act === 'assign' || act === 'docpay';
+    return recorded(docLabel(t.dataset.doc) + CHG_LABEL[act], keys, [t.dataset.doc], async () => {
+      await onChange(e);
+      // 서류가 화면에서 사라져 어디 갔는지 모르는 일이 없게
+      if (moving && d) { const after = whereOf(docById(d.id)); logAct(`「${d.name}」 ${before} → ${after}`); if (act !== 'assign') toast(`「${d.name}」 → ${after}`, 'ok', undoAction()); }
+    });
+  });
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || '') && !document.querySelector('dialog[open]')) { e.preventDefault(); undo(); }
+  });
+  $('#btnUndo').onclick = () => undo();
+  $('#btnLog').onclick = () => openLog();
+  $('#logUndo').onclick = async () => { $('#dlgLog').close(); await undo(); };
   document.addEventListener('click', (e) => { const b = e.target.closest('[data-view]'); if (b && !b.disabled && !b.closest('dialog')) setView(b.dataset.view); });
   $('#btnNewNotice').onclick = () => { setView('notice'); JH.notice.create(); };
   $('#contractList').addEventListener('click', (e) => { const it = e.target.closest('.citem'); if (it) { ui.sel = it.dataset.key; render(); } });

@@ -30,6 +30,8 @@
       </span>
     </nav>
     <div class="bar-actions">
+      <button type="button" class="btn ghost icon-t" id="btnUndo" data-for="jichul" disabled title="되돌릴 작업이 없습니다"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span>되돌리기</span></button>
+      <button type="button" class="btn ghost icon-t" id="btnLog" data-for="jichul" title="최근 작업: 올린 서류가 어디로 갔는지, 무엇을 바꿨는지"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span>최근 작업</span></button>
       <button type="button" class="btn ghost refresh" id="btnFetch" data-for="jichul" title="나라장터 계약목록 새로고침"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>새로고침</span></button>
       <button type="button" class="btn primary" id="btnAdd" data-for="jichul">업로드</button>
       <button type="button" class="btn primary" id="btnNewNotice" data-for="notice">새 공고문</button>
@@ -155,6 +157,8 @@
       <div class="form">
         <label>외부 예산 사업 이름 <span class="hint">한 줄에 하나 · 계약명에 이 말이 있으면 '외부 예산(e나라도움 등)'으로 봄 · 예: 도시재생, 55사단</span>
           <textarea id="cfgExtNames" rows="3" placeholder="도시재생&#10;55사단 사령부"></textarea></label>
+        <div class="hide-off"><span class="lbl">계약 고르기에서 뺄 담당자 <span class="hint">체크한 담당자의 계약은 미분류·확인 팝업의 계약 고르기 목록에 나오지 않음(계약 목록·현황판은 그대로)</span></span>
+          <div id="cfgHideOff" class="chkgrid"><span class="muted small">나라장터에서 계약을 불러오면 담당자가 나옵니다</span></div></div>
       </div>
       <div class="dlg-actions">
         <span class="note" id="naraNote"></span>
@@ -173,7 +177,18 @@
       <h3 class="sub-h">자동으로 읽을 폴더</h3>
       <p class="help">문서함·메일에서 서류를 내려받는 폴더(예: 다운로드)를 골라 두면, 프로그램이 켜져 있는 동안 몇 초마다 새 파일을 읽어 <b>우리 계약에 맞는 서류만</b> 사본을 만들어 계약별·서류 종류별로 정리합니다(이름도 "서류명_계약명"으로). 원래 파일은 그대로 두고, 계약과 상관없는 파일(다른 공고문·개인 파일 등)은 가져오지 않습니다. 폴더는 여러 개 골라도 됩니다.</p>
       <ul class="watch-list" id="watchList"><li class="muted">꺼짐</li></ul>
-      <div class="dlg-actions"><button type="button" class="btn primary" id="btnWatchPick">폴더 더하기</button></div>
+      <div class="watch-add">
+        <span class="muted small">바로 더하기</span>
+        <button type="button" class="btn sm" data-watchknown="downloads">다운로드 폴더</button>
+        <button type="button" class="btn sm" data-watchknown="desktop">바탕화면</button>
+        <button type="button" class="btn sm" data-watchknown="documents">문서</button>
+      </div>
+      <div class="watch-add">
+        <input type="text" id="watchPath" placeholder="폴더 경로 붙여 넣기 — 탐색기 주소창에서 복사(예: C:\Users\나\Downloads\계약서류)" autocomplete="off">
+        <button type="button" class="btn sm" id="btnWatchPath">이 경로 더하기</button>
+      </div>
+      <div class="dlg-actions"><button type="button" class="btn primary" id="btnWatchPick">찾아보기(폴더 고르기 창)</button></div>
+      <p class="help small" id="watchHint" hidden>폴더 고르기 창이 프로그램 창 뒤에 열렸을 수 있습니다. 아래 작업 표시줄을 보거나, 위 버튼·경로 붙여 넣기로 더하세요.</p>
     </div>
     <div class="tab" data-pane="lists">
       <div class="lists-head">
@@ -366,6 +381,18 @@
   </div>
 </dialog>
 
+<dialog id="dlgLog" class="dlg" aria-labelledby="logTitle">
+  <form method="dialog" class="dlg-head">
+    <h2 id="logTitle">최근 작업</h2>
+    <button class="btn icon" value="close" aria-label="닫기">✕</button>
+  </form>
+  <div class="dlg-body">
+    <p class="help">올린 서류가 어느 계약·어느 칸으로 갔는지, 무엇을 바꿨는지 최근 것부터 보여 줍니다. 직전 작업은 [되돌리기](Ctrl+Z)로 되돌릴 수 있습니다.</p>
+    <div id="logBody"></div>
+    <div class="dlg-actions"><button type="button" class="btn primary" id="logUndo">되돌리기</button></div>
+  </div>
+</dialog>
+
 <dialog id="dlgPay" class="dlg narrow" aria-labelledby="payTitle">
   <form method="dialog" class="dlg-head">
     <h2 id="payTitle">지출 처리</h2>
@@ -389,10 +416,11 @@
     <div class="pv-side">
       <div class="pv-name" id="pvName"></div>
       <p class="warn-t small" id="pvWhy"></p>
-      <label>계약<select id="pvContract"></select></label>
+      <label>계약<div class="cpick"><input type="search" class="cpick-q" id="pvSearch" placeholder="계약 찾기: 이름·업체·번호 입력" autocomplete="off"><select id="pvContract"></select></div></label>
       <label>서류 종류<select id="pvItem"></select></label>
       <div class="pv-acts">
         <button type="button" class="btn primary" id="pvSave">이대로 저장</button>
+        <button type="button" class="btn ghost danger" id="pvTrash" title="우리 계약 서류가 아니면 버림(_삭제됨으로 옮김, 되돌리기 가능)">버리기</button>
         <div class="pv-nav"><button type="button" class="btn ghost" id="pvPrev">이전</button><button type="button" class="btn ghost" id="pvNext">다음</button></div>
         <button type="button" class="link sm" id="pvOpen">원래 프로그램으로 열기</button>
       </div>

@@ -34,7 +34,7 @@
     writeBytes: (path, bytes) => call('PUT', '/api/file', { path }, bytes),
     save: (dir, name, bytes) => call('POST', '/api/save', { dir, name }, bytes),
     move: (from, dir, name) => call('POST', '/api/move', { from, dir, name }),
-    remove: (path) => call('POST', '/api/delete', { path }),
+    remove: (path) => call('POST', '/api/delete', { path }), // { ok, path: _삭제됨 안 새 위치 }
     list: (dir, recursive) => call('GET', '/api/list', { dir, recursive: recursive ? '1' : '0' }),
     async nara(url) {
       const r = await call('GET', '/api/nara', { u: url });
@@ -45,10 +45,10 @@
     office2pdf: (path) => call('POST', '/api/office2pdf', { path }),
     myIp: () => call('GET', '/api/myip'),
     async law(u) { const r = await call('GET', '/api/law', { u }); return r.text(); },
-    async update() { const r = await call('POST', '/api/update'); return r.json(); },
+    update: () => call('POST', '/api/update'),
     async lawFile(u) { const r = await call('GET', '/api/law', { u }); return new Uint8Array(await r.arrayBuffer()); },
     watch: () => call('GET', '/api/watch'),
-    watchPick: () => call('POST', '/api/watch', { pick: '1' }),
+    watchPick: (o) => call('POST', '/api/watch', o || { pick: '1' }),
     watchClear: (i) => call('POST', '/api/watch', { clear: String(i) }),
     async watchFile(name) { const r = await call('GET', '/api/watchfile', { name }); return new Uint8Array(await r.arrayBuffer()); },
     // 설치된 한글로 .hwp → .hwpx(공고문 양식을 그대로 채우려고)

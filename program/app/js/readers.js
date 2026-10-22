@@ -76,14 +76,15 @@
     const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(src, 0, 0, c.width, c.height);
     return c;
   }
-  async function firstPageCanvas(bytes, kind, type) {
+  async function firstPageCanvas(bytes, kind, type, pageNo = 1) {
     if (kind === 'image') {
       const bmp = await createImageBitmap(new Blob([bytes], { type: type || 'image/*' }));
       return capCanvas(bmp, bmp.width, bmp.height);
     }
     const doc = await (await pdfjs()).getDocument({ data: bytes.slice(), ...PDFJS_OPTS }).promise;
     try {
-      const page = await doc.getPage(1); const v1 = page.getViewport({ scale: 1 });
+      if (pageNo > doc.numPages) return null;
+      const page = await doc.getPage(pageNo); const v1 = page.getViewport({ scale: 1 });
       const vp = page.getViewport({ scale: Math.min(3, 2200 / Math.max(v1.width, v1.height)) });
       const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
       const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
@@ -91,12 +92,45 @@
       return c;
     } finally { doc.destroy(); }
   }
+  // 스캔이 옆으로·거꾸로 들어온 경우가 많음: 바로 읽어 보고 글자가 엉망이면(신뢰도 낮음) 180·90·270도 돌려 가장 잘 읽히는 쪽을 씀
+  function rotated(src, deg) {
+    const c = document.createElement('canvas'), g = c.getContext('2d');
+    const side = deg % 180 !== 0; c.width = side ? src.height : src.width; c.height = side ? src.width : src.height;
+    g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+    g.translate(c.width / 2, c.height / 2); g.rotate((deg * Math.PI) / 180); g.drawImage(src, -src.width / 2, -src.height / 2);
+    return c;
+  }
+  // 글자 품질: tesseract 신뢰도 + 한글 낱말(두 글자 이상 이어진 한글) 비율
+  function quality(data) {
+    const t = String((data && data.text) || '');
+    const words = t.match(/[가-힣]{2,}/g) || [], junk = t.match(/[^가-힣0-9a-zA-Z\s.,:()\-·~%원㈜]/g) || [];
+    const hangul = words.join('').length;
+    return { conf: (data && data.confidence) || 0, score: ((data && data.confidence) || 0) + Math.min(30, hangul / 3) - Math.min(30, junk.length / 2), hangul };
+  }
+  async function recognize(w, canvas) {
+    const { data } = await withTimeout(w.recognize(canvas), 120000, '글자 인식');
+    return { text: String(data.text || ''), ...quality(data) };
+  }
   async function ocrLines(bytes, kind, type) {
     if (ocrBroken) return null;
     try {
       const w = await getOcr();
-      const { data } = await withTimeout(w.recognize(await firstPageCanvas(bytes, kind, type)), 120000, '글자 인식');
-      return String(data.text || '').split('\n').map((s) => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
+      const readPage = async (n) => {
+        const canvas = await firstPageCanvas(bytes, kind, type, n); if (!canvas) return null;
+        let best = await recognize(w, canvas);
+        if (best.conf < 75) {
+          for (const deg of [180, 90, 270]) {
+            const r = await recognize(w, rotated(canvas, deg));
+            if (r.score > best.score + 8) best = { ...r, deg };
+            if (best.conf >= 80) break;
+          }
+        }
+        return best;
+      };
+      let best = await readPage(1);
+      // 첫 장이 빈 장·팩스 표지라 글자가 거의 없으면 둘째 장도
+      if (kind === 'pdf' && best && best.hangul < 10) { const b2 = await readPage(2); if (b2 && b2.hangul > best.hangul) best = { ...b2, text: b2.text + (best.hangul ? '\n' + best.text : '') }; } // 글자가 많은 장을 앞에(제목으로 씀)
+      return best ? best.text.split('\n').map((s) => s.replace(/\s+/g, ' ').trim()).filter(Boolean) : null;
     } catch (e) {
       console.warn('OCR 실패', e);
       if (!ocrWorker) ocrBroken = true;
@@ -129,8 +163,9 @@
       else if (kind === 'hwp') lines = hwpLines(bytes);
       else if (kind === 'other') lines = officeLines(bytes);
     } catch (e) { console.warn('읽기 실패', e); }
-    const textLen = JH.logic.norm(lines.join('')).length;
-    if (kind === 'image' || (kind === 'pdf' && textLen < 10)) {
+    // 스캔 PDF에 스캐너 앱 글씨(CamScanner 등)만 글자로 들어 있는 경우가 있어 '한글이 거의 없으면' 글자 인식
+    const hangul = (lines.join('').match(/[가-힣]/g) || []).length;
+    if (kind === 'image' || (kind === 'pdf' && hangul < 8)) {
       const o = await ocrLines(bytes, kind, type);
       if (o) { lines = lines.concat(o); ocr = true; }
     }
