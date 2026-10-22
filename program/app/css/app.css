@@ -778,3 +778,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 .rounds { margin-top: 0; margin-bottom: 16px; }
 .rounds.none { border-color: var(--ink); border-style: dashed; }
 .rtrack .rt.next { border-style: dashed; color: var(--ink); background: transparent; }
+.rrev { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; margin-right: 8px; padding: 2px 6px; border-radius: 6px; background: var(--ok-soft); color: var(--ok); font-weight: 650; }
+.rrev.empty { background: var(--amber-soft); color: #7a5112; }
+.rrev input { font-size: 12px; padding: 1px 4px; }
+.rrev small { font-weight: 500; opacity: .8; }
+.rsrc-how { margin: 0; color: var(--ink-2); line-height: 1.6; }

@@ -37,3 +37,25 @@ test('국가법령정보센터 오류 응답(등록 안 된 IP)을 알기 쉬운
   assert.match(R.lawError({ result: '사용자 정보 검증에 실패하였습니다.', msg: 'OPEN API 호출 시 사용자 검증을 위하여 정확한 서버장비의 IP주소 및 도메인주소를 등록해 주세요.' }), /신청 내역 → \[수정\] → 서버장비의 IP주소/);
   assert.equal(R.lawError({ LawSearch: { law: [] } }), '');
 });
+
+test('조문 형식이 아닌 예규: 첨부파일 링크 모음(PDF 먼저, http→https), 장·절 단위로 나눔', () => {
+  const f = R.lawFiles({ AdmRulService: { 첨부파일: { 첨부파일명: ['본문.hwp', '본문.pdf'], 첨부파일링크: ['http://www.law.go.kr/LSW/flDownload.do?flSeq=1', 'http://www.law.go.kr/LSW/flDownload.do?flSeq=2'] } } });
+  assert.deepStrictEqual(f.map((x) => [x.kind, x.url]), [['pdf', 'https://www.law.go.kr/LSW/flDownload.do?flSeq=2'], ['hwp', 'https://www.law.go.kr/LSW/flDownload.do?flSeq=1']]);
+  const hs = R.splitArticles('집행기준\n제1장 입찰 및 계약 일반기준\n제1절 총칙\n1. 목적\n제13장 공사계약 일반조건\n1. 정의\n').map((x) => x.h);
+  assert.ok(hs.includes('제1장 입찰 및 계약 일반기준 > 제1절 총칙') && hs.includes('제13장 공사계약 일반조건'), JSON.stringify(hs));
+  assert.ok(!R.DEFAULT_LAWS.some((x) => /계약 일반조건$/.test(x.name)), '일반조건은 집행기준 안');
+});
+
+test('규정 개정: 바뀐 조만 올리면 같은 조를 바꿔 끼우고, 삭제는 지우고, 새 조는 번호 자리에', () => {
+  const old = R.splitArticles('제1조(목적) 목적\n제3조(선금) 50%\n제5조(보증) 보증\n제7조(기타) 기타');
+  const m = R.mergeArticles(old, R.splitArticles('제3조(선금) 70%\n제5조 삭제 <2026.10.1>\n제6조(하자) 신설'));
+  assert.deepStrictEqual(m.chunks.map((x) => x.h), ['제1조(목적)', '제3조(선금)', '제6조(하자)', '제7조(기타)']);
+  assert.deepStrictEqual([m.changed, m.added, m.removed], [['제3조(선금)'], ['제6조(하자)'], ['제5조']]);
+  assert.strictEqual(R.mergeArticles(old, R.splitArticles('조문이 없는 글')), null);
+});
+
+test('규정이 언제 개정분까지인지: 개정·시행 날짜 중 가장 늦은 것', () => {
+  assert.strictEqual(R.revDate('제1조 <개정 2023. 3. 4.>\n제2조 <개정 2025.10.1>\n(2026. 9. 15. 일부개정)'), '20260915');
+  assert.strictEqual(R.revDate('[시행 2026. 1. 1.]'), '20260101');
+  assert.strictEqual(R.revDate('계약금액 2026년 예산'), '');
+});

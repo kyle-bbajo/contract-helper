@@ -7,6 +7,7 @@
   const app = () => root.JH.app;
   const KB_PATH = '규정/지식.json', QA_PATH = '규정/질문답변.json';
   let kb = { sources: [] }, qa = { items: [] }, loaded = false, idx = null, qidx = null;
+  let amendTarget = null;
   const st = { tab: 'ask', q: '', res: null, busy: false, qaFilter: '', open: null, law: null };
 
   async function load() {
@@ -45,11 +46,30 @@
         try {
           const found = R.pickLaw(await getJson(R.lawSearchUrl(oc, it.name, it.kind)), it.name, it.kind);
           if (!found) { bad.push(`${it.name}(찾지 못함)`); continue; }
-          const text = R.lawText(await getJson(R.lawServiceUrl(oc, found.id, it.kind)));
+          const body = await getJson(R.lawServiceUrl(oc, found.id, it.kind));
+          let text = R.lawText(body), from = '';
+          // 조문 형식이 아닌 예규(입찰 및 계약 집행기준·낙찰자 결정기준): 본문이 별표나 첨부파일(PDF·한글)에 있음
+          if (text.length < 3000) { const t2 = R.lawText(body, true); if (t2.length > text.length + 500) { text = t2; from = '별표'; } }
+          if (text.length < 3000) {
+            for (const f of R.lawFiles(body)) {
+              try {
+                app().progress(`법령 받는 중 ${i + 1}/${list.length} — ${it.name} 첨부파일 읽는 중(쪽이 많으면 1~2분)`, i / list.length);
+                const bytes = await S.lawFile(f.url);
+                const kind = f.kind !== 'unknown' ? f.kind : (bytes[0] === 0x25 && bytes[1] === 0x50 ? 'pdf' : 'hwp');
+                const lines = kind === 'pdf' ? await root.JH.readers.pdfLines(bytes, 3000) : await root.JH.readers.fullLines(bytes, 'hwp');
+                const t3 = lines.join('\n');
+                if (t3.length > text.length) { text = t3; from = `첨부파일 ${f.name || ''}`.trim(); }
+                if (text.length >= 3000) break;
+              } catch (e) { console.warn('첨부파일 읽기 실패', f, e); }
+            }
+          }
           const chunks = R.splitArticles(text);
-          if (!chunks.length) { bad.push(`${it.name}(본문 없음)`); continue; }
+          if (!chunks.length) {
+            S.writeJson(`진단/법령응답_${L.safeName(it.name, 40)}.json`, body).catch(() => {}); // 왜 못 읽었는지 볼 수 있게 받은 그대로 남김
+            bad.push(`${it.name}(본문 없음)`); continue;
+          }
           kb.sources = kb.sources.filter((s) => !(s.auto && s.name === found.name));
-          kb.sources.push({ id: L.uid(), name: found.name, kind: it.kind === 'admrul' ? '예규·고시' : '법령', auto: true, date: found.date, at: new Date().toISOString(), chunks });
+          kb.sources.push({ id: L.uid(), name: found.name, kind: it.kind === 'admrul' ? '예규·고시' : '법령', auto: true, date: found.date, at: new Date().toISOString(), chunks, ...(from ? { from } : {}) });
           ok++;
         } catch (e) { bad.push(`${it.name}(${e.message})`); if (/사용자 확인 실패/.test(e.message)) break; }
       }
@@ -96,6 +116,49 @@
   }
 
   // ---------- 우리 규정집 올리기 ----------
+  // 파일 → 글줄(PDF는 모든 쪽, 한글·워드·글)
+  async function readRuleFile(f) {
+    const bytes = new Uint8Array(await f.arrayBuffer());
+    const kind = L.kindOf(f.name);
+    let lines = [];
+    if (kind === 'pdf') lines = await root.JH.readers.pdfLines(bytes, 3000);
+    else if (kind === 'hwp') lines = await root.JH.readers.fullLines(bytes, 'hwp');
+    else if (/\.(docx|xlsx)$/i.test(f.name)) lines = root.JH.readers.officeLines(bytes);
+    else if (/\.(txt|md)$/i.test(f.name)) lines = new TextDecoder('utf-8').decode(bytes).split(/\r?\n/);
+    else throw new Error('한글·PDF·워드·글 파일만');
+    return { bytes, lines };
+  }
+  // 개정된 조만 올림: 고른 규정에서 같은 조 번호를 바꿔 끼우고, '삭제'는 지우고, 새 조는 번호 자리에 넣음
+  async function amendRules(sid, files) {
+    const s = kb.sources.find((x) => x.id === sid); if (!s) return;
+    try {
+      const all = { changed: [], added: [], removed: [] }; const bad = [];
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        app().progress(`개정 조문 읽는 중 ${i + 1}/${files.length} — ${f.name}`, i / files.length);
+        try {
+          const { bytes, lines } = await readRuleFile(f);
+          const r = R.mergeArticles(s.chunks, R.splitArticles(lines.join('\n')));
+          if (!r) throw new Error('제○조를 찾지 못함 — 개정된 조문(제○조 …)이 든 파일이어야 합니다. 신구조문대비표는 표가 섞여 읽기 어려우니 개정 후 전문을 같은 이름으로 다시 올려 주세요');
+          s.chunks = r.chunks; ['changed', 'added', 'removed'].forEach((k) => all[k].push(...r[k]));
+          const rv = R.revDate(lines.join('\n')); if (rv && rv > (all.rev || '')) all.rev = rv;
+          try { await S.save('규정/원본/개정', f.name, bytes); } catch (_) {}
+        } catch (e) { bad.push(`${f.name}(${e.message})`); }
+      }
+      const n = all.changed.length + all.added.length + all.removed.length;
+      if (n) {
+        s.amends = s.amends || [];
+        const rev = all.rev || ''; delete all.rev;
+        s.amends.push({ at: new Date().toISOString(), files: files.map((f) => f.name), ...(rev ? { rev } : {}), ...all });
+        s.at = new Date().toISOString();
+        if (rev && rev > (s.rev || '')) s.rev = rev; else if (!rev) s.revGuess = true; // 파일에 개정일이 없으면 직접 넣도록 표시
+        await saveKb();
+      }
+      const parts = [all.changed.length ? `바뀜 ${all.changed.join('·')}` : '', all.added.length ? `새로 ${all.added.join('·')}` : '', all.removed.length ? `삭제 ${all.removed.join('·')}` : ''].filter(Boolean);
+      if (n) app().toast(`「${s.name}」에 개정 조문을 반영했습니다 — ${parts.join(' / ')}.` + (bad.length ? ` 못 읽음: ${bad.join(', ')}` : ''), 'ok');
+      else app().toast(bad.length ? `개정 조문을 반영하지 못했습니다: ${bad.join(', ')}` : '바뀐 조가 없습니다(이미 같은 내용).', bad.length ? 'err' : '');
+    } finally { app().progress(null); render(); }
+  }
   async function uploadRules(files) {
     let ok = 0; const bad = [];
     try {
@@ -103,20 +166,15 @@
         const f = files[i];
         app().progress(`규정 읽는 중 ${i + 1}/${files.length} — ${f.name}`, i / files.length);
         try {
-          const bytes = new Uint8Array(await f.arrayBuffer());
-          const kind = L.kindOf(f.name);
-          let lines = [];
-          if (kind === 'pdf' || kind === 'hwp') lines = await root.JH.readers.fullLines(bytes, kind === 'pdf' ? 'pdf' : 'hwp');
-          else if (/\.(docx|xlsx)$/i.test(f.name)) lines = root.JH.readers.officeLines(bytes);
-          else if (/\.(txt|md)$/i.test(f.name)) lines = new TextDecoder('utf-8').decode(bytes).split(/\r?\n/);
-          else throw new Error('한글·PDF·워드·글 파일만');
-          if (kind === 'pdf' && lines.length < 30) { const more = await root.JH.readers.pdfLines(bytes, 400); if (more.length > lines.length) lines = more; }
+          const { bytes, lines } = await readRuleFile(f);
           const chunks = R.splitArticles(lines.join('\n'));
           if (!chunks.length) throw new Error('글자를 읽지 못함(스캔본이면 한글·워드 파일로)');
           const name = f.name.replace(/\.[^.]+$/, '');
           try { await S.save('규정/원본', f.name, bytes); } catch (_) { /* 원본 보관 못 해도 읽은 내용은 씀 */ }
-          kb.sources = kb.sources.filter((s) => !(s.mine && s.name === name));
-          kb.sources.push({ id: L.uid(), name, kind: '우리 규정', mine: true, file: f.name, at: new Date().toISOString(), chunks });
+          const old = kb.sources.find((s) => s.mine && s.name === name);
+          kb.sources = kb.sources.filter((s) => s !== old);
+          const rev = R.revDate(lines.join('\n'));
+          kb.sources.push({ id: old ? old.id : L.uid(), name, kind: '우리 규정', mine: true, file: f.name, at: new Date().toISOString(), chunks, ...(rev ? { rev } : {}), ...(old ? { replaced: (old.replaced || 0) + 1 } : {}) });
           ok++;
         } catch (e) { bad.push(`${f.name}(${e.message})`); }
       }
@@ -163,8 +221,10 @@
     const el = view(); if (!el) return;
     const nMine = kb.sources.filter((s) => s.mine).length, nLaw = kb.sources.filter((s) => s.auto).length;
     const nChunk = kb.sources.reduce((a, s) => a + s.chunks.length, 0);
+    const revs = kb.sources.filter((s) => s.mine && s.rev).map((s) => s.rev).sort();
+    const revTxt = nMine ? ` · 우리 규정 ${revs.length ? `${L.fmtDate(revs[revs.length - 1])} 개정분까지` : '개정일 모름'}` : '';
     el.innerHTML = `<div class="rules">
-      <div class="rules-head"><h2>규정·질문 답변</h2><span class="muted">법령·예규 ${nLaw}건 · 우리 규정 ${nMine}건 · 조항 ${nChunk.toLocaleString('ko-KR')}개 · 저장한 질문답변 ${qa.items.length}건 — 모두 이 PC 안에서만 처리</span>
+      <div class="rules-head"><h2>규정·질문 답변</h2><span class="muted">법령·예규 ${nLaw}건 · 우리 규정 ${nMine}건${esc(revTxt)} · 조항 ${nChunk.toLocaleString('ko-KR')}개 · 저장한 질문답변 ${qa.items.length}건 — 모두 이 PC 안에서만 처리</span>
         <div class="seg" role="tablist"><button type="button" data-rtab="ask" class="${st.tab === 'ask' ? 'on' : ''}">질문하기</button><button type="button" data-rtab="qa" class="${st.tab === 'qa' ? 'on' : ''}">질문답변 모음 ${qa.items.length}</button><button type="button" data-rtab="src" class="${st.tab === 'src' ? 'on' : ''}">자료(법령·규정)</button></div></div>
       ${lawBox()}
       ${st.tab === 'ask' ? askPane() : st.tab === 'qa' ? qaPane() : srcPane()}</div>`;
@@ -200,10 +260,13 @@
   }
   function srcPane() {
     const oc = ocOf(), list = cfg().lawList && cfg().lawList.length ? cfg().lawList : R.DEFAULT_LAWS;
-    const row = (s) => `<li><b>${esc(s.name)}</b> <small class="muted">${esc(s.kind)} · 조항 ${s.chunks.length}개${s.date ? ` · 시행 ${esc(L.fmtDate(s.date))}` : ''} · ${esc(L.fmtDate(s.at.slice(0, 10)))}</small> <button type="button" class="link sm danger" data-ract="srcdel" data-sid="${esc(s.id)}">빼기</button></li>`;
+    const lastAm = (s) => { const a = (s.amends || []).slice(-1)[0]; if (!a) return ''; const w = [...a.changed, ...a.added, ...a.removed.map((h) => h + ' 삭제')]; return ` · 개정 반영 ${s.amends.length}번(최근 ${esc(L.fmtDate(a.at.slice(0, 10)))}: ${esc(w.slice(0, 4).join('·'))}${w.length > 4 ? ` 외 ${w.length - 4}` : ''})`; };
+    const revBox = (s) => `<label class="rrev${s.rev ? '' : ' empty'}" title="이 규정이 언제 개정분까지 들어 있는지. 파일의 개정·시행 날짜에서 읽고, 틀리면 고치세요">개정분<input type="date" data-rrev="${esc(s.id)}" value="${s.rev ? `${s.rev.slice(0, 4)}-${s.rev.slice(4, 6)}-${s.rev.slice(6, 8)}` : ''}">까지 반영${s.revManual ? '<small>직접</small>' : s.rev ? '<small>읽음</small>' : '<small>못 읽음 — 넣어 주세요</small>'}</label>`;
+    const row = (s) => `<li>${s.mine ? revBox(s) : ''}<b>${esc(s.name)}</b> <small class="muted">${esc(s.kind)} · 조항 ${s.chunks.length}개${s.date ? ` · 시행 ${esc(L.fmtDate(s.date))}` : ''} · ${esc(L.fmtDate(s.at.slice(0, 10)))}${s.from ? ` · ${esc(s.from)}에서 읽음` : ''}${s.mine ? lastAm(s) : ''}</small>${s.mine ? ` <button type="button" class="link sm" data-ract="amend" data-sid="${esc(s.id)}" title="개정된 조문만 든 파일을 올리면 같은 조 번호를 바꿔 끼웁니다">개정 조문 올리기</button>` : ''} <button type="button" class="link sm danger" data-ract="srcdel" data-sid="${esc(s.id)}">빼기</button></li>`;
     return `<section class="rsrc">
-      <div class="rsrc-box"><h3>우리 규정집</h3><p class="muted small">계약 사무 처리 규정, 내부 지침, 업무 매뉴얼 등을 올리면 조(제○조) 단위로 나눠 근거로 씁니다. 한글·PDF·워드 · 같은 이름으로 다시 올리면 새 것으로 바뀝니다. 원본은 데이터 폴더 규정\\원본에 보관.</p>
-        <label class="btn primary">규정 파일 올리기<input type="file" id="rlUp" accept=".hwp,.hwpx,.pdf,.docx,.txt" multiple hidden></label>
+      <div class="rsrc-box"><h3>우리 규정집</h3><p class="muted small">계약 사무 처리 규정, 내부 지침, 업무 매뉴얼 등을 올리면 조(제○조) 단위로 나눠 근거로 씁니다. 한글·PDF·워드. 원본은 데이터 폴더 규정\\원본에 보관.</p>
+        <p class="small rsrc-how"><b>개정되면</b> 둘 중 하나: ① 개정 후 <b>전문</b>을 같은 파일 이름으로 다시 올리기(통째로 바뀜, 가장 확실) ② 규정 줄의 <b>[개정 조문 올리기]</b>로 바뀐 조만 든 파일 올리기 — 같은 조 번호를 바꿔 끼우고, "삭제"된 조는 지우고, 새 조는 번호 자리에 넣습니다.</p>
+        <label class="btn primary">규정 파일 올리기<input type="file" id="rlUp" accept=".hwp,.hwpx,.pdf,.docx,.txt" multiple hidden></label><input type="file" id="rlAmend" accept=".hwp,.hwpx,.pdf,.docx,.txt" multiple hidden>
         <ul class="rsrc-list">${kb.sources.filter((s) => s.mine).map(row).join('') || '<li class="muted">아직 없음</li>'}</ul></div>
       <div class="rsrc-box"><h3>법령·예규(자동으로 받기)</h3>
         <p class="muted small">국가법령정보센터 Open API에서 아래 법령·예규 본문을 받아 둡니다. 개정되면 [다시 받기]. 처음 한 번 필요합니다(무료): ① open.law.go.kr 회원가입 → [OPEN API 신청]에서 법령·행정규칙 활용 신청 ② 신청할 때 정한 <b>OC</b>를 아래에 넣기 ③ 신청 내역의 <b>서버장비의 IP주소</b>에 이 PC의 IP 추가(위 안내).</p>
@@ -221,6 +284,7 @@
     else if (a === 'save') saveAnswer();
     else if (a === 'useprev') { const best = st.res && st.res.qaHits[0]; if (best) { $('#rqA').value = best.d.a; } }
     else if (a === 'copy') { const t = ($('#rqA') || {}).value || ''; navigator.clipboard.writeText(t).then(() => app().toast('답을 복사했습니다.', 'ok'), () => app().toast('복사하지 못했습니다. 답을 직접 선택해 복사해 주세요.', 'err')); }
+    else if (a === 'amend') { amendTarget = b.dataset.sid; $('#rlAmend').click(); }
     else if (a === 'laws') { const v = ($('#rlOc') || {}).value; if (v != null && v.trim() !== String(cfg().lawOC || '')) { cfg().lawOC = v.trim(); app().saveCfg(); } fetchLaws().then(checkLaw); }
     else if (a === 'lawcheck') checkLaw();
     else if (a === 'lawlist') {
@@ -237,11 +301,15 @@
   function bind() {
     const el = view(); if (!el || el.dataset.bound) return; el.dataset.bound = '1';
     el.addEventListener('click', onClick);
-    el.addEventListener('change', (e) => { if (e.target.id === 'rlUp') { const fs = [...e.target.files]; e.target.value = ''; if (fs.length) uploadRules(fs); } });
+    el.addEventListener('change', (e) => {
+      if (e.target.id === 'rlUp') { const fs = [...e.target.files]; e.target.value = ''; if (fs.length) uploadRules(fs); }
+      if (e.target.dataset && e.target.dataset.rrev) { const s = kb.sources.find((x) => x.id === e.target.dataset.rrev); if (s) { const v = e.target.value.replace(/-/g, ''); if (v) { s.rev = v; s.revManual = true; } else { delete s.rev; delete s.revManual; } delete s.revGuess; saveKb().then(render); } }
+      if (e.target.id === 'rlAmend') { const fs = [...e.target.files]; e.target.value = ''; if (fs.length && amendTarget) amendRules(amendTarget, fs); }
+    });
     el.addEventListener('input', (e) => { if (e.target.id === 'rqaQ') { st.qaFilter = e.target.value; const pos = e.target.selectionStart; render(); const i = $('#rqaQ'); if (i) { i.focus(); i.setSelectionRange(pos, pos); } } });
     el.addEventListener('keydown', (e) => { if (e.target.id === 'rqQ' && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); ask(e.target.value); } });
   }
   async function show() { bind(); try { await load(); } catch (e) { console.warn(e); } render(); if (!st.law || st.law.state !== 'ok') checkLaw(); }
 
-  root.JH.rules = { show, load, ask, uploadRules, fetchLaws, checkLaw, get kb() { return kb; }, get qa() { return qa; } };
+  root.JH.rules = { show, load, ask, uploadRules, amendRules, fetchLaws, checkLaw, get kb() { return kb; }, get qa() { return qa; } };
 })(window);

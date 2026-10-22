@@ -11,9 +11,7 @@
     { name: '지방공기업법 시행령', kind: 'law' },
     { name: '지방자치단체 입찰 및 계약 집행기준', kind: 'admrul' },
     { name: '지방자치단체 입찰시 낙찰자 결정기준', kind: 'admrul' },
-    { name: '지방자치단체 공사계약 일반조건', kind: 'admrul' },
-    { name: '지방자치단체 용역계약 일반조건', kind: 'admrul' },
-    { name: '지방자치단체 물품구매계약 일반조건', kind: 'admrul' },
+    // 공사·용역·물품 계약 일반조건은 따로 있는 예규가 아니라 「입찰 및 계약 집행기준」 안의 장(계약 일반조건)으로 들어 있음
     // 공종·업무별 — 업종 등록·하도급·안전·폐기물·노무 질문에 씀
     { name: '건설산업기본법', kind: 'law' },
     { name: '건설산업기본법 시행령', kind: 'law' },
@@ -56,15 +54,43 @@
     return best ? { id: String(id(best)), name: nm(best), date: String(best.시행일자 || best.발령일자 || '') } : null;
   }
   // 본문 응답 → 글줄: '…내용'으로 끝나는 칸(조문내용·항내용·호내용·목내용, 행정규칙의 조문내용 배열)을 문서 순서대로
-  function lawText(json) {
+  //  withAppendix: 조문 형식이 아닌 예규(집행기준 등)는 본문이 별표에 들어 있어 별표내용도 넣음
+  function lawText(json, withAppendix) {
     const out = [];
+    const skip = withAppendix ? /^(부칙|개정문|제개정이유)/ : /^(부칙|별표|개정문|제개정이유)/;
     const walk = (o, key) => {
       if (typeof o === 'string') { if (/내용$/.test(key || '')) out.push(o); return; }
       if (Array.isArray(o)) { o.forEach((x) => walk(x, key)); return; }
-      if (o && typeof o === 'object') for (const [k, v] of Object.entries(o)) { if (/^(부칙|별표|개정문|제개정이유)/.test(k)) continue; walk(v, k); }
+      if (o && typeof o === 'object') for (const [k, v] of Object.entries(o)) { if (skip.test(k)) continue; walk(v, k); }
     };
     walk(json, '');
     return out.join('\n').replace(/\r/g, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n');
+  }
+
+  // 본문이 첨부파일(PDF·한글)로만 있는 예규: 응답에서 파일 이름·링크를 모음(PDF 먼저). 링크는 http로 올 때가 있어 https로
+  function lawFiles(json) {
+    const out = [], seen = new Set();
+    const arr = (v) => (Array.isArray(v) ? v : v == null ? [] : [v]);
+    const walk = (o) => {
+      if (Array.isArray(o)) { o.forEach(walk); return; }
+      if (!o || typeof o !== 'object') return;
+      for (const [k, v] of Object.entries(o)) {
+        if (/링크$/.test(k)) {
+          const links = arr(v).map(String), names = arr(o[k.replace(/링크$/, '명')] || o['첨부파일명'] || o['별표제목']).map(String);
+          links.forEach((u, i) => {
+            if (!/^https?:\/\//i.test(u) && !/^\//.test(u)) return;
+            const url = (/^\//.test(u) ? 'https://www.law.go.kr' + u : u).replace(/^http:\/\//i, 'https://');
+            if (seen.has(url)) return; seen.add(url);
+            const name = names[i] || names[0] || '';
+            const pdf = /PDF/i.test(k) || /\.pdf$/i.test(name) || /\.pdf(\?|$)/i.test(url);
+            out.push({ url, name, kind: pdf ? 'pdf' : /\.(hwpx?|hwp)$/i.test(name) || /hwp/i.test(url) ? 'hwp' : /서식파일링크$/.test(k) ? 'hwp' : 'unknown' });
+          });
+        } else if (v && typeof v === 'object') walk(v);
+      }
+    };
+    walk(json);
+    const rank = { pdf: 0, hwp: 1, unknown: 2 };
+    return out.sort((a, b) => rank[a.kind] - rank[b.kind]);
   }
 
   // 글 → 조 단위 덩어리. "제12조(입찰참가자격)" 또는 "제12조의2" 머리로 나눔. 조가 없으면(지침·매뉴얼) 빈 줄·길이로 나눔
@@ -72,17 +98,25 @@
   function splitArticles(text, maxLen = 1800) {
     const lines = String(text || '').replace(/\r/g, '').split('\n');
     const out = []; let cur = null; let chapter = '';
-    const push = () => { if (cur && cur.t.trim()) out.push({ h: cur.h, t: cur.t.trim() }); cur = null; };
+    // 장·절 머리 한 줄뿐인 덩어리는 버림(바로 아래 절·조에 머리가 붙음)
+    const push = () => { if (cur && cur.t.trim() && !(cur.t.trim().split('\n').length === 1 && /^제\s*\d+\s*(장|절)/.test(cur.t.trim()))) out.push({ h: cur.h, t: cur.t.trim() }); cur = null; };
     for (const ln of lines) {
-      const ch = ln.match(/^\s*(제\s*\d+\s*(?:장|절)\s*\S.*)$/); if (ch && !ARTICLE.test(ln)) { chapter = ch[1].replace(/\s+/g, ' ').trim(); continue; }
+      // 장·절 머리: 조문이 없는 예규(집행기준·일반조건)는 장·절마다 새 덩어리로 — 찾은 근거에 '제13장 공사계약 일반조건'처럼 나옴
+      const ch = ln.match(/^\s*(제\s*\d+\s*(?:장|절)\s*\S.*)$/);
+      if (ch && !ARTICLE.test(ln)) {
+        const head = ch[1].replace(/\s+/g, ' ').trim().slice(0, 40);
+        if (/장/.test(head.slice(0, 6))) chapter = head; else chapter = (chapter.split(' > ')[0] || '') + (chapter ? ' > ' : '') + head;
+        if (!cur || !cur.art) { push(); cur = { h: chapter, t: ln.trim() + '\n' }; }
+        continue;
+      }
       const m = ln.match(ARTICLE);
-      if (m) { push(); cur = { h: `${m[1].replace(/\s+/g, '')}${m[2] ? `(${m[2].trim()})` : ''}`, t: ln.trim() + '\n', chapter }; continue; }
+      if (m) { push(); cur = { h: `${m[1].replace(/\s+/g, '')}${m[2] ? `(${m[2].trim()})` : ''}`, t: ln.trim() + '\n', chapter, art: true }; continue; }
       if (!cur) cur = { h: chapter || '앞부분', t: '' };
       cur.t += ln.trim() + '\n';
-      if (cur.t.length > maxLen) { const h = cur.h; push(); cur = { h: h + ' (이어서)', t: '' }; }
+      if (cur.t.length > maxLen) { const h = cur.h.replace(/ \(이어서\)$/, ''); const art = cur.art; push(); cur = { h: h + ' (이어서)', t: '', art }; }
     }
     push();
-    // 조가 하나도 없는 글: 빈 줄 단위로 묶어 나눔
+    // 조도 장도 없는 글: 빈 줄 단위로 묶어 나눔
     if (out.length <= 1 && String(text || '').length > maxLen) {
       const paras = String(text).split(/\n\s*\n/); const res = []; let buf = '';
       for (const p of paras) { if ((buf + p).length > maxLen && buf) { res.push(buf); buf = ''; } buf += p.trim() + '\n\n'; }
@@ -90,6 +124,47 @@
       return res.map((t, i) => ({ h: (t.trim().split('\n')[0] || '').slice(0, 30) || `${i + 1}번째`, t: t.trim() }));
     }
     return out;
+  }
+
+  // 규정 글에서 가장 늦은 개정·시행 날짜: '<개정 2025. 3. 4.>', '개정 2025.03.04', '(2025.3.4. 일부개정)', '[시행 2026. 1. 1.]' → 'YYYYMMDD'
+  function revDate(text) {
+    const t = String(text || ''); let best = '';
+    const take = (y, m, d) => { const v = `${y}${String(m).padStart(2, '0')}${String(d).padStart(2, '0')}`; if (+m >= 1 && +m <= 12 && +d >= 1 && +d <= 31 && v > best) best = v; };
+    const D = '(20\\d{2})\\s*[.\\-\\/년]\\s*(\\d{1,2})\\s*[.\\-\\/월]\\s*(\\d{1,2})';
+    for (const m of t.matchAll(new RegExp('(?:개정|시행|제정)[^0-9\\n]{0,6}' + D, 'g'))) take(m[1], m[2], m[3]);
+    for (const m of t.matchAll(new RegExp(D + '\\s*[.일]?\\s*[)\\]>〉]?\\s*(?:일부|전부)?\\s*(?:개정|시행|제정)', 'g'))) take(m[1], m[2], m[3]);
+    return best;
+  }
+
+  // ---------- 규정 개정분 반영: 바뀐 조만 올리면 같은 조 번호를 바꿔 끼움 ----------
+  // '제12조의2(입찰보증금)' → '12-2'. '삭제'만 있는 조는 지움, 없던 조는 번호 순서 자리에 넣음
+  const artKey = (h) => { const m = String(h || '').match(/제\s*(\d+)\s*조(?:\s*의\s*(\d+))?/); return m ? m[1] + (m[2] ? '-' + m[2] : '') : null; };
+  const keyNum = (k) => { const [a, b] = String(k).split('-'); return +a + (+b || 0) / 100; };
+  function mergeArticles(oldChunks, newChunks) {
+    const fresh = new Map();
+    for (const c of newChunks) { const k = artKey(c.h); if (!k) continue; (fresh.get(k) || fresh.set(k, []).get(k)).push(c); }
+    if (!fresh.size) return null;
+    const changed = [], added = [], removed = [];
+    const isDel = (cs) => cs.length === 1 && /^\s*제\s*\d+\s*조(?:\s*의\s*\d+)?\s*(?:[(（][^)）]*[)）])?\s*삭\s*제/.test(cs[0].t) && cs[0].t.replace(/\s+/g, '').length < 40;
+    const out = []; const done = new Set();
+    for (const c of oldChunks) {
+      const k = artKey(c.h);
+      if (k && fresh.has(k)) {
+        if (done.has(k)) continue; done.add(k);
+        const cs = fresh.get(k);
+        if (isDel(cs)) { removed.push(cs[0].h); continue; }
+        const same = oldChunks.filter((x) => artKey(x.h) === k).map((x) => x.t).join('\n') === cs.map((x) => x.t).join('\n');
+        if (!same) changed.push(cs[0].h);
+        out.push(...cs);
+      } else out.push(c);
+    }
+    // 없던 조: 번호 순서대로 들어갈 자리(앞 번호 조의 마지막 덩어리 뒤)
+    for (const [k, cs] of fresh) {
+      if (done.has(k) || isDel(cs)) continue;
+      let at = -1; out.forEach((x, i) => { const xk = artKey(x.h); if (xk && keyNum(xk) < keyNum(k)) at = i; });
+      out.splice(at + 1, 0, ...cs); added.push(cs[0].h);
+    }
+    return { chunks: out, changed, added, removed };
   }
 
   // ---------- 찾기: 두 글자씩 끊어(띄어쓰기·조사에 덜 흔들림) 드문 말에 무게 ----------
@@ -122,7 +197,7 @@
     return `[질문]\n${question}\n\n[근거]\n${ref || '(찾은 조항 없음)'}${prev ? `\n\n[이전에 저장한 비슷한 질문과 답]\n${prev}` : ''}`;
   }
 
-  const api = { DEFAULT_LAWS, LAW_BASE, lawError, lawSearchUrl, lawServiceUrl, pickLaw, lawText, splitArticles, grams, makeIndex, search, SYSTEM, prompt };
+  const api = { DEFAULT_LAWS, LAW_BASE, lawError, lawSearchUrl, lawServiceUrl, pickLaw, lawText, lawFiles, artKey, mergeArticles, revDate, splitArticles, grams, makeIndex, search, SYSTEM, prompt };
   root.JH = root.JH || {};
   root.JH.rulesLogic = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

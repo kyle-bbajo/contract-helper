@@ -723,6 +723,9 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   const lawRoute = (r) => {
     const u = decodeURIComponent(new URL(r.request().url()).searchParams.get('u'));
     let body;
+    // 조문 형식이 아닌 예규: 본문 응답엔 조문내용이 없고 첨부파일(한글)만 → 프로그램이 첨부파일을 받아 읽음
+    if (u.includes('/LSW/flDownload.do')) return r.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(hwpBytes(['지방자치단체 입찰 및 계약 집행기준', '제6장 선금·대가 지급 운영요령', '1. 선금 지급', '가. 계약상대자가 청구하면 계약금액의 100분의 80 범위에서 선금을 지급할 수 있다.', '제13장 공사계약 일반조건', '1. 총칙', '가. 이 조건은 공사계약에 적용한다.', ...Array.from({ length: 60 }, (_, i) => `${i + 2}. 공사계약 일반조건 항목 ${i + 2} — 계약상대자는 계약문서에 따라 공사를 이행하여야 한다.`)])) });
+    if (u.includes('lawService.do') && u.includes('target=admrul')) { const id = u.match(/ID=(\d+)/)[1]; return r.fulfill({ status: 200, contentType: 'text/plain; charset=utf-8', body: JSON.stringify({ AdmRulService: { 행정규칙기본정보: { 행정규칙일련번호: id, 조문형식여부: 'N' }, 조문내용: '', 첨부파일: { 첨부파일명: ['본문.hwp'], 첨부파일링크: [`http://www.law.go.kr/LSW/flDownload.do?flSeq=${id}`] } } }) }); }
     if (u.includes('lawSearch.do')) { const q = decodeURIComponent(u.match(/query=([^&]+)/)[1]); body = u.includes('target=admrul') ? { AdmRulSearch: { admrul: [{ 행정규칙명: q, 행정규칙일련번호: '9' + q.length }] } } : { LawSearch: { law: [{ 법령명한글: q, 법령일련번호: '1' + q.length, 현행연혁코드: '현행', 시행일자: '20260101' }] } }; }
     else body = { 법령: { 조문: { 조문단위: [{ 조문번호: '9', 조문내용: '제9조(계약의 방법) ① 지방자치단체의 장은 일반입찰에 부쳐야 한다.', 항: [{ 항내용: '② 다만 추정가격이 2천만원 이하인 물품·용역은 수의계약을 할 수 있다.' }] }, { 조문번호: '35', 조문내용: '제35조(선금) 계약금액의 100분의 70을 초과하지 아니하는 범위에서 선금을 지급할 수 있다.' }] } } };
     r.fulfill({ status: 200, contentType: 'text/plain; charset=utf-8', body: JSON.stringify(body) });
@@ -757,14 +760,25 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   assert.equal(await page.inputValue('#rlOc'), 'contracthelper', '공용 OC가 들어 있음'); await page.fill('#rlOc', 'tester'); await page.click('[data-ract="laws"]');
   await waitFor(() => page.$('.toast:has-text("법령·예규")'), 30000, '법령 받기');
   const got = await page.evaluate(() => JH.rules.kb.sources.filter((s) => s.auto).map((s) => [s.name, s.chunks.length]));
-  assert.ok(got.length >= 23 && got.every(([, n]) => n === 2), JSON.stringify(got));
+  assert.ok(got.length >= 20 && got.filter(([n]) => !/집행기준|결정기준/.test(n)).every(([, n]) => n === 2), JSON.stringify(got));
+  const admr = await page.evaluate(() => JH.rules.kb.sources.filter((s) => s.auto && /집행기준/.test(s.name)).map((s) => ({ from: s.from, hs: s.chunks.map((c) => c.h) }))[0]);
+  assert.match(admr.from, /첨부파일/); assert.ok(admr.hs.some((h) => /제13장 공사계약 일반조건/.test(h)), JSON.stringify(admr.hs));
+  assert.ok(!(await page.evaluate(() => JH.rules.kb.sources.some((s) => /공사계약 일반조건$/.test(s.name)))), '일반조건은 따로 받지 않음(집행기준 안)');
+  // 규정 개정: 바뀐 조만 올리면 같은 조를 바꿔 끼움 + 언제 개정분까지인지
+  const [fcA] = await Promise.all([page.waitForEvent('filechooser'), page.click('[data-ract="amend"]')]);
+  await fcA.setFiles({ name: '계약사무처리규정_일부개정.txt', mimeType: 'text/plain', buffer: Buffer.from('계약사무처리규정 일부개정 <개정 2026. 10. 1.>\n제15조(선금 지급) ① 선금은 계약금액의 100분의 80 범위에서 지급한다. <개정 2026. 10. 1.>\n제16조 삭제 <2026. 10. 1.>\n제17조(기성 지급) 기성은 검사 후 14일 안에 지급한다. <신설 2026. 10. 1.>') });
+  await waitFor(() => page.$('.toast:has-text("개정 조문을 반영했습니다")'), 15000, '개정 반영');
+  const amd = await page.evaluate(() => { const s = JH.rules.kb.sources.find((x) => x.mine); return { hs: s.chunks.map((c) => c.h), t15: s.chunks.find((c) => /제15조/.test(c.h)).t, rev: s.rev }; });
+  assert.deepEqual(amd.hs, ['제1조(목적)', '제15조(선금 지급)', '제17조(기성 지급)']); assert.match(amd.t15, /100분의 80/); assert.equal(amd.rev, '20261001');
+  assert.match(await page.textContent('.rsrc-list'), /개정 반영 1번/); assert.equal(await page.inputValue('.rrev input'), '2026-10-01');
+  assert.match(await page.textContent('.rules-head'), /2026\.10\.01 개정분까지/);
   assert.equal(JSON.parse(readFileSync(join(data, '설정.json'), 'utf8')).lawOC, 'tester');
   // 질문 → 근거(우리 규정 + 시행령) → PC AI 답 → 저장(학습) → 다시 물으면 저장한 답이 먼저
   await page.click('[data-rtab="ask"]');
   await page.fill('#rqQ', '선금은 계약금액의 몇 퍼센트까지 지급할 수 있나요?');
   await page.click('[data-ract="ask"]');
   await waitFor(async () => /70%까지/.test(await page.inputValue('#rqA').catch(() => '')), 30000, 'AI 답');
-  assert.match(localPrompt, /\[근거\][\s\S]*계약사무처리규정 제15조\(선금 지급\)/); assert.match(localPrompt, /시행령 제35조\(선금\)/); assert.match(localPrompt, /지어내지 않습니다/);
+  assert.match(localPrompt, /\[근거\][\s\S]*계약사무처리규정 제15조\(선금 지급\)[\s\S]*100분의 80/); assert.match(localPrompt, /시행령 제35조\(선금\)/); assert.match(localPrompt, /지어내지 않습니다/);
   assert.match(await page.textContent('.rq-refs'), /계약사무처리규정/);
   await page.fill('#rqA', '선금은 계약금액의 70%까지입니다(우리 규정 제15조). 보증서를 먼저 받으세요.');
   await page.click('[data-ract="save"]');
@@ -774,7 +788,7 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   await page.waitForSelector('.rq-prev:has-text("보증서를 먼저 받으세요")', { timeout: 30000 });
   await page.click('[data-rtab="qa"]'); assert.match(await page.textContent('.rqa'), /선금은 계약금액의 몇 퍼센트까지/);
   await page.screenshot({ path: join(SHOTS, '7-규정질문답변.png') });
-  step('규정·질문 답변: 규정집 올려 조 단위로, 법령·예규 23건 자동으로 받기(국가법령정보센터), 질문 → 근거 찾아 PC AI 답 → 저장(학습) → 비슷한 질문에 저장한 답 먼저');
+  step('규정·질문 답변: 규정집 올려 조 단위로, 법령·예규 20건 자동으로 받기(국가법령정보센터, 조문 아닌 예규는 첨부파일까지), 규정 개정 조문만 올려 바꿔 끼우기·개정분 날짜, 질문 → 근거 찾아 PC AI 답 → 저장(학습) → 비슷한 질문에 저장한 답 먼저');
 
   // 계약별 목록 너비: 경계를 끌어 넓히면 기억, 두 번 누르면 원래대로
   await page.click('.views [data-view="contracts"]');

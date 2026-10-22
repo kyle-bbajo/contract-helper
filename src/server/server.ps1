@@ -464,9 +464,9 @@ function Handle($stream, $req) {
     }
 
     '/api/law' {
-      # 국가법령정보센터(법령·행정규칙) 조회 중계 — www.law.go.kr/DRF/ 주소만 허용(OC는 화면에서 받음)
-      $u = [string]$q['u']; $uri = $null
-      if (-not [Uri]::TryCreate($u, [UriKind]::Absolute, [ref]$uri) -or $uri.Host -ne 'www.law.go.kr' -or $uri.Scheme -ne 'https' -or -not $uri.AbsolutePath.StartsWith('/DRF/')) { Send-Error $stream 400 'url'; return }
+      # 국가법령정보센터(법령·행정규칙) 조회 중계 — www.law.go.kr의 /DRF/(조회)·/LSW/(예규 첨부파일 내려받기)만 허용(OC는 화면에서 받음)
+      $u = [string]$q['u'] -replace '^http://', 'https://'; $uri = $null
+      if (-not [Uri]::TryCreate($u, [UriKind]::Absolute, [ref]$uri) -or $uri.Host -notmatch '^(www\.)?law\.go\.kr$' -or $uri.Scheme -ne 'https' -or -not ($uri.AbsolutePath.StartsWith('/DRF/') -or $uri.AbsolutePath.StartsWith('/LSW/'))) { Send-Error $stream 400 'url'; return }
       try {
         $wc = New-Object System.Net.WebClient
         $wc.Headers.Add('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) JichulHelper')
