@@ -136,6 +136,60 @@
     if (byName) return byName;
     return title ? bestKeyword(list, title, true) : null;
   }
+  // ---------- 배운 규칙: 팝업에서 사람이 고른 답을 서류 제목(머리 줄)·파일 이름과 함께 기억 → 다음부터 같은 제목이면 그 서류 ----------
+  // 머리 줄: 문서 앞부분 줄 중 한글이 있고 너무 길지 않은 것(정규화). 계약명·업체명·숫자만 있는 줄은 배우지 않음(다른 서류에도 나오므로)
+  function headLines(lines, max = 6) {
+    const out = [];
+    for (const ln of lines || []) {
+      const n = norm(ln); if (n.length < 3 || n.length > 40) continue;
+      if ((n.match(/[가-힣]/g) || []).length < 2) continue;
+      out.push(n); if (out.length >= max) break;
+    }
+    return out;
+  }
+  const suffixOf = (id) => String(id || '').replace(/^[csg]-/, '');
+  // 배울 신호: 머리 줄 앞 2개(계약 이름·업체·번호 줄 빼고) + 뜻 있는 파일 이름
+  function learnSigs(d, c) {
+    const skip = [c && c.name, c && c.vendor && vendorCore(c.vendor)].filter(Boolean).map(norm).filter((x) => x.length >= 3);
+    const heads = (d.heads && d.heads.length ? d.heads : [String(d.title || '').slice(0, 24)]).filter((h) => h && h.length >= 3 && !skip.some((k) => h.includes(k)) && !/^\d+$/.test(h)).slice(0, 2);
+    const st = norm(stem(d.name || '')).replace(/\d+/g, '');
+    const junk = /^(noname|scan|scanned|image|img|download|document|file|문서|새문서|제목없음|kakaotalk|캡처|스캔|복사본)?$/.test(st) || skip.some((k) => st.includes(k));
+    // 파일 이름은 글자를 못 읽은 서류(머리 줄 없음)일 때만 배움 — '준공보완서류 소1-69호'처럼 여러 서류에 같이 쓰는 이름은 배우면 안 됨
+    return { heads, name: !heads.length && !junk && st.length >= 4 ? st : '' };
+  }
+  // 배운 규칙에서 찾기: 머리 줄이 배운 머리 줄을 품으면(가장 긴 것), 아니면 파일 이름
+  function learnedItem(rules, list, name, heads) {
+    if (!rules || !rules.length) return null;
+    const ids = new Set(list.map((x) => x.id)); const pick = (suf) => list.find((x) => suffixOf(x.id) === suf && ids.has(x.id));
+    let best = null;
+    for (const r of rules) {
+      const it = pick(r.suf); if (!it) continue;
+      if (r.head && (heads || []).some((h) => h === r.head || (r.head.length >= 5 && h.includes(r.head)))) { if (!best || r.head.length > best.len) best = { id: it.id, len: r.head.length, rule: r, by: 'head' }; }
+    }
+    if (best) return best;
+    if ((heads || []).length) return null;
+    const st = norm(stem(name || '')).replace(/\d+/g, '');
+    for (const r of rules) { const it = pick(r.suf); if (it && r.file && st.includes(r.file)) return { id: it.id, len: r.file.length, rule: r, by: 'file' }; }
+    return null;
+  }
+  // 얼마나 확실한지: 파일 이름으로 찾았으면 확실, 제목 자리에서 찾았는데 다른 서류 이름도 바로 옆에 있으면 '헷갈림'
+  function classifyInfo(list, fileName, title) {
+    const byName = bestKeyword(list, norm(stem(fileName)), false);
+    if (byName) return { id: byName, by: 'name', alts: [] };
+    if (!title) return { id: null, by: '', alts: [] };
+    const hits = [];
+    for (const item of list) {
+      let pos = -1, len = 0;
+      for (const k of item.keywords) { const nk = norm(k); if (!nk) continue; const p = title.indexOf(nk); if (p >= 0 && (pos < 0 || p < pos || (p === pos && nk.length > len))) { pos = p; len = nk.length; } }
+      if (pos >= 0) hits.push({ id: item.id, pos, len, alt: item.alt });
+    }
+    if (!hits.length) return { id: null, by: '', alts: [] };
+    hits.sort((a, b) => a.pos - b.pos || b.len - a.len);
+    const b = hits[0];
+    // 같은 자리에 겹친 짧은 말(예: '계약서' 속 '계약')은 다른 서류로 치지 않음
+    const alts = hits.slice(1).filter((h) => h.id !== b.alt && h.pos <= b.pos + 12 && !(h.pos >= b.pos && h.pos + h.len <= b.pos + b.len)).map((h) => h.id);
+    return { id: b.id, by: 'title', alts, weak: b.len <= 2 };
+  }
   function bestKeyword(list, hay, byPos) {
     let best = null, bp = 1e9, bl = 0;
     for (const item of list) for (const k of item.keywords) {
@@ -806,6 +860,7 @@
     API_BASE, API_OPS, TYPES, apiUrl, keyParam, monthRanges, parseApiText, parseApiBody, parseCorpList, parseCorpRows, normalizeApiItem, detectExtFinance,
     G2B, g2bUrl, scanAuditFields, summarizeChanges, chgPlan, autoKind, CHG_KINDS, changesOf, ordSnap, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
     ordOf, viaParts, viaKey, viaStatus, itemsInName, isRecentItem, issuedTooEarly, isAdvBond, advBondCheck, ADV_DAYS, matchCandidates, checklistStatus, holds, hasItem, classifyPages, classifyTitleLines, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail,
+    headLines, learnSigs, learnedItem, classifyInfo, suffixOf,
     PAY_KINDS, typeKey, hasRounds, roundOnly, roundSteps, roundHint, roundLabel, routeRound,
   };
   root.JH = root.JH || {};

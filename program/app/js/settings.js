@@ -28,6 +28,7 @@
     renderHideOff();
     note('');
     draft = JSON.parse(JSON.stringify({ 공사: JH.app.lists('공사'), 용역: JH.app.lists('용역'), 물품: JH.app.lists('물품') }));
+    renderLearned();
     renderRows();
     $('#dataDir').textContent = info.dataDir || '-';
     const nt = cfg.notice || {};
@@ -177,6 +178,15 @@
     rows.push({ id: (edType === '공사' ? 'c-' : 's-') + L.uid(), group: last ? last.group : '기타', name: '새 서류', keywords: [], required: false, source: '업체', note: '' });
     renderRows(); const ins = $$('#edRows [data-k=name]'); ins[ins.length - 1].select();
   };
+  // 배운 규칙(제목 → 서류) 보기·지우기
+  function renderLearned() {
+    const rs = JH.app.db.learned || [];
+    $('#learnedN').textContent = rs.length;
+    const sh = JH.app.share || {}, nShared = rs.filter((r) => r.shared).length;
+    $('#learnedShare').textContent = sh.state === 'ok' ? `동료와 나눔 켜짐 · 다른 PC에서 받은 규칙 ${nShared}개` : sh.state === 'off' ? `동료와 나누기 꺼짐: ${sh.why}` : sh.state === 'err' ? `나누기 실패: ${sh.why}` : '';
+    $('#learnedList').innerHTML = rs.length ? rs.map((r, i) => ({ r, i })).reverse().map(({ r, i }) => `<li>${r.head ? `제목 「${esc(r.head)}」` : `파일 이름 「${esc(r.file)}」`} → <b>${esc(r.item || r.suf)}</b> <small class="muted">${esc(String(r.from || ''))}</small> <button type="button" class="link sm danger" data-learndel="${i}">지우기</button></li>`).join('') : '<li class="muted">아직 없음 — 확인 팝업에서 고르면 여기에 쌓입니다</li>';
+  }
+  $('#learnedList').addEventListener('click', async (e) => { const b = e.target.closest('[data-learndel]'); if (!b) return; JH.app.db.learned.splice(+b.dataset.learndel, 1); await JH.app.saveDb(true); renderLearned(); JH.app.toast('그 규칙을 지웠습니다.', 'ok'); });
   $('#btnResetLists').onclick = () => { if (confirm('공사·용역 서류 목록을 「전자·서면계약 구비서류 안내」 기준으로 되돌릴까요?')) { draft = L.defaultChecklists(); renderRows(); } };
   $('#btnSaveLists').onclick = async () => {
     syncRows();

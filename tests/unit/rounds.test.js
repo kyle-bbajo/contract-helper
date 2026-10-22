@@ -72,3 +72,15 @@ test('계약 찾기: 나라장터 업체 사업자등록번호가 서류에 있�
   assert.strictEqual(L.classifyItem(all, 'scan.pdf', L.norm('납세증명서 발급번호')), 'c-tax');
   assert.strictEqual(L.classifyItem(all, 'scan.pdf', L.norm('4대보험 사업장 가입내역 확인서')), 'c-insjoin');
 });
+
+test('배우기: 헷갈림 판단, 고른 답을 제목으로 배워 다음부터 그 서류(다른 구분 계약에도), 계약명 줄·여러 서류 묶음 이름은 배우지 않음', () => {
+  const c = L.defaultChecklists().공사, s = L.defaultChecklists().용역;
+  assert.deepStrictEqual(L.classifyInfo(c, 'scan.pdf', L.norm('계약서 사본 제출 확약서')).alts, ['c-related']);
+  assert.deepStrictEqual(L.classifyInfo(c, 'scan.pdf', L.norm('국세 납세증명서')).alts, []);
+  const d = { name: '도시공사 준공보완서류 소1-69호.pdf', heads: L.headLines(['시청사 옥상 방수공사', '안전점검 결과 확인서', '2026.10.20']) };
+  const sig = L.learnSigs(d, { name: '시청사 옥상 방수공사', vendor: '(주)다해토건' });
+  assert.deepStrictEqual(sig, { heads: ['안전점검결과확인서'], name: '' });
+  const rules = [{ head: '안전점검결과확인서', suf: 'related' }];
+  assert.strictEqual(L.learnedItem(rules, s, 'x.hwp', ['안전점검결과확인서']).id, 's-related');
+  assert.strictEqual(L.learnedItem(rules, c, 'x.hwp', ['다른제목']), null);
+});

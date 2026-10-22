@@ -197,6 +197,7 @@
       </div>
       <div class="ed-head"><span>단계</span><span>서류</span><span>찾을 단어</span><span>받는 곳</span><span>필수</span><span></span></div>
       <div id="edRows" class="ed-rows"></div>
+      <details class="learned" id="learnedBox"><summary>배운 규칙 <b id="learnedN">0</b>개 <span class="muted small">— 확인 팝업·서류 줄에서 고른 답(제목 → 서류). 틀린 것은 지우세요</span></summary><p class="small muted" id="learnedShare"></p><ol id="learnedList" class="log-list"></ol></details>
       <div class="dlg-actions">
         <button type="button" class="btn ghost" id="btnResetLists">구비서류 안내 기준으로 되돌리기</button>
         <button type="button" class="btn" id="btnAddRow">서류 추가</button>
@@ -416,6 +417,7 @@
     <div class="pv-side">
       <div class="pv-name" id="pvName"></div>
       <p class="warn-t small" id="pvWhy"></p>
+      <p class="ai-t small" id="pvAi" hidden></p>
       <label>계약<div class="cpick"><input type="search" class="cpick-q" id="pvSearch" placeholder="계약 찾기: 이름·업체·번호 입력" autocomplete="off"><select id="pvContract"></select></div></label>
       <label>서류 종류<select id="pvItem"></select></label>
       <div class="pv-acts">

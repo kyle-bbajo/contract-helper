@@ -567,6 +567,29 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     await page.click('#logUndo');
     await waitFor(() => page.evaluate(() => !JH.app.db.docs.some((d) => d.name === '사업장 가입내역 확인서.pdf')), 10000, '올림 되돌림');
   }
+  // 배우기: 찾는 말에 없는 제목 → 팝업으로 물음 → 고른 답을 배워 다음부터 같은 제목이면 바로 넣음(묻지 않음)
+  {
+    const upH = async (name, lines) => { const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('[data-act="addhere"]')]); await fc.setFiles({ name, mimeType: 'application/octet-stream', buffer: hwpBytes(lines) }); await waitFor(() => page.evaluate((n) => JH.app.db.docs.some((d) => d.name === n), name), 30000, '올림 ' + name); };
+    await upH('안전점검_A.hwp', ['안전점검 결과 확인서', '점검일 2026.10.20', '시청사 옥상 방수공사']);
+    await page.waitForSelector('#dlgPreview[open]', { timeout: 10000 });
+    assert.match(await page.textContent('#pvWhy'), /어떤 서류인지 찾지 못했습니다[\s\S]*배워서/);
+    await page.selectOption('#pvItem', 'c-related'); await page.click('#pvSave');
+    await page.waitForSelector('#dlgPreview:not([open])', { state: 'attached' });
+    assert.ok(await page.evaluate(() => (JH.app.db.learned || []).some((r) => r.head === '안전점검결과확인서' && r.suf === 'related')), '배움');
+    await upH('안전점검_B.hwp', ['안전점검 결과 확인서', '점검일 2026.11.03']);
+    await waitFor(() => page.$('.toast:has-text("전에 배운 대로")'), 15000, '배운 대로 넣음');
+    assert.equal(await page.evaluate(() => JH.app.db.docs.find((d) => d.name === '안전점검_B.hwp').itemId), 'c-related');
+    assert.ok(!(await page.$('#dlgPreview[open]')), '다시 묻지 않음');
+    // 헷갈리는 제목(다른 서류 이름이 같이 있음)은 넣되 팝업으로 확인
+    await upH('사본확약.hwp', ['계약서 사본 제출 확약서', '상호 다해토건']);
+    await page.waitForSelector('#dlgPreview[open]', { timeout: 10000 });
+    assert.match(await page.textContent('#pvWhy'), /헷갈립니다/);
+    await page.selectOption('#pvItem', 'c-related'); await page.click('#pvSave');
+    await page.waitForSelector('#dlgPreview:not([open])', { state: 'attached' });
+    assert.equal(await page.evaluate(() => JH.app.db.docs.find((d) => d.name === '사본확약.hwp').itemId), 'c-related');
+    await page.evaluate(() => document.querySelectorAll('.toast').forEach((t) => t.remove()));
+  }
+  step('배우기: 모르는 제목·헷갈리는 제목은 팝업으로 묻고, 고른 답을 배워 다음부터 같은 제목이면 묻지 않고 바로 넣음');
   step('되돌리기: 서류 종류 바꿈(어디로 갔는지 알림)·빼기·올림을 [되돌리기]·Ctrl+Z·최근 작업에서 원래대로(파일 자리·이름까지)');
   step('지출 회차(선금·기성·노무비): 기성계·지정통보·검사조서가 오면 기성 회차 저절로 → 감독관 경유 → 청구 서류 요청 메일 → 청구 서류도 그 회차로 → 지출 처리로 완료, 다음 청구는 준공으로 · 기성 12회도 한눈에');
 

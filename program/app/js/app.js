@@ -70,6 +70,54 @@
   const SUB_CONTRACT = '0 계약', SUB_FINAL = '준공';
   const FINAL_GROUPS = new Set(['준공계', '준공조서', '대금청구', '지출결의', '납품']);
   const LAYOUT_DIR = /^(0 계약|준공|선금|인쇄본|\d+[차회] 기성|노무비 .+|\d+월분 노무비)$/;
+  // ---------- 서류 종류 찾기 + 배우기 ----------
+  // 1) 배운 규칙(팝업에서 사람이 고른 답) 2) 파일 이름 3) 제목 자리. 제목에 다른 서류 이름도 같이 있으면 '헷갈림' → 팝업으로 물음
+  function classifyDoc(c, name, title, heads) {
+    const list = classList(c);
+    const lr = L.learnedItem(db.learned, list, name, heads);
+    if (lr) return { id: lr.id, by: 'learned', alts: [] };
+    return L.classifyInfo(list, name, title);
+  }
+  // ---------- 배운 규칙 나누기(GitHub 이슈 댓글) ----------
+  // 배우면 잠시 뒤 올리고(한 번에 모아서), 켤 때 다른 PC가 배운 것을 받아 씀(이 PC가 배운 것이 먼저)
+  let shareTimer = null; ui.share = ui.share || { state: '' };
+  function queueShare(rules) {
+    db.sharePending = [...(db.sharePending || []), ...rules.map((r) => ({ head: r.head, file: r.file, suf: r.suf, item: r.item }))].slice(-300);
+    clearTimeout(shareTimer); shareTimer = setTimeout(pushShare, 20000);
+  }
+  async function pushShare() {
+    const p = db.sharePending || []; if (!p.length || !S.online) return;
+    try { const r = await S.sharePost(p); if (r.skipped) { ui.share = { state: 'off', why: r.skipped }; return; } db.sharePending = []; ui.share = { state: 'ok', at: Date.now() }; await saveDb(); }
+    catch (e) { ui.share = { state: 'err', why: e.message }; }
+  }
+  async function pullShare() {
+    try {
+      const r = await S.shareGet(); if (r.skipped) { ui.share = { state: 'off', why: r.skipped }; return; }
+      const mine = new Set((db.learned || []).filter((x) => !x.shared).map((x) => x.head || 'f:' + x.file));
+      const got = new Map();
+      for (const b of r.bodies || []) { const m = String(b).match(/```json\s*([\s\S]*?)```/); if (!m) continue; try { for (const x of JSON.parse(m[1])) if (x && x.suf && (x.head || x.file)) got.set(x.head || 'f:' + x.file, x); } catch (_) {} }
+      const keep = (db.learned || []).filter((x) => !x.shared);
+      const add = [...got.entries()].filter(([k]) => !mine.has(k)).map(([, x]) => ({ ...x, shared: true }));
+      db.learned = [...add, ...keep].slice(-1500);
+      ui.share = { state: 'ok', at: Date.now(), n: add.length };
+      if (add.length) await saveDb();
+      if ((db.sharePending || []).length) pushShare();
+    } catch (e) { ui.share = { state: 'err', why: e.message }; }
+  }
+  // 사람이 고른 답을 배움: 그 서류의 머리 줄(제목)을 그 서류 종류로. 같은 제목을 다르게 고르면 새 답으로 바꿈
+  function learnFrom(d, c, itemId) {
+    if (!d || !c || !itemId) return '';
+    const sig = L.learnSigs(d, c), suf = L.suffixOf(itemId), item = classList(c).find((x) => x.id === itemId);
+    if (!sig.heads.length && !sig.name) return '';
+    db.learned = (db.learned || []).filter((r) => !sig.heads.includes(r.head) && !(sig.name && r.file === sig.name));
+    for (const h of sig.heads) db.learned.push({ head: h, suf, item: item ? item.name : '', from: d.name, at: new Date().toISOString() });
+    if (sig.name) db.learned.push({ file: sig.name, suf, item: item ? item.name : '', from: d.name, at: new Date().toISOString() });
+    queueShare([...sig.heads.map((h) => ({ head: h, suf, item: item ? item.name : '' })), ...(sig.name ? [{ file: sig.name, suf, item: item ? item.name : '' }] : [])]);
+    if (db.learned.length > 800) db.learned.splice(0, db.learned.length - 800);
+    const what = sig.heads[0] || sig.name;
+    logAct(`배움: 제목 「${what}」 → ${item ? item.name : itemId}`);
+    return `다음부터 제목이 「${what.slice(0, 24)}」인 서류는 '${item ? item.name : itemId}'(으)로 넣습니다.`;
+  }
   const roundDir = (c, r) => `${folderOf(c)}/${L.safeName(L.roundLabel(r), 30)}`;
   function docPlace(c, itemId, pay) {
     const r = pay ? roundById(c, pay) : null;
@@ -402,7 +450,7 @@
         const { lines, ocr } = await R.read(bytes, kind, f.type);
         recs.push({
           id: L.uid(), name: f.name, kind, size: f.size, mime: f.type, bytes, ocr, lines,
-          meta: L.findMeta(lines), text: L.norm(lines.join(' ')).slice(0, 6000), title: L.norm(lines.slice(0, 8).join(' ')).slice(0, 300),
+          meta: L.findMeta(lines), text: L.norm(lines.join(' ')).slice(0, 6000), title: L.norm(lines.slice(0, 8).join(' ')).slice(0, 300), heads: L.headLines(lines),
           dates: L.extractDates(lines),
         });
       }
@@ -430,7 +478,9 @@
         progress(`정리하는 중 ${i + 1}/${recs.length}`, i / recs.length);
         let c = forced || (r.key && db.contracts[r.key]) || pickContract(L.norm(L.stem(r.name)) + '|' + r.text, r);
         // 계약 화면 안에서 올린 서류는 그 계약으로(다른 계약으로 보내지 않음). 오른쪽 위 [업로드]는 전체 계약에서 찾아 정리
-        let itemId = c ? (forced && forceItem ? forceItem : L.classifyItem(classList(c), r.name, r.title)) : null;
+        const info = c && !(forced && forceItem) ? classifyDoc(c, r.name, r.title, r.heads) : null;
+        let itemId = c ? (forced && forceItem ? forceItem : info.id) : null;
+        r.unsure = !!(info && info.id && info.alts && info.alts.length); r.alts = r.unsure ? info.alts : null; r.learned = !!(info && info.by === 'learned');
         // 한 파일에 여러 양식(착공계 묶음 등): 쪽마다 서류 이름을 찾아 함께 든 서류로 표시
         let also = [], pagesOf = null;
         if (c) {
@@ -463,7 +513,7 @@
         textDirty = true; db.docs.push({
           id: r.id, key: c ? c.key : null, itemId: item ? item.id : null, path: saved.path, name: r.name, kind: r.kind,
           size: r.size, mime: r.mime, addedAt: new Date().toISOString(), ocr: r.ocr, meta: r.meta, text: r.text, title: r.title, dates: r.dates, manual: !!forced && !r.rerouted, facts: L.docFacts(r.lines),
-          ...(rnd ? { pay: rnd.id } : {}),
+          ...(rnd ? { pay: rnd.id } : {}), ...(r.heads && r.heads.length ? { heads: r.heads } : {}), ...(r.unsure ? { unsure: true, alts: r.alts } : {}),
           ...(also.length ? { also, pagesOf } : {}),
         });
         if (c) { byContract[c.key] = (byContract[c.key] || 0) + 1; c.updatedAt = Date.now(); } else inbox++;
@@ -494,7 +544,9 @@
       if (placed.length) { placed.forEach((d) => logAct(`올림 「${d.name}」 → ${whereOf(d)}`)); undoStack.push({ label: `서류 ${placed.length}개 올림`, s: snap0, at: Date.now() }); if (undoStack.length > 30) undoStack.shift(); paintUndo(); }
       if (R.ocrBroken) msg += ' 스캔본 글자 인식을 시작하지 못해 일부는 미분류로 갔습니다.';
       // 어느 계약인지·어떤 서류인지 못 찾은 것은 바로 팝업으로 보여 주고 고르게 함
-      const unsure = recs.filter((r) => !r.ignored && db.docs.some((d) => d.id === r.id && (!d.key || !d.itemId))).map((r) => r.id);
+      const unsure = recs.filter((r) => !r.ignored && db.docs.some((d) => d.id === r.id && (!d.key || !d.itemId || d.unsure))).map((r) => r.id);
+      const nLearned = recs.filter((r) => r.learned).length;
+      if (nLearned) msg += ` ${nLearned}개는 전에 배운 대로 넣었습니다.`;
       toast(msg, inbox ? '' : 'ok', unsure.length ? { label: '확인하기', run: () => openPreview(unsure, 0, true) } : recs.length ? undoAction() : null);
       if (unsure.length && !$('#dlgPreview').open && !document.querySelector('dialog[open]')) setTimeout(() => openPreview(unsure, 0, true), 300);
       const keys = Object.keys(byContract);
@@ -543,7 +595,7 @@
       if (d.manual) continue;
       const c = L.matchContract(contracts(), L.norm(L.stem(d.name)) + '|' + (d.text || ''));
       if (!c) continue;
-      await moveDoc(d, c.key, L.classifyItem(classList(c), d.name, d.title), false); moved++;
+      await moveDoc(d, c.key, classifyDoc(c, d.name, d.title, d.heads).id, false); moved++;
     }
     return moved;
   }
@@ -668,7 +720,7 @@
         const { lines, ocr } = await R.read(bytes, kind);
         const text = L.norm(lines.join(' ')).slice(0, 6000), title = L.norm(lines.slice(0, 8).join(' ')).slice(0, 300);
         let c = contracts().find((x) => x.folder && (dir === x.folder || dir.startsWith(x.folder + '/'))) || L.matchContract(contracts(), L.norm(L.stem(name)) + '|' + text);
-        const doc = { id: L.uid(), key: c ? c.key : null, itemId: c ? L.classifyItem(classList(c), name, title) : null, path: f.path, name, kind, size: f.size,
+        const doc = { id: L.uid(), key: c ? c.key : null, itemId: c ? classifyDoc(c, name, title, L.headLines(lines)).id : null, heads: L.headLines(lines), path: f.path, name, kind, size: f.size,
           addedAt: new Date().toISOString(), ocr, meta: L.findMeta(lines), text, title, dates: L.extractDates(lines), manual: false };
         db.docs.push(doc); textDirty = true; added++;
         if (c && /^미분류\//.test(f.path)) await moveDoc(doc, c.key, doc.itemId, false);
@@ -1764,7 +1816,10 @@
     $('#pvSearch').value = '';
     const fillItems = (key) => { const cc = key ? db.contracts[key] : null; $('#pvItem').innerHTML = cc ? itemOptions(lists(cc.type), key === d.key ? d.itemId : '', false) : '<option value="">계약을 먼저 고르세요</option>'; $('#pvItem').disabled = !cc; };
     fillItems(d.key); $('#pvContract').onchange = (e) => fillItems(e.target.value);
-    $('#pvWhy').textContent = pv.confirm ? (c ? (d.itemId ? '' : '어떤 서류인지 찾지 못했습니다.') : '어느 계약 서류인지 찾지 못했습니다.') + ' 내용을 보고 맞게 골라 주세요.' : '';
+    const altNames = (d.alts || []).map((id) => (c && classList(c).find((x) => x.id === id) || {}).name).filter(Boolean);
+    $('#pvWhy').textContent = pv.confirm ? (!c ? '어느 계약 서류인지 찾지 못했습니다.' : !d.itemId ? '어떤 서류인지 찾지 못했습니다.' : d.unsure ? `제목에 다른 서류 이름(${altNames.join(', ')})도 있어 헷갈립니다.` : '') + ' 내용을 보고 맞게 골라 주세요. 고른 답은 배워서 다음부터 같은 제목이면 바로 넣습니다.' : '';
+    $('#pvAi').hidden = true;
+    if (pv.confirm && c && (!d.itemId || d.unsure)) aiGuess(d, c, tok);
     $('#pvPrev').disabled = pv.i === 0; $('#pvNext').textContent = pv.i < pv.ids.length - 1 ? '다음' : '닫기';
     $('#pvSave').textContent = pv.confirm ? '맞음 · 다음' : '이대로 저장';
     const box = $('#pvBody'); box.innerHTML = '<p class="muted">불러오는 중…</p>';
@@ -1793,6 +1848,23 @@
   }
   $('#pvPrev').onclick = () => { if (pv.i > 0) { pv.i--; showPreview(); } };
   $('#pvNext').onclick = () => { if (pv.i < pv.ids.length - 1) { pv.i++; showPreview(); } else { $('#dlgPreview').close(); render(); } };
+  // PC 안 AI가 준비돼 있으면 헷갈리는 서류의 종류를 추정해 보여 줌(서류 내용은 이 PC 안 AI에만, 사람이 고르기 전까지 미리 골라만 둠)
+  async function aiGuess(d, c, tok) {
+    try {
+      if (!JH.ai) return; const st = await JH.ai.status(); if (!st || !st.ready || tok !== pv.tok) return;
+      const list = lists(c.type);
+      $('#pvAi').hidden = false; $('#pvAi').textContent = 'AI가 내용을 보는 중…';
+      const r = await JH.ai.ask({ privateData: true, json: true,
+        system: '공공기관 계약 담당자의 서류 분류를 돕는다. 문서 앞부분을 보고 [목록]에서 가장 맞는 서류 이름 하나를 그대로 고른다. 확실하지 않으면 "모름". JSON {"item":"..."}만 답한다.',
+        prompt: `[목록]\n${list.map((x) => x.name).join('\n')}\n\n[파일 이름] ${d.name}\n[문서 앞부분]\n${(d.heads || []).join('\n')}\n${String(d.text || '').slice(0, 700)}` });
+      if (tok !== pv.tok) return;
+      let name = ''; try { name = JSON.parse(String(r.text).match(/\{[\s\S]*\}/)[0]).item || ''; } catch (_) { name = ''; }
+      const it = list.find((x) => L.norm(x.name) === L.norm(name)) || list.find((x) => name && L.norm(x.name).includes(L.norm(name)));
+      if (!it) { $('#pvAi').textContent = 'AI도 확실히 모르겠다고 합니다. 직접 골라 주세요.'; return; }
+      $('#pvAi').textContent = `AI 추정: ${it.name} — 맞으면 [맞음 · 다음]`;
+      if ($('#pvContract').value === c.key && (!$('#pvItem').value || d.unsure)) $('#pvItem').value = it.id;
+    } catch (e) { $('#pvAi').hidden = true; }
+  }
   // 버리기: 우리 서류가 아니면 _삭제됨으로(되돌리기 가능) 하고 다음 파일로
   $('#pvTrash').onclick = async () => {
     const d = docById(pv.ids[pv.i]); if (!d) return;
@@ -1806,6 +1878,8 @@
   $('#pvSave').onclick = async () => {
     const d = docById(pv.ids[pv.i]); if (!d) return;
     const key = $('#pvContract').value || null, item = key ? $('#pvItem').value || null : null;
+    // 사람이 고른(또는 '맞음'으로 확인한) 서류 종류를 배움
+    if (key && item && (pv.confirm || item !== d.itemId)) { const was = d.unsure; delete d.unsure; delete d.alts; const msg = learnFrom(d, db.contracts[key], item); if (msg && (was || item !== d.itemId || !d.itemId)) setTimeout(() => toast(msg, 'ok'), 50); await saveDb(true); }
     if (key !== d.key || item !== d.itemId) { const before = whereOf(d); await recorded(`「${d.name}」 정리`, [d.key, key], [d.id], () => moveDoc(d, key, item, true)); logAct(`「${d.name}」 ${before} → ${whereOf(d)}`); toast(`"${d.name}"을 ${key ? `${db.contracts[key].name}${item ? ' · ' + (lists(db.contracts[key].type).find((x) => x.id === item) || {}).name : ''}` : '미분류'}(으)로 정리했습니다.`, 'ok', undoAction()); }
     if (pv.i < pv.ids.length - 1) { pv.i++; showPreview(); } else { $('#dlgPreview').close(); render(); }
   };
@@ -1996,7 +2070,7 @@
         render();
       } else if (t.dataset.act === 'assign') {
         const d = docById(t.dataset.doc); const c = db.contracts[t.value]; if (!c) return;
-        await moveDoc(d, c.key, L.classifyItem(classList(c), d.name, d.title));
+        await moveDoc(d, c.key, classifyDoc(c, d.name, d.title, d.heads).id);
         toast(`"${c.name}"으로 옮겼습니다.`, 'ok', { label: '계약 보기', run: () => { ui.sel = c.key; setView('contracts'); } });
         render();
       } else if (t.dataset.act === 'validset' || t.dataset.act === 'docdate') {
@@ -2141,7 +2215,13 @@
     return recorded(docLabel(t.dataset.doc) + CHG_LABEL[act], keys, [t.dataset.doc], async () => {
       await onChange(e);
       // 서류가 화면에서 사라져 어디 갔는지 모르는 일이 없게
-      if (moving && d) { const after = whereOf(docById(d.id)); logAct(`「${d.name}」 ${before} → ${after}`); if (act !== 'assign') toast(`「${d.name}」 → ${after}`, 'ok', undoAction()); }
+      if (moving && d) {
+        const nd = docById(d.id), after = whereOf(nd); logAct(`「${d.name}」 ${before} → ${after}`);
+        // 서류 종류를 손으로 고치면 그것도 배움(다음부터 같은 제목이면 그 칸으로)
+        let learned = '';
+        if (act === 'moveitem' && nd && nd.key && nd.itemId) { delete nd.unsure; delete nd.alts; learned = learnFrom(nd, db.contracts[nd.key], nd.itemId); if (learned) await saveDb(true); }
+        if (act !== 'assign') toast(`「${d.name}」 → ${after}${learned ? ' · ' + learned : ''}`, 'ok', undoAction());
+      }
     });
   });
   document.addEventListener('keydown', (e) => {
@@ -2289,6 +2369,7 @@
     setView(ui.view);
     try { await reconcile(); render(); } catch (e) { console.warn('폴더 확인 실패', e); }
     try { await relayout(); } catch (e) { console.warn('폴더 정리 실패', e); }
+    pullShare(); // 다른 PC가 배운 규칙 받기(뒤에서)
     if (!cfg.officer) openWelcome();
     setInterval(() => { S.ping().catch(() => banner('연결 창구가 꺼졌습니다. 바탕화면의 바로가기로 다시 실행해 주세요.', true)); }, 60000);
     if (cfg.officer) { checkAccounts().finally(() => autoRefresh(true)); setInterval(() => autoRefresh(false), 5 * 60000); }
@@ -2296,6 +2377,7 @@
 
   root.JH.app = {
     get cfg() { return cfg; }, set cfg(v) { cfg = v; }, get db() { return db; }, get org() { return org; },
+    get share() { return ui.share; }, pullShare, pushShare,
     defaults, lists, printList, startWatch, checkAccounts, saveCfg, saveDb, fetchContracts, enrichContracts, fillFromDocs, openForms, render, toast, banner, start, ingest, setView, progress,
     setChecklists(v) { db.checklists = v; return saveDb(true); },
   };

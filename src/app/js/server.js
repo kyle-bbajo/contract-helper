@@ -46,6 +46,8 @@
     myIp: () => call('GET', '/api/myip'),
     async law(u) { const r = await call('GET', '/api/law', { u }); return r.text(); },
     update: () => call('POST', '/api/update'),
+    shareGet: () => call('GET', '/api/share'),
+    sharePost: (rules) => call('POST', '/api/share', null, JSON.stringify(rules)),
     async lawFile(u) { const r = await call('GET', '/api/law', { u }); return new Uint8Array(await r.arrayBuffer()); },
     watch: () => call('GET', '/api/watch'),
     watchPick: (o) => call('POST', '/api/watch', o || { pick: '1' }),

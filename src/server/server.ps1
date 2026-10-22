@@ -13,7 +13,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '1.6.2'
+$Version = '1.6.3'
 $AppRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $WebRoot = Join-Path $AppRoot 'app'
 $LocalCfg = Join-Path $AppRoot 'local.json'
@@ -566,6 +566,46 @@ function Handle($stream, $req) {
         Send-Json $stream 200 @{ ok = $true; updated = $ready; info = $r.info; state = $r.state }
         if ($ready) { Write-StartLog '[지금 업데이트] 받아 둠 → 다시 켬'; Restart-Self; $script:Quit = $true }
       } catch { Send-Error $stream 502 ("GitHub에서 받지 못했습니다: " + $_.Exception.Message) }
+      return
+    }
+    '/api/share' {
+      # 배운 서류 분류 규칙을 동료와 나눔: GitHub 저장소의 이슈 하나('[자동] 배운 규칙')에 댓글로 올리고(POST), 모두의 댓글을 읽음(GET)
+      # 토큰에 '이슈 쓰기' 권한만 있으면 됨(프로그램 코드는 바꿀 수 없음). 권한이 없으면 skipped
+      $u = Get-UpdateCfg
+      if (-not $u) { Send-Json $stream 200 @{ ok = $true; skipped = '공용 설정에 GitHub 토큰이 없습니다' }; return }
+      $hdr = @{ Authorization = "Bearer $($u.token)"; 'User-Agent' = 'JichulHelper'; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+      $base = "https://api.github.com/repos/$($u.repo)"; $title = '[자동] 배운 서류 분류 규칙'
+      $sf = Join-Path $AppRoot 'share.json'
+      try {
+        $st = Read-JsonFile $sf; $num = if ($st -and $st.issue) { [int]$st.issue } else { 0 }
+        if (-not $num) {
+          $list = Invoke-RestMethod -UseBasicParsing -Uri "$base/issues?state=all&per_page=100" -Headers $hdr -TimeoutSec 15
+          $hit = @($list | Where-Object { $_.title -eq $title -and -not $_.pull_request }) | Select-Object -First 1
+          if (-not $hit -and $req.Method -eq 'POST') {
+            $b = @{ title = $title; body = "계약업무 도우미가 PC마다 배운 서류 분류 규칙(서류 제목 → 서류 종류)을 자동으로 모으는 곳입니다. 다른 PC도 이 규칙을 받아 씁니다. 지우거나 닫지 마세요." } | ConvertTo-Json
+            $hit = Invoke-RestMethod -UseBasicParsing -Method Post -Uri "$base/issues" -Headers $hdr -Body ([Text.Encoding]::UTF8.GetBytes($b)) -ContentType 'application/json; charset=utf-8' -TimeoutSec 15
+          }
+          if ($hit) { $num = [int]$hit.number; [IO.File]::WriteAllText($sf, (@{ issue = $num } | ConvertTo-Json -Compress), $Utf8) }
+        }
+        if ($req.Method -eq 'POST') {
+          $rules = $Utf8.GetString($req.Body)
+          $b = @{ body = "자동 · $Version · $((Get-Date).ToString('yyyy-MM-dd HH:mm'))`n``````json`n$rules`n``````" } | ConvertTo-Json
+          $null = Invoke-RestMethod -UseBasicParsing -Method Post -Uri "$base/issues/$num/comments" -Headers $hdr -Body ([Text.Encoding]::UTF8.GetBytes($b)) -ContentType 'application/json; charset=utf-8' -TimeoutSec 15
+          Send-Json $stream 200 @{ ok = $true; issue = $num }; return
+        }
+        if (-not $num) { Send-Json $stream 200 @{ ok = $true; bodies = @() }; return }
+        $bodies = New-Object System.Collections.ArrayList
+        for ($pg = 1; $pg -le 10; $pg++) {
+          $cs = @(Invoke-RestMethod -UseBasicParsing -Uri "$base/issues/$num/comments?per_page=100&page=$pg" -Headers $hdr -TimeoutSec 15)
+          foreach ($c in $cs) { [void]$bodies.Add([string]$c.body) }
+          if ($cs.Count -lt 100) { break }
+        }
+        Send-Json $stream 200 @{ ok = $true; issue = $num; bodies = @($bodies) }
+      } catch {
+        $code = 0; try { $code = [int]$_.Exception.Response.StatusCode } catch {}
+        if ($code -eq 403 -or $code -eq 404) { Send-Json $stream 200 @{ ok = $true; skipped = '토큰에 이슈 쓰기·읽기 권한이 없습니다(GitHub 토큰 설정에서 Issues: Read and write 추가)' }; return }
+        Send-Error $stream 502 ("GitHub에 나누지 못했습니다: " + $_.Exception.Message)
+      }
       return
     }
     '/api/restart' { Send-Json $stream 200 @{ ok = $true }; Restart-Self; $script:Quit = $true; return }

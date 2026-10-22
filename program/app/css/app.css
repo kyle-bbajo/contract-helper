@@ -800,3 +800,5 @@ body.resizing { cursor: col-resize; user-select: none; }
 .hide-off .lbl { font-weight: 650; font-size: 13px; }
 .chkgrid { display: flex; flex-wrap: wrap; gap: 4px 14px; }
 .chkgrid .chk { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 500; }
+.ai-t { color: var(--ok); font-weight: 650; margin: 0; }
+.learned { margin-top: 10px; } .learned summary { cursor: pointer; font-size: 13.5px; }
