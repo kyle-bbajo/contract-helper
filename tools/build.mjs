@@ -64,6 +64,8 @@ for (const f of ['server.ps1', 'install.ps1', 'uninstall.ps1', 'ai-setup.ps1']) 
 }
 cp(join(ROOT, 'assets/icon.ico'), join(PROG, 'icon.ico'));
 writeText(join(PROG, 'version.txt'), pkg.version + '\n');
+// 만든 때: 자동 업데이트가 이보다 오래된 GitHub 커밋으로 되돌아가지 않게
+writeText(join(PROG, 'build.json'), JSON.stringify({ version: pkg.version, builtAt: new Date().toISOString() }) + '\n', { eol: 'lf' });
 
 // 4) bat — 내용은 영문만(코드페이지 문제 방지), 실제 작업은 PowerShell이 함
 writeText(join(OUT, '설치.bat'), `@echo off
@@ -100,9 +102,14 @@ for (const [f, b] of Object.entries(keep)) writeFileSync(join(PROG, f), b);
 // 5) zip(같은 내용을 한 파일로 — 메일·USB로 줄 때)
 const zipName = `계약업무도우미_v${pkg.version}.zip`;
 mkdirSync(join(ROOT, 'dist'), { recursive: true });
+// 자동 업데이트 토큰(config/update.secret.json, 저장소에 안 올림)은 zip 안의 공용 설정에만 넣음
+const SECRET = join(ROOT, 'config', 'update.secret.json');
+const zipOrg = existsSync(join(APP, 'org.json')) && existsSync(SECRET)
+  ? JSON.stringify({ ...JSON.parse(readFileSync(join(APP, 'org.json'), 'utf8')), ...JSON.parse(readFileSync(SECRET, 'utf8')) }, null, 2) : '';
+if (zipOrg) console.log('zip에 자동 업데이트 토큰 넣음(저장소의 program에는 없음)');
 execFileSync('python3', ['-c', `
 import os, zipfile, sys
-root, out = sys.argv[1], sys.argv[2]
+root, out, org = sys.argv[1], sys.argv[2], sys.argv[3]
 top = ['설치.bat', '실행.bat', '제거.bat', '사용안내.txt']
 skip = {'local.json', 'running.json'}
 with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:
@@ -110,8 +117,10 @@ with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:
     for d, _, fs in os.walk(os.path.join(root, 'program')):
         for f in sorted(fs):
             if f in skip and os.path.basename(d) == 'program': continue
-            p = os.path.join(d, f); z.write(p, '계약업무도우미/' + os.path.relpath(p, root))
-`, ROOT, join(ROOT, 'dist', zipName)]);
+            p = os.path.join(d, f); rel = os.path.relpath(p, root).replace(os.sep, '/')
+            if org and rel == 'program/app/org.json': z.writestr('계약업무도우미/' + rel, org.encode('utf-8')); continue
+            z.write(p, '계약업무도우미/' + rel)
+`, ROOT, join(ROOT, 'dist', zipName), zipOrg]);
 
 const size = (p) => { let n = 0; const walk = (q) => { for (const e of readdirSync(q)) { const f = join(q, e); const s = statSync(f); s.isDirectory() ? walk(f) : (n += s.size); } }; walk(p); return n; };
 console.log(`만듦: 설치.bat·실행.bat·제거.bat·사용안내.txt, program/ (${(size(PROG) / 1048576).toFixed(1)}MB), dist/${zipName} (${(statSync(join(ROOT, 'dist', zipName)).size / 1048576).toFixed(1)}MB)`);

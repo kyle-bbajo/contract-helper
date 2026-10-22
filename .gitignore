@@ -5,3 +5,5 @@ tests/fixtures/docs/
 # 압축 푼 폴더에서 바로 실행할 때 생기는 이 PC 전용 파일
 program/local.json
 program/running.json
+# 자동 업데이트용 GitHub 토큰: 저장소에 올리지 않고 배포용 zip에만 넣음(GitHub 비밀값 차단)
+config/update.secret.json

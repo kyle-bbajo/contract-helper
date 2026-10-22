@@ -263,7 +263,10 @@ try {
     assert.ok(existsSync(join(WATCH, '시청사 옥상 방수공사_준공사진대지.pdf')), '원래 파일은 그대로');
     // 정리된 사본은 "서류명_계약명" 이름으로 계약 폴더에, 뜻 없는 원래 이름(noname)은 붙이지 않음
     const cp = await page.evaluate(() => JH.app.db.docs.find((x) => /준공사진대지/.test(x.name)).path);
-    assert.match(cp, /^계약\/.+\/준공사진대지_시청사 옥상 방수공사\.pdf$/, cp);
+    assert.match(cp, /^계약\/.+\/준공\/1_준공사진대지_시청사 옥상 방수공사\.pdf$/, cp); // 계약 폴더\준공\단계 번호_서류명
+    // 계약 서류는 '0 계약', 준공 서류는 '준공' 폴더(켤 때 예전 파일도 옮겨 둠)
+    const lay = await page.evaluate(() => { const c = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사'); const p = (id) => (JH.app.db.docs.find((d) => d.key === c.key && d.itemId === id && !d.missing) || {}).path || ''; return { contract: p('c-contract'), est: p('c-estimate'), inspect: p('c-ltax') }; });
+    assert.match(lay.contract, /\/0 계약\/2_계약서_/, JSON.stringify(lay)); assert.match(lay.inspect, /\/준공\/3_지방세 납세증명서_/, JSON.stringify(lay));
     const nn = await page.evaluate(() => (JH.app.db.docs.find((x) => x.name === 'noname(1).pdf') || {}).path || '');
     assert.ok(!nn || !/noname/.test(nn.split('/').pop()), 'noname 이름은 바꿈: ' + nn);
     await new Promise((r) => setTimeout(r, 6000));
@@ -460,6 +463,8 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     let r = await info();
     assert.deepEqual(r.pays, [{ kind: 'prog', n: 1, paid: false }], '기성 1회 저절로 생김');
     assert.deepEqual(r.docs.sort(), [['1회 기성검사원 지정통보.pdf', 'c-prognotice', 0], ['제1회 기성계.pdf', 'c-progfin', 0], ['제1회 기성부분 검사조서.pdf', 'c-proginsp', 0]].sort());
+    const rp = await page.evaluate(() => JH.app.db.docs.filter((d) => /제1회 기성/.test(d.name)).map((d) => d.path.split('/').slice(-2).join('/')).sort());
+    assert.deepEqual(rp, ['1차 기성/1_기성계·기성검사원_시청사 옥상 방수공사_제1회 기성계.pdf', '1차 기성/3_기성부분 검사조서_시청사 옥상 방수공사.pdf'], JSON.stringify(rp));
     await page.waitForSelector('.round[open] .rnext:has-text("감독관 경유")', { timeout: 5000 }).catch(() => {});
     await page.check('.round[open] [data-act="rvia"]');
     await page.waitForSelector('.round[open] .rnext:has-text("업체에 청구 서류 요청")', { timeout: 5000 });
@@ -468,7 +473,7 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     assert.ok(await page.$('.round[open] [data-act="rmail"].primary'), '검사조서까지 오면 청구 서류 요청 메일이 눈에 띄게');
     await page.click('.round[open] [data-act="rmail"]');
     await page.waitForSelector('#dlgMail[open]');
-    assert.match(await page.inputValue('#mailSubj'), /1회 기성 대금 청구 서류 제출 요청/);
+    assert.match(await page.inputValue('#mailSubj'), /1차 기성 대금 청구 서류 제출 요청/);
     assert.match(await page.inputValue('#mailBody'), /대금청구서[\s\S]*세금계산서/);
     await page.keyboard.press('Escape');
     await up(['1회 기성금 청구서.pdf', '국세 납세증명서.pdf']); // 하나는 이름에 회차, 하나는 힌트 없음 → 열린 회차로
@@ -477,7 +482,7 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     for (const id of ['c-ltax', 'c-inspaid', 'c-emppaid', 'c-invoice', 'c-pay']) await page.check(`.round[open] .row[data-drop-item="${id}"] [data-act="rrecv"]`);
     await page.waitForSelector('.round[open] .pill.ready', { timeout: 5000 });
     await page.click('.round[open] [data-act="roundpay"]');
-    await page.waitForSelector('#dlgPay[open]'); assert.match(await page.textContent('#payTitle'), /1회 기성 지출 처리/);
+    await page.waitForSelector('#dlgPay[open]'); assert.match(await page.textContent('#payTitle'), /1차 기성 지출 처리/);
     await page.fill('#payDate', '2026-10-20'); await page.click('#paySave');
     await page.waitForSelector('.round.paid .pill.paid:has-text("지출 10.20")', { timeout: 5000 });
     await up(['대금청구서_최종.pdf']); // 열린 회차가 없으면 준공(마지막)으로
@@ -486,7 +491,7 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     assert.deepEqual(r.pays, [{ kind: 'prog', n: 1, paid: true }]);
     // 노무비 회차 직접 만들기 → 현황판 '기성·노무비 진행 중'
     await page.click('[data-act="roundadd"][data-kind="labor"]');
-    await page.waitForSelector('.round[open] .rlabel:has-text("월분 노무비")', { timeout: 5000 });
+    await page.waitForSelector('.round[open] .rlabel:has-text("노무비")', { timeout: 5000 });
     await page.waitForSelector('.citem.on .pill.sub:has-text("노무비")', { timeout: 5000 });
     // 회차 서류를 준공으로 옮기면 기성 칸 → 준공 칸
     const docId = await page.evaluate(() => JH.app.db.docs.find((d) => d.name === '제1회 기성부분 검사조서.pdf').id);

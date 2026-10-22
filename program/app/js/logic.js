@@ -751,7 +751,8 @@
     if (m && +m[1] >= 1 && +m[1] <= 12) out.month = +m[1];
     return out;
   }
-  const roundLabel = (r) => (r.kind === 'prog' ? `${r.n || 1}회 기성` : r.kind === 'adv' ? '선금' : r.month ? `${r.month}월분 노무비` : `노무비 ${r.n || 1}회`);
+  // 회차 이름 = 계약 폴더 안 회차 폴더 이름: '1차 기성', '노무비 10월분', '선금'
+  const roundLabel = (r) => (r.kind === 'prog' ? `${r.n || 1}차 기성` : r.kind === 'adv' ? '선금' : r.month ? `노무비 ${r.month}월분` : `노무비 ${r.n || 1}차`);
   // 서류 하나를 어느 회차로: 반환 { kind, n?, month?, itemId } 또는 null(준공 목록)
   //  open = 아직 지출 안 한 회차들(앞선 것부터). 회차 전용 서류는 늘 회차로, 청구 서류는 힌트가 없으면 열려 있는 첫 회차로(없으면 준공)
   function routeRound(type, itemId, name, title, open, body) {

@@ -45,6 +45,7 @@
     office2pdf: (path) => call('POST', '/api/office2pdf', { path }),
     myIp: () => call('GET', '/api/myip'),
     async law(u) { const r = await call('GET', '/api/law', { u }); return r.text(); },
+    async update() { const r = await call('POST', '/api/update'); return r.json(); },
     async lawFile(u) { const r = await call('GET', '/api/law', { u }); return new Uint8Array(await r.arrayBuffer()); },
     watch: () => call('GET', '/api/watch'),
     watchPick: () => call('POST', '/api/watch', { pick: '1' }),

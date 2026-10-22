@@ -6,16 +6,20 @@ param(
   [int]$Port = 17890,
   [switch]$NoBrowser,
   [switch]$SkipAi,
+  [switch]$NoUpdate,
+  [int]$WaitPid = 0,
   [int]$IdleMinutes = 20
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '1.5.0'
+$Version = '1.6.0'
 $AppRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $WebRoot = Join-Path $AppRoot 'app'
 $LocalCfg = Join-Path $AppRoot 'local.json'
 $RunFile = Join-Path $AppRoot 'running.json'
 $Utf8 = New-Object System.Text.UTF8Encoding($false)
+# 업데이트 뒤 다시 켤 때: 앞의 창구가 완전히 끝난 뒤에 시작(포트·실행 정보가 겹치지 않게)
+if ($WaitPid) { try { Wait-Process -Id $WaitPid -Timeout 20 -ErrorAction SilentlyContinue } catch {} }
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}
 
 function Get-DefaultDataDir {
@@ -119,6 +123,98 @@ if (Test-Path -LiteralPath $RunFile) {
     Open-Browser "http://127.0.0.1:$($r.port)/"
     exit 0
   } catch {}
+}
+
+# ---------- GitHub에서 자동 업데이트(켤 때 한 번) ----------
+# 공용 설정(app/org.json)의 update { repo, branch, token }으로 최신 커밋을 확인 → 설치된 것과 다르면 받아서 바꾸고 새 버전으로 다시 켬
+# - 설치된 곳(%LOCALAPPDATA%\JichulHelper)에서 켤 때만(압축 푼 폴더에서 바로 켤 때는 하지 않음)
+# - 이 PC 설정(local.json)·실행 정보·데이터 폴더는 건드리지 않음. 인터넷이 막혀 있으면 몇 초 기다렸다가 그냥 켬
+$InstalledFile = Join-Path $AppRoot 'installed.json'
+$script:UpdateErr = ''
+function Get-UpdateCfg {
+  $orgPath = Join-Path $WebRoot 'org.json'
+  if (-not (Test-Path -LiteralPath $orgPath)) { return $null }
+  try { $o = [IO.File]::ReadAllText($orgPath, $Utf8) | ConvertFrom-Json } catch { return $null }
+  $u = $o.update
+  if (-not $u -or -not $u.repo -or -not $u.token) { return $null }
+  $br = if ($u.branch) { [string]$u.branch } else { 'main' }
+  return @{ repo = [string]$u.repo; branch = $br; token = [string]$u.token }
+}
+function Read-Installed { if (Test-Path -LiteralPath $InstalledFile) { try { return ([IO.File]::ReadAllText($InstalledFile, $Utf8) | ConvertFrom-Json) } catch {} }; return $null }
+function Test-InstalledCopy { return ($env:LOCALAPPDATA -and $AppRoot.StartsWith((Join-Path $env:LOCALAPPDATA 'JichulHelper'), [StringComparison]::OrdinalIgnoreCase)) }
+function Invoke-SelfUpdate([int]$CheckTimeout = 5) {
+  $u = Get-UpdateCfg; if (-not $u) { return $null }
+  $hdr = @{ Authorization = "Bearer $($u.token)"; 'User-Agent' = 'JichulHelper'; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+  $c = Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/$($u.repo)/commits/$($u.branch)" -Headers $hdr -TimeoutSec $CheckTimeout
+  $cur = Read-Installed
+  $cd = $c.commit.committer.date
+  $cdo = if ($cd -is [datetime]) { [DateTimeOffset]$cd } else { [DateTimeOffset]::Parse([string]$cd, [Globalization.CultureInfo]::InvariantCulture) }
+  $info = @{ sha = [string]$c.sha; date = $cdo.ToString('o'); message = ([string]$c.commit.message).Split("`n")[0]; checkedAt = (Get-Date).ToString('o') }
+  if ($cur -and $cur.sha -eq $info.sha) { return @{ updated = $false; info = $info } }
+  # 압축 파일로 막 설치한 PC: GitHub 것이 이 설치본보다 오래됐으면(아직 안 올린 경우) 되돌아가지 않음
+  if (-not $cur) {
+    $bf = Join-Path $AppRoot 'build.json'
+    if (Test-Path -LiteralPath $bf) {
+      try { $b = [IO.File]::ReadAllText($bf, $Utf8) | ConvertFrom-Json; $bt = if ($b.builtAt -is [datetime]) { [DateTimeOffset]$b.builtAt } else { [DateTimeOffset]::Parse([string]$b.builtAt, [Globalization.CultureInfo]::InvariantCulture) }
+        if ($cdo -lt $bt.AddMinutes(-5)) { return @{ updated = $false; info = $info; older = $true } } } catch {}
+    }
+  }
+  $tmp = Join-Path ([IO.Path]::GetTempPath()) ("jh-update-" + $info.sha.Substring(0, 7))
+  $zip = "$tmp.zip"
+  Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+  Invoke-WebRequest -UseBasicParsing -Uri "https://api.github.com/repos/$($u.repo)/zipball/$($info.sha)" -Headers $hdr -OutFile $zip -TimeoutSec 180
+  try {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [IO.Compression.ZipFile]::ExtractToDirectory($zip, $tmp)
+    $top = Get-ChildItem -LiteralPath $tmp -Directory | Select-Object -First 1
+    $prog = Join-Path $top.FullName 'program'
+    # 받은 것이 온전한지(서버·화면 파일이 있어야) 확인한 뒤에만 바꿈
+    if (-not (Test-Path -LiteralPath (Join-Path $prog 'server.ps1')) -or -not (Test-Path -LiteralPath (Join-Path $prog 'app\index.html'))) { throw '받은 파일에 프로그램이 없습니다' }
+    # 자동 업데이트가 없는 옛 버전으로는 바꾸지 않음(바꾸면 다시는 자동으로 못 받음)
+    if (-not (Select-String -LiteralPath (Join-Path $prog 'server.ps1') -Pattern 'Invoke-SelfUpdate' -SimpleMatch -Quiet)) { throw '받은 버전에 자동 업데이트 기능이 없어 바꾸지 않았습니다(GitHub에 최신본을 올렸는지 확인)' }
+    $appDest = Join-Path $AppRoot 'app'
+    $appNew = Join-Path $AppRoot 'app.new'
+    Remove-Item -LiteralPath $appNew -Recurse -Force -ErrorAction SilentlyContinue
+    Copy-Item -LiteralPath (Join-Path $prog 'app') -Destination $appNew -Recurse -Force
+    # 받은 공용 설정에 업데이트 토큰이 없으면(지운 경우 등) 지금 것을 그대로 둠 → 다음에도 업데이트를 받음
+    # 토큰은 저장소에 없음(zip으로 설치할 때만 들어옴) → 받은 공용 설정에 이 PC의 업데이트 정보(토큰)를 이어 붙임
+    try {
+      $newOrg = Join-Path $appNew 'org.json'
+      $oldU = ([IO.File]::ReadAllText((Join-Path $appDest 'org.json'), $Utf8) | ConvertFrom-Json).update
+      $no = [IO.File]::ReadAllText($newOrg, $Utf8) | ConvertFrom-Json
+      if ($oldU -and $oldU.token -and -not ($no.update -and $no.update.token)) {
+        $no | Add-Member -NotePropertyName update -NotePropertyValue $oldU -Force
+        [IO.File]::WriteAllText($newOrg, ($no | ConvertTo-Json -Depth 8), $Utf8)
+      }
+    } catch {}
+    if (Test-Path -LiteralPath $appDest) { Remove-Item -LiteralPath $appDest -Recurse -Force }
+    Rename-Item -LiteralPath $appNew -NewName 'app'
+    foreach ($f in @('server.ps1', 'ai-setup.ps1', 'uninstall.ps1', 'install.ps1', 'icon.ico', 'version.txt', 'build.json')) {
+      $p = Join-Path $prog $f
+      if (Test-Path -LiteralPath $p) { Copy-Item -LiteralPath $p -Destination (Join-Path $AppRoot $f) -Force }
+    }
+    Get-ChildItem -LiteralPath $AppRoot -Recurse -File | Unblock-File -ErrorAction SilentlyContinue
+    $info.at = (Get-Date).ToString('o')
+    [IO.File]::WriteAllText($InstalledFile, ($info | ConvertTo-Json -Compress), $Utf8)
+  } finally {
+    Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+  }
+  return @{ updated = $true; info = $info }
+}
+function Restart-Self {
+  $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  Start-Process -FilePath $ps -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $AppRoot 'server.ps1')`" -NoUpdate -SkipAi -WaitPid $PID" -WindowStyle Hidden | Out-Null
+}
+if (-not $NoUpdate -and (Test-InstalledCopy)) {
+  try {
+    $r = Invoke-SelfUpdate
+    if ($r -and $r.updated) {
+      $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+      Start-Process -FilePath $ps -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $AppRoot 'server.ps1')`" -NoUpdate$(if ($SkipAi) { ' -SkipAi' })" -WindowStyle Hidden | Out-Null
+      exit 0
+    }
+  } catch { $script:UpdateErr = $_.Exception.Message }
 }
 
 # ---------- 포트 열기(이 PC 전용) ----------
@@ -390,7 +486,18 @@ function Handle($stream, $req) {
   $q = $req.Query
 
   switch ($path) {
-    '/api/ping' { Send-Json $stream 200 @{ ok = $true; version = $Version; dataDir = $script:DataDir; watchDirs = @($script:WatchDirs); relocated = $script:Relocated; lost = $script:Lost; oldDir = $script:OldDir; os = [Environment]::OSVersion.VersionString }; return }
+    '/api/update' {
+      # 설정 → 정보 [지금 업데이트]: 확인해서 새 것이 있으면 받아 바꾸고, 응답 뒤 다시 켬(새 창이 열림)
+      if (-not (Test-InstalledCopy)) { Send-Json $stream 200 @{ ok = $true; skipped = '설치된 프로그램에서만 업데이트합니다(압축 푼 폴더에서 바로 실행 중)' }; return }
+      if (-not (Get-UpdateCfg)) { Send-Json $stream 200 @{ ok = $true; skipped = '공용 설정에 GitHub 업데이트 정보(update.repo·token)가 없습니다' }; return }
+      try {
+        $r = Invoke-SelfUpdate 15
+        Send-Json $stream 200 @{ ok = $true; updated = [bool]$r.updated; info = $r.info }
+        if ($r.updated) { Restart-Self; $script:Quit = $true }
+      } catch { Send-Error $stream 502 ("GitHub에서 받지 못했습니다: " + $_.Exception.Message) }
+      return
+    }
+    '/api/ping' { Send-Json $stream 200 @{ ok = $true; version = $Version; installed = (Read-Installed); updateErr = $script:UpdateErr; canUpdate = [bool]((Test-InstalledCopy) -and (Get-UpdateCfg)); dataDir = $script:DataDir; watchDirs = @($script:WatchDirs); relocated = $script:Relocated; lost = $script:Lost; oldDir = $script:OldDir; os = [Environment]::OSVersion.VersionString }; return }
 
     '/api/file' {
       $full = Resolve-DataPath $q['path']

@@ -258,8 +258,25 @@
   });
   $('#btnQuit').onclick = async () => { if (!confirm('프로그램을 종료할까요? 다시 쓰려면 바탕화면의 계약업무 도우미를 누르세요.')) return; try { await S.quit(); } catch (_) {} window.close(); };
 
+  // 설정 → 정보 [지금 업데이트 확인]
+  const btnUpd = document.getElementById('btnUpdate');
+  if (btnUpd) btnUpd.onclick = async () => {
+    const app = root.JH.app; btnUpd.disabled = true; btnUpd.textContent = '확인 중…';
+    try {
+      const r = await root.JH.server.update();
+      if (r.skipped) app.toast(r.skipped, 'err');
+      else if (r.updated) { app.toast(`새 버전을 받았습니다(${(r.info && r.info.message) || ''}). 잠시 뒤 새 창이 열리면 이 창은 닫으세요.`, 'ok'); setTimeout(() => { try { window.close(); } catch (_) {} }, 6000); }
+      else app.toast('이미 최신입니다.', 'ok');
+    } catch (e) { app.toast(e.message, 'err'); }
+    finally { btnUpd.disabled = false; btnUpd.textContent = '지금 업데이트 확인'; }
+  };
   root.JH.settings = {
     open, showWatch,
-    setInfo(i) { info = i || {}; $('#aboutVer').textContent = info.version || '-'; $('#aboutDir').textContent = info.dataDir || '-'; $('#dataDir').textContent = info.dataDir || '-'; },
+    setInfo(i) {
+      info = i || {}; $('#aboutVer').textContent = info.version || '-';
+      const ins = info.installed, d = (s) => { const t = new Date(s); return isNaN(t) ? '' : `${t.getFullYear()}.${String(t.getMonth() + 1).padStart(2, '0')}.${String(t.getDate()).padStart(2, '0')} ${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`; };
+      $('#aboutUpd').textContent = !info.canUpdate ? '자동 업데이트 꺼짐(공용 설정에 GitHub 토큰이 없거나, 설치하지 않고 바로 실행 중)'
+        : (ins && ins.sha ? `켤 때 GitHub에서 자동 · 지금 ${d(ins.date)} 커밋(${String(ins.sha).slice(0, 7)} ${ins.message || ''})` : '켤 때 GitHub에서 자동')
+        + (info.updateErr ? ` · 지난번 확인 실패: ${info.updateErr}` : ''); $('#aboutDir').textContent = info.dataDir || '-'; $('#dataDir').textContent = info.dataDir || '-'; },
   };
 })(window);

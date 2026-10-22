@@ -27,7 +27,7 @@ try {
   $appDest = Join-Path $Dest 'app'
   if (Test-Path -LiteralPath $appDest) { Remove-Item -LiteralPath $appDest -Recurse -Force }
   Copy-Item -LiteralPath (Join-Path $Src 'app') -Destination $appDest -Recurse -Force
-  foreach ($f in @('server.ps1', 'ai-setup.ps1', 'uninstall.ps1', 'icon.ico', 'version.txt')) {
+  foreach ($f in @('server.ps1', 'ai-setup.ps1', 'uninstall.ps1', 'icon.ico', 'version.txt', 'build.json')) {
     $p = Join-Path $Src $f
     if (Test-Path -LiteralPath $p) { Copy-Item -LiteralPath $p -Destination (Join-Path $Dest $f) -Force }
   }

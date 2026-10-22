@@ -50,8 +50,8 @@ test('기성 회차 단계: 기성계(경유) → 지정통보 → 검사조서 
   assert.ok(st[3].items.some((x) => x.id === 'c-claim') && st[3].items.some((x) => x.id === 'c-invoice'));
   assert.strictEqual(L.roundSteps('labor', '용역', L.defaultChecklists().용역)[0].items[0].id, 's-laborclaim');
   assert.ok(L.roundSteps('adv', '공사', list)[0].items.find((x) => x.id === 'c-advbond').link);
-  assert.strictEqual(L.roundLabel({ kind: 'prog', n: 2 }), '2회 기성');
-  assert.strictEqual(L.roundLabel({ kind: 'labor', month: 10 }), '10월분 노무비');
+  assert.strictEqual(L.roundLabel({ kind: 'prog', n: 2 }), '2차 기성');
+  assert.strictEqual(L.roundLabel({ kind: 'labor', month: 10 }), '노무비 10월분');
 });
 
 test('스캔본(noname.pdf): 이름에 회차가 없으면 읽은 글자에서 "제4회 기성"을 찾음', () => {

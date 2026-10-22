@@ -64,7 +64,23 @@
     const ids = new Set(base.map((x) => x.id));
     return base.concat(L.roundOnly(c.type).filter((x) => !ids.has(x.id)));
   }
+  // ---------- 계약 폴더 정리 ----------
+  // 계약 폴더\0 계약(구매요구·계약·착공·선금 보증서) \1차 기성 \2차 기성 … \노무비 10월분 \선금(회차) \준공(준공계·준공조서·청구·지출결의) \인쇄본
+  // 폴더 안 파일 이름 앞에 단계 번호(1_기성계… 2_지정통보… 3_검사조서… 4_청구 서류 5_지출결의) → 탐색기에서 처리 순서대로 보임
+  const SUB_CONTRACT = '0 계약', SUB_FINAL = '준공';
+  const FINAL_GROUPS = new Set(['준공계', '준공조서', '대금청구', '지출결의', '납품']);
+  const LAYOUT_DIR = /^(0 계약|준공|선금|인쇄본|\d+[차회] 기성|노무비 .+|\d+월분 노무비)$/;
   const roundDir = (c, r) => `${folderOf(c)}/${L.safeName(L.roundLabel(r), 30)}`;
+  function docPlace(c, itemId, pay) {
+    const r = pay ? roundById(c, pay) : null;
+    if (r) { const st = L.roundSteps(r.kind, c.type, lists(c.type)); const i = st.findIndex((g) => g.items.some((x) => x.id === itemId)); return { dir: roundDir(c, r), n: i >= 0 ? i + 1 : 0 }; }
+    const it = itemId ? classList(c).find((x) => x.id === itemId) : null;
+    if (!it) return { dir: folderOf(c), n: 0 }; // 종류를 아직 모르는 서류는 계약 폴더 바로 아래
+    const fin = FINAL_GROUPS.has(it.group);
+    const groups = [...new Set(lists(c.type).filter((x) => FINAL_GROUPS.has(x.group) === fin).map((x) => x.group))];
+    const gi = groups.indexOf(it.group);
+    return { dir: `${folderOf(c)}/${fin ? SUB_FINAL : SUB_CONTRACT}`, n: gi >= 0 ? gi + 1 : 0 };
+  }
   function addRound(c, kind, o = {}) {
     c.pays = c.pays || [];
     const same = c.pays.filter((x) => x.kind === kind);
@@ -361,14 +377,15 @@
   }
   // 정리된 사본의 파일 이름: "서류명_계약명.확장자"(예: 견적서(계약금액)_시청사 옥상 방수공사.pdf). 같은 이름이 있으면 (2), (3)…
   //  원래 이름이 뜻이 있는 이름(noname·scan·숫자·download 같은 것이 아님)이면 뒤에 붙여 둠. 내려받은 원본 파일은 건드리지 않음
-  function tidyName(item, c, orig) {
+  function tidyName(item, c, orig, n) {
     if (!item) return orig;
+    orig = String(orig).replace(/^\d{1,2}_/, ''); // 예전에 붙인 단계 번호는 떼고 다시 붙임
     const ext = (String(orig).match(/\.[A-Za-z0-9]{2,5}$/) || [''])[0].toLowerCase();
     const stem = L.stem(orig).trim();
     const junk = /^(noname|scan|scanned|image|img|download|document|file|문서|새\s*문서|제목\s*없음|kakaotalk|캡처|스캔|복사본)?[\s_\-()\d]*$/i.test(stem) || /^(noname|scan|img|image|download|kakaotalk)[\s_\-()\d]*/i.test(stem);
     const itemNm = L.safeName(item.name, 30), cName = c ? L.safeName(c.name || '', 40) : '';
     const keep = !junk && !L.norm(stem).includes(L.norm(itemNm)) ? `_${L.safeName(stem, 40)}` : '';
-    return `${itemNm}${cName ? '_' + cName : ''}${keep}${ext}`;
+    return `${n ? n + '_' : ''}${itemNm}${cName ? '_' + cName : ''}${keep}${ext}`;
   }
   async function ingest(fileList, forceKey, forceItem, opt = {}) {
     const files = [...fileList].filter((f) => f && f.name && !f.name.startsWith('.') && !/^(thumbs\.db|desktop\.ini)$/i.test(f.name));
@@ -446,8 +463,9 @@
         const rnd = rt ? roundById(c, rt.pay) : null;
         if (rnd) roundsHit.add(c.key + '|' + rnd.id);
         const item = c && itemId ? classList(c).find((x) => x.id === itemId) : null;
-        const dir = c ? (rnd ? roundDir(c, rnd) : folderOf(c)) : INBOX;
-        const fname = tidyName(item, c, r.name);
+        const place = c ? docPlace(c, item ? item.id : null, rnd ? rnd.id : null) : { dir: INBOX, n: 0 };
+        const dir = place.dir;
+        const fname = tidyName(item, c, r.name, place.n);
         const saved = await S.save(dir, fname, r.bytes);
         textDirty = true; db.docs.push({
           id: r.id, key: c ? c.key : null, itemId: item ? item.id : null, path: saved.path, name: r.name, kind: r.kind,
@@ -497,7 +515,7 @@
   }
 
   // 서류를 다른 계약·종류로 옮김(파일도 해당 폴더로 이동)
-  async function moveDoc(d, key, itemId, manual = true, pay) {
+  async function moveDoc(d, key, itemId, manual = true, pay, noSave) {
     const c = key ? db.contracts[key] : null;
     const list = c ? classList(c) : [];
     const item = itemId ? list.find((x) => x.id === itemId) : null;
@@ -505,14 +523,15 @@
     if (pay !== undefined) { if (pay) d.pay = pay; else delete d.pay; }
     if (!c || c.key !== d.key) delete d.pay;
     const rnd = c && d.pay ? roundById(c, d.pay) : null; if (!rnd) delete d.pay;
-    const dir = c ? (rnd ? roundDir(c, rnd) : folderOf(c)) : INBOX;
-    const name = tidyName(item, c, d.name);
+    const place = c ? docPlace(c, item ? item.id : null, rnd ? rnd.id : null) : { dir: INBOX, n: 0 };
+    const dir = place.dir;
+    const name = tidyName(item, c, d.name, place.n);
     const r = await S.move(d.path, dir, name);
     d.path = r.path;
     if (d.pdfPath) { try { const p = await S.move(d.pdfPath, dir, L.stem(name) + '.pdf'); d.pdfPath = p.path; } catch (_) { d.pdfPath = ''; } }
     d.key = c ? c.key : null; d.itemId = item ? item.id : null; d.manual = manual;
-    if (c) c.updatedAt = Date.now();
-    await saveDb(true);
+    if (c && !noSave) c.updatedAt = Date.now();
+    if (!noSave) await saveDb(true);
   }
   async function removeDoc(d) {
     await S.remove(d.path); if (d.pdfPath) { try { await S.remove(d.pdfPath); } catch (_) {} }
@@ -534,6 +553,25 @@
   // ---------- 폴더 정리 상태 맞추기 ----------
   // 탐색기에서 계약 폴더 이름을 바꾸거나 옮긴 파일을 이름·크기로 다시 찾고, 직접 넣은 파일은 읽어서 분류
   const DOC_EXT = /\.(pdf|jpe?g|png|gif|bmp|webp|hwpx?|xlsx|xls|docx)$/i;
+  // 서류 파일을 계약 폴더 안 정리 폴더(0 계약·1차 기성 …·준공)로 옮기고 단계 번호를 붙임 — 이미 제자리면 건드리지 않음(켤 때마다 확인)
+  async function relayout() {
+    const todo = db.docs.filter((d) => {
+      if (!d.key || d.missing || !d.path) return false;
+      const c = db.contracts[d.key]; if (!c) return false;
+      const p = docPlace(c, d.itemId, d.pay), dir = d.path.split('/').slice(0, -1).join('/'), base = d.path.split('/').pop();
+      return dir !== p.dir || (p.n && !base.startsWith(p.n + '_'));
+    });
+    if (!todo.length) return 0;
+    let n = 0;
+    for (let i = 0; i < todo.length; i++) {
+      const d = todo[i];
+      if (todo.length > 20) progress(`계약 폴더를 서류별로 정리하는 중 ${i + 1}/${todo.length}`, i / todo.length);
+      try { await moveDoc(d, d.key, d.itemId, d.manual, undefined, true); n++; } catch (e) { console.warn('옮기지 못함', d.path, e); }
+    }
+    progress(null); await saveDb(true); render();
+    if (n > 3) toast(`계약 폴더를 정리했습니다: 서류 ${n}개를 '0 계약'·'1차 기성'·'준공' 같은 폴더로 옮기고 처리 순서 번호를 붙였습니다.`, 'ok');
+    return n;
+  }
   async function reconcile() {
     const r = await S.list('', true);
     const all = r.files.filter((f) => /^(계약|미분류)\//.test(f.path) && !/\/인쇄본\//.test(f.path) && DOC_EXT.test(f.path));
@@ -551,6 +589,8 @@
     for (const c of contracts()) {
       const dirs = new Map();
       docsOf(c.key).filter((d) => !d.missing).forEach((d) => { const dir = d.path.split('/').slice(0, -1).join('/'); dirs.set(dir, (dirs.get(dir) || 0) + 1); });
+      // 정리 폴더(0 계약·준공·1차 기성 …) 안이면 그 위가 계약 폴더
+      [...dirs.keys()].forEach((k) => { const p = k.split('/'); if (p.length > 2 && LAYOUT_DIR.test(p[p.length - 1])) { const up = p.slice(0, -1).join('/'); dirs.set(up, (dirs.get(up) || 0) + dirs.get(k)); dirs.delete(k); } });
       const top = [...dirs.entries()].sort((a, b) => b[1] - a[1])[0];
       if (top && /^계약\//.test(top[0]) && top[0] !== c.folder) c.folder = top[0];
     }
@@ -873,7 +913,7 @@
     return (withInbox ? '<option value="__inbox">미분류로 보내기</option>' : '') + '<option value="">서류 종류 고르기</option>' +
       list.map((x) => `<option value="${esc(x.id)}"${x.id === sel ? ' selected' : ''}>${esc(x.group)} · ${esc(x.name)}</option>`).join('');
   }
-  // 서류 줄의 '회차' 고르기(회차가 있는 계약만): 준공(마지막) / 1회 기성 / …
+  // 서류 줄의 '회차' 고르기(회차가 있는 계약만): 준공(마지막) / 1차 기성 / …
   function payOptions(d) {
     const c = d.key && db.contracts[d.key]; const rs = c ? sortedRounds(c) : [];
     if (!rs.length) return '';
@@ -1062,7 +1102,7 @@
     if (!st.rounds.length) return `<section class="rounds none"><div class="rounds-head"><h3>지출 회차 <small>기성·노무비·선금</small></h3><span class="muted small">중간에 나가는 지출이 있으면 여기서 회차마다 확인합니다. <b>기성계·기성 검사조서·노무비 청구서</b>를 올리면 회차가 저절로 생기고, 오른쪽 버튼으로 직접 만들어도 됩니다.</span>${add}</div></section>`;
     const paid = st.rounds.filter((x) => x.s.state === 'paid').length;
     // 회차가 많은 장기 공사(10회 이상)도 한눈에: 회차마다 칸 하나(지출 완료·지출 대기·미비·시작 전), 누르면 그 회차를 펼침
-    const short = (r) => (r.kind === 'prog' ? `${r.n}회` : r.kind === 'adv' ? '선금' : r.month ? `${r.month}월` : `노${r.n}`);
+    const short = (r) => (r.kind === 'prog' ? `${r.n}차` : r.kind === 'adv' ? '선금' : r.month ? `${r.month}월` : `노${r.n}`);
     const track = `<div class="rtrack" role="list" aria-label="회차별 지출">${st.rounds.map((x) => `<button type="button" role="listitem" class="rt ${x.s.state}" data-act="rjump" data-round="${esc(x.r.id)}" title="${esc(x.s.label)} · ${esc({ paid: '지출 완료 ' + L.fmtDate(x.r.paidDate), ready: '지출 대기', missing: '미비 ' + x.s.need, empty: '시작 전' }[x.s.state])}">${x.r.kind === 'labor' ? '<small>노</small>' : ''}${esc(short(x.r))}</button>`).join('')}<button type="button" class="rt next" data-act="roundadd" data-kind="prog" title="다음 기성 회차를 지금 만들기(기성계가 오면 저절로 생김)">+</button></div>`;
     const fin = st.state === 'paid' ? `<span class="pill paid">지출 ${esc(L.fmtDate(c.paidDate).slice(5))}</span>` : pillFor(st, c);
     return `<section class="rounds"><div class="rounds-head"><h3>지출 회차</h3><span class="muted small">지금까지 <b>${paid}회 지출</b>${st.roundOpen ? ` · 진행 중 ${esc(st.roundOpen.s.label)}` : ''} · 몇 회가 될지 몰라도 됩니다 — 다음 기성계·노무비 청구서가 오면 다음 회차가 저절로 생깁니다</span>${add}</div>
@@ -2121,6 +2161,7 @@
     try { await JH.notice.load(); } catch (_) {}
     setView(ui.view);
     try { await reconcile(); render(); } catch (e) { console.warn('폴더 확인 실패', e); }
+    try { await relayout(); } catch (e) { console.warn('폴더 정리 실패', e); }
     if (!cfg.officer) openWelcome();
     setInterval(() => { S.ping().catch(() => banner('연결 창구가 꺼졌습니다. 바탕화면의 바로가기로 다시 실행해 주세요.', true)); }, 60000);
     if (cfg.officer) { checkAccounts().finally(() => autoRefresh(true)); setInterval(() => autoRefresh(false), 5 * 60000); }
