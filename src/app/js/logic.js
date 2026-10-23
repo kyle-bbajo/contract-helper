@@ -248,6 +248,34 @@
     });
     return out;
   }
+  // 한 파일에 여러 서류를 스캔한 PDF를 서류마다 자를 안: 제목이 나온 쪽부터 다음 제목 앞 쪽까지 한 서류
+  // (제목 없는 쪽은 앞 서류의 뒷장, 첫 제목 앞의 쪽은 종류 모름). 같은 서류 제목이 이어진 쪽은 한 서류로
+  function splitPlan(pagesOf, n) {
+    n = Math.max(1, n | 0);
+    const at = [];
+    for (const [id, ps] of Object.entries(pagesOf || {})) for (const p of ps || []) if (p >= 1 && p <= n) at.push({ p, id });
+    at.sort((a, b) => a.p - b.p);
+    const segs = [];
+    for (const h of at) {
+      const last = segs[segs.length - 1];
+      if (last && last.from === h.p) continue; // 한 쪽에 두 서류 이름: 앞에 찾은 것
+      if (last && last.item === h.id && h.p === last.head + 1) { last.head = h.p; continue; } // 같은 제목이 이어진 쪽
+      segs.push({ from: h.p, head: h.p, item: h.id });
+    }
+    if (!segs.length) return [{ from: 1, to: n, item: null }];
+    if (segs[0].from > 1) segs.unshift({ from: 1, head: 1, item: null });
+    return segs.map((x, i) => ({ from: x.from, to: i < segs.length - 1 ? segs[i + 1].from - 1 : n, item: x.item }));
+  }
+  // 나누기 안 확인: 쪽이 겹치거나 빠지면 알림 글
+  function checkSplit(rows, n) {
+    const rs = [...rows].sort((a, b) => a.from - b.from);
+    for (const r of rs) if (!(r.from >= 1 && r.to >= r.from && r.to <= n)) return `쪽 범위가 맞지 않습니다: ${r.from}~${r.to}쪽 (모두 ${n}쪽)`;
+    for (let i = 1; i < rs.length; i++) if (rs[i].from <= rs[i - 1].to) return `쪽이 겹칩니다: ${rs[i - 1].from}~${rs[i - 1].to}쪽과 ${rs[i].from}~${rs[i].to}쪽`;
+    const miss = []; let p = 1;
+    for (const r of rs) { for (; p < r.from; p++) miss.push(p); p = r.to + 1; }
+    for (; p <= n; p++) miss.push(p);
+    return miss.length ? `빠진 쪽이 있습니다: ${miss.join(', ')}쪽 — 어느 서류에 붙일지 정해 주세요` : '';
+  }
   // 한글처럼 쪽을 모를 때: 짧은 제목 줄(서류 이름만 있는 줄)에서 찾음
   function classifyTitleLines(list, lines) {
     const heads = (lines || []).filter((l) => { const t = String(l).replace(/\s+/g, ''); return t.length >= 3 && t.length <= 30; });
@@ -751,6 +779,19 @@
     return { status: days >= ADV_DAYS ? 'ok' : 'short', days, end: ymd(a), need: addDays(ymd(b), ADV_DAYS) };
   }
 
+  // 업체에 요청할 때 서류마다 붙일 발급·유효 조건(메일에 그대로 씀)
+  //  c: 계약(contractDate·endDate), basisDate: 대금 지급 예정일(증명서 유효기간 기준)
+  function issueCond(item, c = {}, basisDate) {
+    const id = String((item && item.id) || ''), note = String((item && item.note) || '');
+    if (/-corpreg$/.test(id)) return (c.contractDate ? `계약일(${fmtDate(c.contractDate)}) 기준 3개월 이내 발급분` : '최근 3개월 이내 발급분') + ' · 개인사업자는 제출 안 함';
+    if (/-seal$/.test(id)) return (c.contractDate ? `계약일(${fmtDate(c.contractDate)}) 기준 3개월 이내 발급분` : '최근 3개월 이내 발급분') + ' · 법인은 법인인감, 개인사업자는 개인인감';
+    if (isCertItem(id)) return basisDate ? `대금 지급 예정일(${fmtDate(basisDate)}) 이후까지 유효한 증명서` : '유효기간이 남아 있는 최근 발급분';
+    if (isAdvBond(id)) return c.endDate ? `보증기간 끝이 ${fmtDate(addDays(String(c.endDate).replace(/\D/g, '').slice(0, 8), ADV_DAYS))} 이후(준공일 + ${ADV_DAYS}일 이상)` : `보증기간 끝이 준공일 + ${ADV_DAYS}일 이상`;
+    if (/-defectbond$/.test(id)) return '보증기간이 계약서의 하자담보책임기간(준공 다음 날부터)을 모두 포함하는 것 · 보증금액은 계약서의 하자보수보증금률';
+    // 목록 비고에 적힌 조건(예: 공사명·공사기간·계약금액 필수, 공사명 기재 필수)
+    const cond = note.split(/\s+·\s+/).filter((x) => /(필수|기재|이내|이상|기준|발급)/.test(x) && !/^해당/.test(x));
+    return cond.join(' · ');
+  }
   // 업체 보완 요청 메일(빠진 서류 + 유효기간 부족으로 재발급할 서류)
   // 감독관 경유가 필요한 서류(공사·용역): 착공(착수)계·현장대리인계·예정공정표, 산출내역서, 견적서, 노무비 지급확인제, 준공계·준공검사원
   // 한 줄에 여러 서류가 묶인 것은 서류마다 따로 체크. 저장: c.via['c-start:착공계'] = true
@@ -850,11 +891,12 @@
     return first ? { kind: first.kind, n: first.n, month: first.month, id: first.id, itemId } : null;
   }
 
+  // missing: 서류 이름 또는 { name, cond }(cond = 발급·유효 조건, 이름 옆에 붙여 씀)
   function vendorMail({ c, org, dept, officer, phone, missing = [], reissue = [], via = [], basis, round }) {
     const f = (s) => fmtDate(s);
     const title = round ? `[${org || '발주기관'}] 「${c.name || '계약'}」 ${round} 대금 청구 서류 제출 요청` : `[${org || '발주기관'}] 「${c.name || '계약'}」 대금 청구 서류 보완 요청`;
     const secs = [];
-    if (missing.length) secs.push([round ? '제출할 서류' : '미제출 서류', missing.map((n) => `  - ${n}`)]);
+    if (missing.length) secs.push([round ? '제출할 서류' : '미제출 서류', missing.map((n) => (typeof n === 'string' ? `  - ${n}` : `  - ${n.name}${n.cond ? ` (${n.cond})` : ''}`))]);
     if (reissue.length) secs.push(['재발급 필요 서류(유효기간 부족)', reissue.map((x) => `  - ${x.name}: 유효기간 ${f(x.valid)}까지 → ${f(basis.date)} 이후까지 유효한 증명서로 재발급`)]);
     if (via.length) secs.push(['감독관 경유가 필요한 서류', via.map((n) => `  - ${n}: 감독관 경유(확인) 후 다시 제출`)]);
     if (reissue.length && basis && basis.date) secs.push(['기준', [`  - 대금 지급 예정일(${f(basis.date)}) 기준으로 유효한 증명서가 필요합니다.`]]);
@@ -882,8 +924,8 @@
     classifyItem, guessType, findMeta, vendorCore, baseNo, contractScore, matchContract, contractKey,
     API_BASE, API_OPS, TYPES, apiUrl, keyParam, monthRanges, parseApiText, parseApiBody, parseCorpList, parseCorpRows, normalizeApiItem, detectExtFinance,
     G2B, g2bUrl, scanAuditFields, summarizeChanges, chgPlan, autoKind, CHG_KINDS, changesOf, ordSnap, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
-    ordOf, viaParts, viaKey, viaStatus, itemsInName, isRecentItem, issuedTooEarly, isAdvBond, advBondCheck, ADV_DAYS, matchCandidates, checklistStatus, holds, hasItem, classifyPages, classifyTitleLines, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail,
-    headLines, learnSigs, learnedItem, classifyInfo, suffixOf, shareSafe,
+    ordOf, viaParts, viaKey, viaStatus, itemsInName, isRecentItem, issuedTooEarly, isAdvBond, advBondCheck, ADV_DAYS, matchCandidates, checklistStatus, holds, hasItem, classifyPages, classifyTitleLines, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail, issueCond,
+    headLines, learnSigs, learnedItem, classifyInfo, suffixOf, shareSafe, splitPlan, checkSplit,
     PAY_KINDS, typeKey, hasRounds, roundOnly, roundSteps, roundHint, roundLabel, routeRound,
   };
   root.JH = root.JH || {};

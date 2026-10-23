@@ -412,6 +412,26 @@
   </div>
 </dialog>
 
+<dialog id="dlgSplit" class="dlg wide" aria-labelledby="spTitle">
+  <form method="dialog" class="dlg-head">
+    <h2 id="spTitle">쪽별로 나누기</h2>
+    <button class="btn icon" value="close" aria-label="닫기">✕</button>
+  </form>
+  <div class="dlg-body sp">
+    <div class="sp-side">
+      <div class="pv-name" id="spName"></div>
+      <p class="small muted" id="spWhy">쪽마다 위쪽 제목을 읽어 서류마다 나눌 안을 만들었습니다. 쪽 범위와 서류 종류를 확인하고 [나누어 저장]을 누르세요. 원래 파일은 _삭제됨으로 옮기고 [되돌리기]로 되돌릴 수 있습니다.</p>
+      <p class="warn-t small" id="spErr" hidden></p>
+      <div class="sp-rows" id="spRows"></div>
+      <button type="button" class="link sm" id="spAddRow">+ 나누는 곳 추가</button>
+      <div class="pv-acts">
+        <button type="button" class="btn primary" id="spSave">나누어 저장</button>
+        <button type="button" class="btn ghost" id="spCancel">닫기</button>
+      </div>
+    </div>
+    <div class="sp-view" id="spView"></div>
+  </div>
+</dialog>
 <dialog id="dlgPreview" class="dlg wide" aria-labelledby="pvTitle">
   <form method="dialog" class="dlg-head">
     <h2 id="pvTitle">미리 보기</h2>
@@ -429,6 +449,7 @@
         <button type="button" class="btn ghost danger" id="pvTrash" title="우리 계약 서류가 아니면 버림(_삭제됨으로 옮김, 되돌리기 가능)">버리기</button>
         <div class="pv-nav"><button type="button" class="btn ghost" id="pvPrev">이전</button><button type="button" class="btn ghost" id="pvNext">다음</button></div>
         <button type="button" class="link sm" id="pvOpen">원래 프로그램으로 열기</button>
+        <button type="button" class="link sm" id="pvSplit" hidden title="한 파일에 여러 서류를 스캔했으면 서류마다 따로 잘라 각 칸에 넣음">쪽별로 나누기</button>
       </div>
     </div>
     <div class="pv-body" id="pvBody"></div>

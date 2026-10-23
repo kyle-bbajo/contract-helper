@@ -867,3 +867,23 @@ input[data-date] { width: 9.5em; max-width: 100%; font-variant-numeric: tabular-
 .tab-add { flex: none; height: 28px; width: 30px; margin-bottom: 2px; border: 0; border-radius: 6px; background: none; color: var(--ink-2); cursor: pointer; font-size: 18px; line-height: 1; }
 .tab-add:hover { background: rgba(255,255,255,.6); color: var(--text); }
 body.only-notice .tabs { display: none; }
+
+/* 쪽별로 나누기: 왼쪽 나눌 안(쪽 범위·서류 종류), 오른쪽 쪽 그림(고른 줄의 쪽을 표시) */
+.dlg-body.sp { display: grid; grid-template-columns: 360px 1fr; gap: 16px; align-items: start; }
+.sp-side { display: grid; gap: 10px; position: sticky; top: 0; }
+.sp-rows { display: grid; gap: 8px; max-height: calc(100vh - 380px); min-height: 120px; overflow: auto; padding-right: 2px; }
+.sp-row { display: grid; gap: 6px; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 10px; background: var(--sheet); cursor: pointer; }
+.sp-row.on { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.sp-row .sp-pg { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-2); }
+.sp-row .sp-pg input { width: 4.2em; padding: 4px 6px; font-variant-numeric: tabular-nums; }
+.sp-row .sp-pg .x { margin-left: auto; }
+.sp-row select { width: 100%; padding: 5px 6px; }
+.sp-row .cpick-q { padding: 5px 8px; }
+.sp-view { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; max-height: 70vh; overflow: auto; padding: 4px; }
+.sp-pgv { position: relative; border: 2px solid transparent; border-radius: 8px; background: #fff; padding: 2px; }
+.sp-pgv canvas { width: 100%; height: auto; display: block; border: 1px solid var(--rule-soft); }
+.sp-pgv b { position: absolute; left: 6px; top: 6px; background: var(--ink); color: #fff; font-size: 11.5px; padding: 1px 6px; border-radius: 6px; }
+.sp-pgv small { display: block; font-size: 11.5px; color: var(--muted); padding: 3px 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-pgv.on { border-color: var(--ink); }
+.sp-pgv.cut::before { content: '✂'; position: absolute; left: -9px; top: -10px; font-size: 14px; color: var(--seal); }
+@media (max-width: 760px) { .dlg-body.sp { grid-template-columns: 1fr; } }

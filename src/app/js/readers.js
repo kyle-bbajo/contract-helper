@@ -181,13 +181,16 @@
     return [];
   }
   // 쪽마다 앞부분 글자(여러 양식이 든 파일에서 쪽별 서류 이름 찾기). 글자 PDF는 40쪽까지, 스캔 PDF는 8쪽까지 위쪽만 글자 인식
-  async function pageHeads(bytes, kind) {
+  // opt: { max: 읽을 쪽 수, ocrMax: 글자 인식할 스캔 쪽 수, onPage(p, n): 진행 알림 } — 쪽별로 나누기에서는 전체 쪽을 읽음
+  // 돌려주는 배열에 .rows(쪽마다 위쪽 줄들)와 .total(모든 쪽 수)도 붙임
+  async function pageHeads(bytes, kind, opt = {}) {
     if (kind !== 'pdf') return null;
     const doc = await (await pdfjs()).getDocument({ data: bytes.slice(), ...PDFJS_OPTS }).promise;
-    const heads = [];
+    const heads = []; heads.rows = []; heads.total = doc.numPages;
+    const OCR_MAX = opt.ocrMax || 8;
     try {
-      const n = Math.min(40, doc.numPages);
-      if (n < 2) return null;
+      const n = Math.min(opt.max || 40, doc.numPages);
+      if (n < 2 && !opt.max) return null;
       let scanned = 0;
       for (let p = 1; p <= n; p++) {
         const page = await doc.getPage(p);
@@ -195,8 +198,10 @@
         const rows = [];
         for (const it of tc.items) { if (!it.str || !it.str.trim()) continue; const y = it.transform[5]; let r = rows.find((q) => Math.abs(q.y - y) < 4); if (!r) rows.push(r = { y, s: [] }); r.s.push({ x: it.transform[4], t: it.str }); }
         rows.sort((a, b) => b.y - a.y);
-        let head = rows.slice(0, 8).map((r) => r.s.sort((a, b) => a.x - b.x).map((x) => x.t).join(' ')).join(' ');
-        if (JH.logic.norm(head).length < 4 && scanned < 8 && !ocrBroken) {
+        if (opt.onPage) opt.onPage(p, n);
+        let lines = rows.slice(0, 8).map((r) => r.s.sort((a, b) => a.x - b.x).map((x) => x.t).join(' '));
+        let head = lines.join(' ');
+        if (JH.logic.norm(head).length < 4 && scanned < OCR_MAX && !ocrBroken) {
           // 스캔본: 쪽 위쪽 30%만 그려 글자 인식
           scanned++;
           try {
@@ -208,10 +213,11 @@
             top.getContext('2d').drawImage(c, 0, 0);
             const w = await getOcr();
             const { data } = await withTimeout(w.recognize(top), 60000, '글자 인식');
+            lines = String(data.text || '').split(/\n+/).map((x) => x.trim()).filter(Boolean).slice(0, 8);
             head = String(data.text || '').replace(/\s+/g, ' ').trim();
           } catch (e) { console.warn('쪽 글자 인식 실패', p, e); }
         }
-        heads.push(head);
+        heads.push(head); heads.rows.push(lines);
       }
     } finally { doc.destroy(); }
     return heads;

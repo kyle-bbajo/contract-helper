@@ -213,3 +213,27 @@ test('구매요구 안전보건 서류(공사·용역): 산업안전재해율 �
   }
   assert.equal(d.물품.filter((x) => x.group === '구매요구').length, 1, '물품에는 없음');
 });
+
+test('쪽별로 나누기 안: 제목 쪽부터 다음 제목 앞까지, 제목 없는 쪽은 앞 서류, 겹침·빠짐 알림', () => {
+  assert.deepEqual(L.splitPlan({ a: [1], b: [3], c: [5], d: [6] }, 6), [{ from: 1, to: 2, item: 'a' }, { from: 3, to: 4, item: 'b' }, { from: 5, to: 5, item: 'c' }, { from: 6, to: 6, item: 'd' }]);
+  assert.deepEqual(L.splitPlan({ a: [2, 3], b: [5] }, 6), [{ from: 1, to: 1, item: null }, { from: 2, to: 4, item: 'a' }, { from: 5, to: 6, item: 'b' }]);
+  assert.deepEqual(L.splitPlan({}, 3), [{ from: 1, to: 3, item: null }]);
+  assert.equal(L.checkSplit([{ from: 1, to: 2 }, { from: 3, to: 6 }], 6), '');
+  assert.match(L.checkSplit([{ from: 1, to: 3 }, { from: 3, to: 6 }], 6), /겹칩니다/);
+  assert.match(L.checkSplit([{ from: 1, to: 2 }, { from: 4, to: 6 }], 6), /빠진 쪽.*3쪽/);
+});
+
+test('요청 메일: 빠진 서류마다 발급·유효 조건(3개월 이내, 지급 예정일 이후 유효, 보증기간)', () => {
+  const d = L.defaultChecklists().공사, by = (id) => d.find((x) => x.id === id);
+  const c = { name: '시청사 옥상 방수공사', contractDate: '20260901', endDate: '20261130' };
+  assert.match(L.issueCond(by('c-corpreg'), c), /계약일\(2026\.09\.01\) 기준 3개월 이내 발급분/);
+  assert.match(L.issueCond(by('c-seal'), c), /3개월 이내/);
+  assert.match(L.issueCond(by('c-inspaid'), c, '20261214'), /2026\.12\.14\) 이후까지 유효/);
+  assert.match(L.issueCond(by('c-advbond'), c), /2027\.01\.29 이후\(준공일 \+ 60일 이상\)/);
+  assert.match(L.issueCond(by('c-empjoin'), c), /공사명·공사기간·계약금액 필수|공사명/);
+  assert.match(L.issueCond(by('c-defectbond'), c), /하자담보책임기간/);
+  assert.equal(L.issueCond(by('c-bizreg'), c), '');
+  const m = L.vendorMail({ c, org: '용인도시공사', officer: '담당', missing: [{ name: '법인등기사항증명서', cond: L.issueCond(by('c-corpreg'), c) }, '통장사본'], basis: {} });
+  assert.match(m.body, /- 법인등기사항증명서 \(계약일\(2026\.09\.01\) 기준 3개월 이내 발급분/);
+  assert.match(m.body, /- 통장사본\n/);
+});

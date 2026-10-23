@@ -540,7 +540,7 @@
         if (c) {
           try {
             progress(`여러 양식이 든 파일인지 보는 중 ${i + 1}/${recs.length}`, i / recs.length);
-            const heads = await R.pageHeads(r.bytes, r.kind);
+            const heads = await R.pageHeads(r.bytes, r.kind); r.pages = heads ? heads.total : null;
             pagesOf = heads ? L.classifyPages(classList(c), heads) : r.kind === 'hwp' ? L.classifyTitleLines(classList(c), r.lines) : null;
           } catch (e) { console.warn('쪽별 서류 찾기 실패', e); }
           // 파일 이름에 서류가 여럿이면(견적서_산출내역.pdf) 그것도 함께 든 서류로
@@ -568,7 +568,7 @@
           id: r.id, key: c ? c.key : null, itemId: item ? item.id : null, path: saved.path, name: r.name, kind: r.kind,
           size: r.size, mime: r.mime, addedAt: new Date().toISOString(), ocr: r.ocr, meta: r.meta, text: r.text, title: r.title, dates: r.dates, manual: !!forced && !r.rerouted, facts: L.docFacts(r.lines),
           ...(rnd ? { pay: rnd.id } : {}), ...(!c && r.cands && r.cands.length ? { cands: r.cands } : {}), ...(r.heads && r.heads.length ? { heads: r.heads } : {}), ...(r.unsure ? { unsure: true, alts: r.alts } : {}),
-          ...(also.length ? { also, pagesOf } : {}),
+          ...(also.length ? { also, pagesOf } : {}), ...(r.pages > 1 ? { pages: r.pages } : {}),
         });
         if (c) { byContract[c.key] = (byContract[c.key] || 0) + 1; c.updatedAt = Date.now(); } else inbox++;
         if (c && item && (AUDIT_DOC.test(item.id) || also.some((id) => AUDIT_DOC.test(id)))) (auditLines[c.key] = auditLines[c.key] || []).push(r.lines);
@@ -606,7 +606,7 @@
       if (ignored) msg += ` 우리 계약과 상관없는 파일 ${ignored}개는 가져오지 않았습니다.`;
       if (newContracts) msg += ` 계약서에서 새 계약 ${newContracts}건을 만들었습니다.`;
       if (auditFilled) msg += ` 서류에서 감사·검사 칸 ${auditFilled}개를 채웠습니다.`;
-      if (multiForm) msg += ` 여러 양식이 든 파일 ${multiForm}개는 안에 든 서류마다 표시했습니다.`;
+      if (multiForm) msg += ` 여러 양식이 든 파일 ${multiForm}개는 안에 든 서류마다 표시했습니다(파일 줄의 [나누기]로 서류마다 따로 자를 수 있음).`;
       if (roundsHit.size) msg += ` 지출 회차: ${[...roundsHit].map((k) => { const [ck, rid] = k.split('|'); const rc = db.contracts[ck], rr = rc && roundById(rc, rid); if (!rr) return ''; const rs = roundStatus(rc, rr); return `${L.roundLabel(rr)} 서류 ${rs.reqDone}/${rs.reqTotal}${rs.cur >= 0 ? ` (다음: ${(NEXT[rr.kind] || [])[rs.cur] || rs.steps[rs.cur].name})` : ''}`; }).filter(Boolean).join(', ')}.`;
       const moved = recs.filter((r) => r.rerouted).length;
       if (moved) msg += ` ${moved}개는 내용이 다른 계약 서류라 그 계약으로 보냈습니다.`;
@@ -1144,7 +1144,8 @@
     const chk = d.unsure ? `<button type="button" class="ft warn chk-btn" data-act="confirmdoc" data-doc="${d.id}" title="제목에 다른 서류 이름도 있어 헷갈립니다. 눌러서 확인하면 배웁니다">확인 필요</button>` : '';
     return `<div class="file">${tag}${chk}<span class="fn" title="${esc(d.name)}">${esc(d.name)}</span>${conv}${dt}
       <select data-act="moveitem" data-doc="${d.id}" aria-label="서류 종류">${itemOptions(list, d.itemId, true)}</select>${payOptions(d)}
-      <button class="link" data-act="view" data-doc="${d.id}">보기</button>
+      <button class="link" data-act="view" data-doc="${d.id}">보기</button>${d.kind === 'pdf' && d.key && ((d.also && d.also.length) || d.pages > 1) ? `
+      <button class="link" data-act="split" data-doc="${d.id}" title="한 파일에 여러 서류를 스캔했으면 서류마다 따로 잘라 각 칸에 넣음">나누기</button>` : ''}
       <button class="x" data-act="del" data-doc="${d.id}" title="빼기" aria-label="빼기">✕</button></div>`;
   }
   // 우리 예산이 아닌 사업(e나라도움 보조금 등)은 구매요구서 대신 일반 기안문이 옴
@@ -1179,12 +1180,13 @@
   // 감독관 경유: 들어온 서류(파일·묶음 안·원본·받음) 중 경유 체크 안 된 것
   const viaOf = (c) => { const docs = finalDocs(c), got = gotMap(c); return L.viaStatus(c, lists(c.type), (id) => L.hasItem(docs, got, id) || docs.some((d) => (d.also || []).includes(id))); };
   function vendorNeeds(c, st) {
-    const missing = st.missing.filter((x) => L.ORIGINAL_SOURCES.includes(x.source)).map((x) => itemView(c, x).name);
+    const missingItems = st.missing.filter((x) => L.ORIGINAL_SOURCES.includes(x.source));
+    const missing = missingItems.map((x) => itemView(c, x).name);
     const reissue = st.expired.map((x) => ({ name: itemView(c, x.item).name, valid: x.valid }));
     const via = viaOf(c).missing;
     const adv = advOf(c);
     if (adv && adv.status === 'short') reissue.push({ name: `${itemView(c, adv.item).name}(보증기간이 준공일 ${L.fmtDate(c.endDate)} + ${L.ADV_DAYS}일 이상이어야 함)`, valid: adv.end });
-    return { missing, reissue, via, adv };
+    return { missing, missingItems, reissue, via, adv };
   }
   function reqCard(c, st) {
     const b = st.basis, n = vendorNeeds(c, st);
@@ -1942,12 +1944,155 @@
           await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise; if (tok !== pv.tok) return; box.append(cv);
         }
         if (doc.numPages > n) box.insertAdjacentHTML('beforeend', `<p class="muted">… 모두 ${doc.numPages}쪽 중 ${n}쪽까지 보여 줍니다.</p>`);
+        const spb = $('#pvSplit'); if (spb) spb.hidden = !(doc.numPages > 1 && d.key && db.contracts[d.key]);
         doc.destroy();
       } else if (kind === 'image') {
         const url = URL.createObjectURL(new Blob([await S.readBytes(path)])); box.innerHTML = `<img alt="${esc(d.name)}" src="${url}">`;
       } else box.innerHTML = `<pre class="pv-text">${esc((d.text || '읽을 수 있는 글자가 없습니다.').slice(0, 4000))}</pre>`;
     } catch (e) { if (tok === pv.tok) box.innerHTML = `<p class="warn-t">미리 볼 수 없습니다: ${esc(e.message)}</p>`; }
   }
+  // ---------- 쪽별로 나누기: 한 파일에 여러 서류를 스캔한 PDF를 서류마다 잘라 각 칸에 ----------
+  // 쪽마다 위쪽 제목을 읽어 '제목 쪽부터 다음 제목 앞 쪽까지'를 한 서류로 보는 안을 만들고, 사람이 확인·고친 뒤 저장.
+  // 원래 파일은 _삭제됨으로(되돌리기 가능). 사람이 종류를 고친 줄은 배움
+  const sp = { doc: null, bytes: null, n: 0, lines: [], rows: [], on: 0, tok: 0 };
+  async function openSplit(d) {
+    const c = d && d.key && db.contracts[d.key];
+    if (!d || d.kind !== 'pdf') { toast('PDF 파일만 쪽별로 나눌 수 있습니다(한글 파일은 PDF로 바꾼 뒤).', 'err'); return; }
+    if (!c) { toast('먼저 어느 계약 서류인지 정해 주세요. 계약을 고른 뒤 나눌 수 있습니다.', 'err'); return; }
+    const tok = ++sp.tok;
+    Object.assign(sp, { doc: d, rows: [], lines: [], n: 0, on: 0, bytes: null });
+    $('#spName').textContent = d.name; $('#spErr').hidden = true; $('#spSave').disabled = true;
+    $('#spRows').innerHTML = '<p class="muted small">쪽을 읽는 중…</p>'; $('#spView').innerHTML = '';
+    if ($('#dlgPreview').open) $('#dlgPreview').close();
+    $('#dlgSplit').showModal();
+    try {
+      sp.bytes = await S.readBytes(d.path);
+      const heads = await R.pageHeads(sp.bytes, 'pdf', { max: 120, ocrMax: 120, onPage: (p, n) => { if (tok === sp.tok) $('#spRows').innerHTML = `<p class="muted small">쪽 제목 읽는 중 ${p}/${n}… (스캔본은 쪽마다 몇 초)</p>`; } });
+      if (tok !== sp.tok) return;
+      sp.n = (heads && heads.total) || 1; sp.lines = (heads && heads.rows) || [];
+      sp.rows = L.splitPlan(pagesByRules(classList(c), heads || []), sp.n).map((r) => ({ ...r, sugg: r.item }));
+      paintSplit(); renderSplitPages(tok);
+    } catch (e) { if (tok === sp.tok) $('#spRows').innerHTML = `<p class="warn-t small">이 파일을 읽지 못했습니다: ${esc(e.message)}</p>`; }
+  }
+  // 쪽마다 서류 찾기: 배운 규칙(내가 고친 것·동료에게서 받은 것)이 먼저, 없으면 찾는 말
+  function pagesByRules(list, heads) {
+    const out = {};
+    (heads || []).forEach((h, i) => {
+      const lr = L.learnedItem(db.learned, list, '', L.headLines((heads.rows && heads.rows[i]) || [h]));
+      const id = lr ? lr.id : Object.keys(L.classifyPages(list, [h]))[0];
+      if (id) (out[id] = out[id] || []).push(i + 1);
+    });
+    return out;
+  }
+  function paintSplit() {
+    const list = classList(db.contracts[sp.doc.key]);
+    sp.rows.sort((a, b) => a.from - b.from);
+    $('#spRows').innerHTML = sp.rows.map((r, i) => `<div class="sp-row${i === sp.on ? ' on' : ''}" data-spi="${i}">
+      <div class="sp-pg"><input type="number" min="1" max="${sp.n}" value="${r.from}" data-spf="from" aria-label="시작 쪽">~<input type="number" min="1" max="${sp.n}" value="${r.to}" data-spf="to" aria-label="끝 쪽">쪽${r.item === r.sugg && r.item ? ' <small class="muted">제목으로 찾음</small>' : ''}${sp.rows.length > 1 ? `<button type="button" class="x" data-spdel="${i}" title="이 줄 빼기(쪽은 앞 서류에 붙음)" aria-label="이 줄 빼기">✕</button>` : ''}</div>
+      <div class="cpick"><input type="search" class="cpick-q" placeholder="서류 찾기(예: 재해율, 보험)" autocomplete="off" aria-label="서류 찾기"><select data-spf="item" data-autopick aria-label="서류 종류">${itemOptions(list, r.item, false)}</select></div>
+    </div>`).join('');
+    checkSplitUi(); markPages();
+  }
+  function checkSplitUi() {
+    const msg = sp.n ? L.checkSplit(sp.rows, sp.n) : '';
+    $('#spErr').textContent = msg; $('#spErr').hidden = !msg;
+    $('#spSave').disabled = !!msg || sp.rows.length < 2;
+    $('#spSave').title = sp.rows.length < 2 ? '나눌 곳이 없습니다. [+ 나누는 곳 추가] 또는 오른쪽 쪽을 두 번 눌러 자를 곳을 정하세요' : '';
+  }
+  function markPages(scroll) {
+    const list = sp.doc && db.contracts[sp.doc.key] ? classList(db.contracts[sp.doc.key]) : [];
+    const cur = sp.rows[sp.on];
+    $$('#spView .sp-pgv').forEach((el) => {
+      const p = +el.dataset.p, r = sp.rows.find((x) => p >= x.from && p <= x.to);
+      el.classList.toggle('on', !!cur && p >= cur.from && p <= cur.to);
+      el.classList.toggle('cut', p > 1 && sp.rows.some((x) => x.from === p));
+      const it = r && r.item && list.find((x) => x.id === r.item);
+      el.querySelector('small').textContent = r ? (it ? it.name : '종류 모름') : '빠짐';
+    });
+    if (scroll && cur) { const el = $(`#spView .sp-pgv[data-p="${cur.from}"]`); if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+  }
+  async function renderSplitPages(tok) {
+    const lib = await JH.lib('pdfjs');
+    const doc = await lib.getDocument({ data: sp.bytes.slice(), isEvalSupported: false, cMapUrl: 'vendor/pdfjs/cmaps/', cMapPacked: true }).promise;
+    try {
+      const n = Math.min(doc.numPages, 120);
+      for (let p = 1; p <= n; p++) {
+        if (tok !== sp.tok || !$('#dlgSplit').open) return;
+        const page = await doc.getPage(p); const v1 = page.getViewport({ scale: 1 }); const vp = page.getViewport({ scale: 240 / v1.width });
+        const cv = document.createElement('canvas'); cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height);
+        await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
+        const fig = document.createElement('div'); fig.className = 'sp-pgv'; fig.dataset.p = p;
+        fig.title = `${p}쪽 — 누르면 이 쪽이 든 줄을 고르고, 두 번 누르면 이 쪽부터 새 서류로 자릅니다`;
+        fig.append(cv); fig.insertAdjacentHTML('beforeend', `<b>${p}</b><small></small>`);
+        $('#spView').append(fig); markPages();
+      }
+    } finally { doc.destroy(); }
+  }
+  function cutAt(p) {
+    const i = sp.rows.findIndex((x) => p >= x.from && p <= x.to); if (i < 0) return;
+    const r = sp.rows[i]; if (r.from === p) return;
+    sp.rows.splice(i + 1, 0, { from: p, to: r.to, item: null, sugg: undefined }); r.to = p - 1; sp.on = i + 1; paintSplit();
+  }
+  $('#spRows').addEventListener('change', (e) => {
+    const row = e.target.closest('[data-spi]'); if (!row) return;
+    const r = sp.rows[+row.dataset.spi], f = e.target.dataset.spf; if (!r) return;
+    if (f === 'from' || f === 'to') { r[f] = Math.max(1, Math.min(sp.n, parseInt(e.target.value, 10) || 1)); paintSplit(); }
+    else if (f === 'item') { r.item = e.target.value || null; markPages(); }
+  });
+  $('#spRows').addEventListener('click', (e) => {
+    const x = e.target.closest('[data-spdel]');
+    if (x) { const i = +x.dataset.spdel, r = sp.rows[i]; if (i > 0) sp.rows[i - 1].to = r.to; else if (sp.rows[1]) sp.rows[1].from = r.from; sp.rows.splice(i, 1); sp.on = Math.max(0, i - 1); paintSplit(); return; }
+    const row = e.target.closest('[data-spi]'); if (!row || +row.dataset.spi === sp.on) return;
+    sp.on = +row.dataset.spi; $$('#spRows .sp-row').forEach((el, i) => el.classList.toggle('on', i === sp.on)); markPages(true);
+  });
+  $('#spView').addEventListener('click', (e) => { const f = e.target.closest('.sp-pgv'); if (!f) return; const i = sp.rows.findIndex((x) => +f.dataset.p >= x.from && +f.dataset.p <= x.to); if (i >= 0 && i !== sp.on) { sp.on = i; $$('#spRows .sp-row').forEach((el, j) => el.classList.toggle('on', j === sp.on)); markPages(); } });
+  $('#spView').addEventListener('dblclick', (e) => { const f = e.target.closest('.sp-pgv'); if (f) cutAt(+f.dataset.p); });
+  $('#spAddRow').onclick = () => {
+    const r = sp.rows[sp.on]; if (!r) return;
+    if (r.from === r.to) { toast('한 쪽짜리 줄은 더 나눌 수 없습니다. 오른쪽에서 자를 쪽을 두 번 누르세요.', 'err'); return; }
+    cutAt(r.to);
+  };
+  $('#spCancel').onclick = () => { sp.tok++; $('#dlgSplit').close(); };
+  $('#dlgSplit').addEventListener('close', () => { sp.tok++; });
+  $('#spSave').onclick = async () => {
+    if (L.checkSplit(sp.rows, sp.n) || sp.rows.length < 2) { checkSplitUi(); return; }
+    const d = sp.doc, c = d && db.contracts[d.key]; if (!c) return;
+    const rows = [...sp.rows].sort((a, b) => a.from - b.from);
+    $('#spSave').disabled = true;
+    try {
+      const PDFLib = await JH.lib('pdflib');
+      const src = await PDFLib.PDFDocument.load(sp.bytes, { ignoreEncryption: true });
+      const stem = L.stem(d.name).replace(/^\d{1,2}_/, '');
+      const list = classList(c), rnd = d.pay ? roundById(c, d.pay) : null; let learned = 0;
+      await recorded(`「${d.name}」 쪽별로 나눔`, [c.key], [d.id], async () => {
+        for (const r of rows) {
+          progress(`나누어 저장하는 중 ${r.from}~${r.to}쪽`, r.from / sp.n);
+          const out = await PDFLib.PDFDocument.create();
+          const idx = []; for (let p = r.from; p <= r.to; p++) idx.push(p - 1);
+          (await out.copyPages(src, idx)).forEach((pg) => out.addPage(pg));
+          const bytes = await out.save();
+          const item = r.item ? list.find((x) => x.id === r.item) : null;
+          const place = docPlace(c, item ? item.id : null, rnd ? rnd.id : null);
+          const nm = `${stem}_${r.from === r.to ? r.from : r.from + '-' + r.to}쪽.pdf`;
+          const saved = await S.save(place.dir, tidyName(item, c, nm, place.n), bytes);
+          const top = sp.lines[r.from - 1] || [], heads = L.headLines(top);
+          const nd = { id: L.uid(), key: c.key, itemId: item ? item.id : null, path: saved.path, name: nm, kind: 'pdf', size: bytes.length, mime: 'application/pdf',
+            addedAt: new Date().toISOString(), ocr: d.ocr, text: L.norm(sp.lines.slice(r.from - 1, r.to).flat().join(' ')).slice(0, 6000), title: L.norm(top.join(' ')).slice(0, 300),
+            manual: true, splitFrom: d.name, ...(heads.length ? { heads } : {}), ...(rnd ? { pay: rnd.id } : {}), ...(r.to > r.from ? { pages: r.to - r.from + 1 } : {}) };
+          db.docs.push(nd);
+          if (item && r.sugg !== item.id && learnFrom(nd, c, item.id)) learned++; // 사람이 정하거나 고친 종류는 배움
+        }
+        c.updatedAt = Date.now();
+        await removeDoc(d);
+      });
+      textDirty = true; await saveDb(true);
+      $('#dlgSplit').close(); render();
+      logAct(`나눔 「${d.name}」 → ${rows.length}개 파일`);
+      toast(`「${d.name}」을 ${rows.length}개 파일로 나눠 서류마다 넣었습니다.${learned ? ` 직접 정한 종류 ${learned}개는 배웠습니다.` : ''} 원래 파일은 _삭제됨에 있습니다.`, 'ok', undoAction());
+    } catch (e) { console.error(e); toast('나누지 못했습니다: ' + e.message, 'err'); }
+    finally { progress(null); checkSplitUi(); }
+  };
+  $('#pvSplit') && ($('#pvSplit').onclick = () => { const d = docById(pv.ids[pv.i]); if (d) openSplit(d); });
   $('#pvPrev').onclick = () => { if (pv.i > 0) { pv.i--; showPreview(); } };
   $('#pvNext').onclick = () => { if (pv.i < pv.ids.length - 1) { pv.i++; showPreview(); } else { $('#dlgPreview').close(); render(); } };
   // PC 안 AI가 준비돼 있으면 헷갈리는 서류의 종류를 추정해 보여 줌(서류 내용은 이 PC 안 AI에만, 사람이 고르기 전까지 미리 골라만 둠)
@@ -2007,7 +2152,7 @@
     for (const o of sel.options) { if (!o.value) continue; const hit = !t || (o.dataset.q || '').includes(t) || (/\d{3,}/.test(t) && (o.dataset.q || '').replace(/\D/g, '').includes(t.replace(/\D/g, ''))); o.hidden = !hit; if (hit && !first) first = o; }
     // 묶음(추천/전체) 안에 맞는 것이 하나도 없으면 묶음 이름도 숨김
     for (const g of sel.querySelectorAll('optgroup')) g.hidden = ![...g.children].some((o) => !o.hidden);
-    if ((sel.id === 'pvContract' || sel.id === 'pvItem') && first && t) { sel.value = first.value; sel.dispatchEvent(new Event('change')); }
+    if ((sel.id === 'pvContract' || sel.id === 'pvItem' || sel.hasAttribute('data-autopick')) && first && t) { sel.value = first.value; sel.dispatchEvent(new Event('change', { bubbles: true })); }
     q.title = t ? `${[...sel.options].filter((o) => o.value && !o.hidden).length}건` : '';
   });
   document.addEventListener('keydown', (e) => {
@@ -2184,6 +2329,7 @@
       else if (act === 'edit') openContract(c);
       else if (act === 'confirmdoc') openPreview([t.dataset.doc], 0, true);
       else if (act === 'view') { const d = docById(t.dataset.doc); openPreview([d.id], 0); }
+      else if (act === 'split') openSplit(docById(t.dataset.doc));
       else if (act === 'del') { const d = docById(t.dataset.doc); if (confirm(`"${d.name}"을 목록에서 뺄까요? 파일은 데이터 폴더의 _삭제됨으로 옮겨집니다.`)) { await removeDoc(d); render(); } }
       else if (act === 'hwp') {
         const d = docById(t.dataset.doc); t.disabled = true; t.textContent = '변환 중…';
@@ -2279,11 +2425,15 @@
     let st = statusOf(c), n = vendorNeeds(c, st), round = '';
     if (r) {
       const s = roundStatus(c, r); round = s.label;
-      n = { missing: s.missing.filter((x) => L.ORIGINAL_SOURCES.includes(x.source) && !x.link).map((x) => x.name), reissue: s.expired.map((x) => ({ name: x.item.name, valid: x.valid })), via: s.via };
+      const mi = s.missing.filter((x) => L.ORIGINAL_SOURCES.includes(x.source) && !x.link);
+      n = { missing: mi.map((x) => x.name), missingItems: mi, reissue: s.expired.map((x) => ({ name: x.item.name, valid: x.valid })), via: s.via };
       if (s.advShort) n.reissue.push({ name: `선금 보증서(보증기간이 준공일 ${L.fmtDate(c.endDate)} + ${L.ADV_DAYS}일 이상이어야 함)`, valid: s.adv.end });
       st = { basis: s.basis, unknownValid: s.unknownValid };
     }
-    const m = L.vendorMail({ c, org: cfg.insttNm, dept: (cfg.notice && cfg.notice.dept) || '', officer: cfg.officer, phone: (cfg.notice && cfg.notice.phone) || '', missing: n.missing, reissue: n.reissue, via: n.via, basis: st.basis || {}, round });
+    // 빠진 서류마다 발급·유효 조건을 붙여 씀(3개월 이내 발급분, 지급 예정일 이후까지 유효, 보증기간 등)
+    const bd = (st.basis || {}).date;
+    const withCond = (n.missingItems || []).map((x) => ({ name: itemView(c, x).name, cond: L.issueCond(x, c, bd) }));
+    const m = L.vendorMail({ c, org: cfg.insttNm, dept: (cfg.notice && cfg.notice.dept) || '', officer: cfg.officer, phone: (cfg.notice && cfg.notice.phone) || '', missing: withCond.length ? withCond : n.missing, reissue: n.reissue, via: n.via, basis: st.basis || {}, round });
     $('#mailTo').value = memoOf(c).vmail || ''; $('#mailSubj').value = m.title; $('#mailBody').value = m.body;
     $('#mailNote').textContent = st.unknownValid.length ? `유효기간을 읽지 못한 증명서 ${st.unknownValid.length}개는 빠져 있습니다. 서류 줄에서 날짜를 넣으면 반영됩니다.` : '';
     $('#dlgMail').showModal();

@@ -1043,6 +1043,52 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   }
   step('탭: 한 창 안에서 계약·공고문을 탭으로 열어 두고 오감(탭마다 고른 것 기억, 닫기) · 확인 팝업 서류 종류도 글자로 찾기');
 
+  // 쪽별로 나누기: 한 파일에 계약서(1~2쪽)·4대보험(3~4쪽)·지방세(5쪽)·국세(6쪽)를 스캔한 PDF → 서류마다 따로
+  {
+    const mk = await page.context().newPage();
+    const pg = (t, lines) => `<section style="page-break-after:always;font-family:'Noto Sans CJK KR';padding:40px">${t ? `<h1 style="font-size:38px;text-align:center">${t}</h1>` : ''}${lines.map((l) => `<p style="font-size:20px">${l}</p>`).join('')}</section>`;
+    await mk.setContent('<body style="margin:0">' + [
+      pg('공사 계약서', ['계약번호 : R26BK01234567-00', '계약건명 : 시청사 옥상 방수공사']),
+      pg('', ['제5조 계약금액 지급', '제6조 하자보수']),
+      pg('사업장 가입내역 확인서', ['4대 사회보험 사업장 가입내역', '사업장명 : 다해토건']),
+      pg('', ['가입자 목록(이어짐)']),
+      pg('지방세 납세증명서', ['지방세 체납액 없음']),
+      pg('납세증명서', ['국세 체납액 없음']),
+    ].join('') + '</body>');
+    const bundle = await mk.pdf({ format: 'A4' }); await mk.close();
+    await page.evaluate(() => document.querySelector('nav [data-view="contracts"]').click()); await page.waitForSelector('.citem[data-key]');
+    const key = await page.evaluate(() => Object.values(JH.app.db.contracts).find((c) => c.name === '시청사 옥상 방수공사').key);
+    await page.click(`.citem[data-key="${key}"]`);
+    const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('[data-act="addhere"]')]);
+    await fc.setFiles([{ name: '스캔묶음.pdf', mimeType: 'application/pdf', buffer: bundle }]);
+    await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => d.name === '스캔묶음.pdf')), 60000, '묶음 올림');
+    await waitFor(async () => !(await page.isVisible('#progress')), 60000, '정리 끝'); await page.waitForTimeout(800);
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    const id = await page.evaluate(() => JH.app.db.docs.find((d) => d.name === '스캔묶음.pdf').id);
+    await page.click(`[data-act="split"][data-doc="${id}"]`);
+    await page.waitForSelector('#spRows .sp-row', { timeout: 60000 });
+    const plan = await page.$$eval('#spRows .sp-row', (rs) => rs.map((r) => `${r.querySelector('[data-spf="from"]').value}-${r.querySelector('[data-spf="to"]').value} ${r.querySelector('select').selectedOptions[0].textContent}`));
+    assert.deepEqual(plan, ['1-2 계약 · 계약서', '3-4 착공계 · 4대 사회보험 가입증명서', '5-5 대금청구 · 지방세 납세증명서', '6-6 대금청구 · 국세 납세증명서'], '나눌 안: ' + plan.join(' / '));
+    await page.waitForSelector('#spView .sp-pgv[data-p="6"]', { timeout: 30000 });
+    await page.screenshot({ path: join(SHOTS, '10-쪽별로나누기.png') });
+    // 직접 지정: 2쪽을 두 번 누르면 2쪽부터 새 서류(종류 모름) → 그 줄 ✕로 다시 앞 서류에 붙임
+    await page.dblclick('#spView .sp-pgv[data-p="2"]');
+    assert.deepEqual(await page.$$eval('#spRows .sp-row', (rs) => rs.map((r) => r.querySelector('[data-spf="from"]').value + '-' + r.querySelector('[data-spf="to"]').value)), ['1-1', '2-2', '3-4', '5-5', '6-6'], '쪽 두 번 눌러 자르기');
+    await page.click('#spRows .sp-row >> nth=1 >> [data-spdel]');
+    assert.equal(await page.$$eval('#spRows .sp-row', (rs) => rs.length), 4, '줄 빼면 앞 서류에 붙음');
+    await page.click('#spSave');
+    await waitFor(() => page.evaluate(() => !JH.app.db.docs.some((d) => d.name === '스캔묶음.pdf')), 60000, '나눔');
+    const got = await page.evaluate((k) => JH.app.db.docs.filter((d) => d.splitFrom === '스캔묶음.pdf').map((d) => [d.name, d.itemId, d.key === k]), key);
+    assert.deepEqual(got.map((x) => x[1]), ['c-contract', 'c-insjoin', 'c-ltax', 'c-tax'], '서류마다 칸으로');
+    assert.ok(got.every((x) => x[2]), '같은 계약');
+    assert.match(got[0][0], /_1-2쪽\.pdf$/);
+    // 되돌리기: 나눈 파일은 빠지고 원래 묶음이 돌아옴
+    await page.click('#btnUndo');
+    await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => d.name === '스캔묶음.pdf') && !JH.app.db.docs.some((d) => d.splitFrom === '스캔묶음.pdf')), 30000, '되돌림');
+    await waitFor(async () => !(await page.isVisible('#progress')), 30000, '정리 끝'); await page.waitForTimeout(2500); // 뒤에서 하는 저장이 끝나게
+  }
+  step('쪽별로 나누기: 한 파일에 스캔한 계약서(1~2쪽)·4대보험(3~4쪽)·지방세(5쪽)·국세(6쪽)를 서류마다 잘라 각 칸으로, 원래 파일은 _삭제됨(되돌리기)');
+
   // 동료 규칙 받기: 받은 규칙에 맞는 '종류 못 정한/확인 필요' 서류는 그 자리에서 정해짐(사람이 고른 것은 그대로)
   {
     const r = await page.evaluate(async () => {
@@ -1067,7 +1113,10 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
 
   // 공고문 전용 새 창: 서류대장을 저장하지 않고(두 창이 덮어쓰지 않게), 원래 창의 공고문 화면은 잠김 → 공고문 창을 닫으면 풀림
   {
-    const ledger = join(data, '서류대장.json'); const m0 = statSync(ledger).mtimeMs;
+    const ledger = join(data, '서류대장.json');
+    // 앞 단계에서 원래 창이 하던 저장이 끝나 파일이 3초 동안 그대로일 때부터 잼
+    { let last = statSync(ledger).mtimeMs, quiet = Date.now(); const t0 = Date.now(); while (Date.now() - quiet < 3000 && Date.now() - t0 < 20000) { await page.waitForTimeout(300); const m = statSync(ledger).mtimeMs; if (m !== last) { last = m; quiet = Date.now(); } } }
+    const m0 = statSync(ledger).mtimeMs;
     const p2 = await page.context().newPage(); await p2.goto(base + '?only=notice');
     await p2.waitForSelector('body.only-notice #view-notice.on', { timeout: 20000 });
     assert.ok(!(await p2.isVisible('.vgroup[data-mod="jichul"]')), '공고문 창에는 지출서류 메뉴 없음');
