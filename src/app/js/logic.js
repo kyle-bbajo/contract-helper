@@ -298,6 +298,8 @@
     // 나라장터 업체 사업자등록번호(10자리)가 서류에 있으면 그 업체 계약(사업자등록증·통장사본·납세증명 등)
     const bz = String(c.bizno || '').replace(/\D/g, '');
     if (bz.length === 10 && hay.includes(bz)) s += 4;
+    // 배운 다른 이름: 사람이 미분류 서류를 이 계약으로 정리할 때 서류에 적힌 공사명·용역명(나라장터 계약명과 다르게 쓴 것)
+    if (!(s >= 6) && (c.aliases || []).some((a) => a.length >= 4 && hay.includes(a))) s += 6;
     return s;
   }
   function matchContract(contracts, hay) {

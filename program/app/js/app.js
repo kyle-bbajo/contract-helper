@@ -477,6 +477,8 @@
         const r = recs[i];
         progress(`정리하는 중 ${i + 1}/${recs.length}`, i / recs.length);
         let c = forced || (r.key && db.contracts[r.key]) || pickContract(L.norm(L.stem(r.name)) + '|' + r.text, r);
+        // 계약을 정하지 못했으면 점수가 같은 후보(같은 업체 계약 등)를 남겨 두고 팝업에서 '추천'으로 먼저 보여 줌
+        if (!c) { const m = L.matchCandidates(contracts(), L.norm(L.stem(r.name)) + '|' + r.text); r.cands = m.top.sort((a, b) => (!!a.paidDate - !!b.paidDate) || (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 6).map((x) => x.key); }
         // 계약 화면 안에서 올린 서류는 그 계약으로(다른 계약으로 보내지 않음). 오른쪽 위 [업로드]는 전체 계약에서 찾아 정리
         const info = c && !(forced && forceItem) ? classifyDoc(c, r.name, r.title, r.heads) : null;
         let itemId = c ? (forced && forceItem ? forceItem : info.id) : null;
@@ -513,7 +515,7 @@
         textDirty = true; db.docs.push({
           id: r.id, key: c ? c.key : null, itemId: item ? item.id : null, path: saved.path, name: r.name, kind: r.kind,
           size: r.size, mime: r.mime, addedAt: new Date().toISOString(), ocr: r.ocr, meta: r.meta, text: r.text, title: r.title, dates: r.dates, manual: !!forced && !r.rerouted, facts: L.docFacts(r.lines),
-          ...(rnd ? { pay: rnd.id } : {}), ...(r.heads && r.heads.length ? { heads: r.heads } : {}), ...(r.unsure ? { unsure: true, alts: r.alts } : {}),
+          ...(rnd ? { pay: rnd.id } : {}), ...(!c && r.cands && r.cands.length ? { cands: r.cands } : {}), ...(r.heads && r.heads.length ? { heads: r.heads } : {}), ...(r.unsure ? { unsure: true, alts: r.alts } : {}),
           ...(also.length ? { also, pagesOf } : {}),
         });
         if (c) { byContract[c.key] = (byContract[c.key] || 0) + 1; c.updatedAt = Date.now(); } else inbox++;
@@ -1020,9 +1022,20 @@
       <text x="60" y="57" text-anchor="middle" font-size="27" font-weight="800" fill="currentColor">${esc(a)}</text>
       <text x="60" y="86" text-anchor="middle" font-size="${b.length > 6 ? 16 : 20}" font-weight="700" fill="currentColor">${esc(b)}</text></g></svg>`;
   }
-  function itemOptions(list, sel, withInbox) {
-    return (withInbox ? '<option value="__inbox">미분류로 보내기</option>' : '') + '<option value="">서류 종류 고르기</option>' +
-      list.map((x) => `<option value="${esc(x.id)}"${x.id === sel ? ' selected' : ''}>${esc(x.group)} · ${esc(x.name)}</option>`).join('');
+  function itemOptions(list, sel, withInbox, rec) {
+    const o = (x) => `<option value="${esc(x.id)}"${x.id === sel ? ' selected' : ''}>${esc(x.group)} · ${esc(x.name)}</option>`;
+    const head = (withInbox ? '<option value="__inbox">미분류로 보내기</option>' : '') + '<option value="">서류 종류 고르기</option>';
+    const rs = (rec || []).map((id) => list.find((x) => x.id === id)).filter(Boolean);
+    if (rs.length) return head + `<optgroup label="추천 — 제목으로 찾은 서류">${rs.map(o).join('')}</optgroup><optgroup label="전체">${list.filter((x) => !rs.includes(x)).map(o).join('')}</optgroup>`;
+    return head + list.map(o).join('');
+  }
+  // 사람이 미분류 서류를 계약으로 정리하면: 서류에 적힌 공사명·용역명이 나라장터 계약명과 다르게 쓰였으면 그 표기를 이 계약의 다른 이름으로 배움
+  function learnAlias(d, c) {
+    const nm = L.norm((d && d.meta && d.meta.name) || ''), cn = L.norm(c && c.name || '');
+    if (!c || nm.length < 4 || nm.length > 60 || cn.includes(nm) || nm.includes(cn)) return '';
+    c.aliases = [...new Set([...(c.aliases || []), nm])].slice(-10);
+    logAct(`배움: 서류의 이름 「${d.meta.name}」 → 계약 「${c.name}」`);
+    return `다음부터 「${d.meta.name}」이라고 적힌 서류는 「${c.name}」으로 넣습니다.`;
   }
   // 서류 줄의 '회차' 고르기(회차가 있는 계약만): 준공(마지막) / 1차 기성 / …
   function payOptions(d) {
@@ -1048,7 +1061,8 @@
       const v = dateOfDoc(d, /-(inspect|proginsp)$/.test(d.itemId) ? 'inspect' : 'finish');
       dt = `<label class="vdate${v ? '' : ' empty'}" title="지출요청일(이 날짜 + 2주) 계산에 씁니다">날짜<input type="date" data-act="docdate" data-doc="${d.id}" value="${isoOf(v)}">${d.dateOverride ? '<small>직접</small>' : ''}</label>`;
     }
-    return `<div class="file">${tag}<span class="fn" title="${esc(d.name)}">${esc(d.name)}</span>${conv}${dt}
+    const chk = d.unsure ? `<button type="button" class="ft warn chk-btn" data-act="confirmdoc" data-doc="${d.id}" title="제목에 다른 서류 이름도 있어 헷갈립니다. 눌러서 확인하면 배웁니다">확인 필요</button>` : '';
+    return `<div class="file">${tag}${chk}<span class="fn" title="${esc(d.name)}">${esc(d.name)}</span>${conv}${dt}
       <select data-act="moveitem" data-doc="${d.id}" aria-label="서류 종류">${itemOptions(list, d.itemId, true)}</select>${payOptions(d)}
       <button class="link" data-act="view" data-doc="${d.id}">보기</button>
       <button class="x" data-act="del" data-doc="${d.id}" title="빼기" aria-label="빼기">✕</button></div>`;
@@ -1812,14 +1826,21 @@
     const tok = ++pv.tok, c = d.key ? db.contracts[d.key] : null;
     $('#pvTitle').textContent = pv.confirm ? `맞는지 확인해 주세요 (${pv.i + 1}/${pv.ids.length})` : d.name;
     $('#pvName').textContent = d.name;
-    $('#pvContract').innerHTML = contractOptions(d.key || '').replace('<option value="">계약 고르기</option>', '<option value="">미분류(계약 모름)</option>');
+    const cands = !d.key ? (d.cands || []).filter((k) => db.contracts[k]) : [];
+    $('#pvContract').innerHTML = contractOptions(d.key || cands[0] || '', cands).replace('<option value="">계약 고르기</option>', '<option value="">미분류(계약 모름)</option>');
     $('#pvSearch').value = '';
-    const fillItems = (key) => { const cc = key ? db.contracts[key] : null; $('#pvItem').innerHTML = cc ? itemOptions(lists(cc.type), key === d.key ? d.itemId : '', false) : '<option value="">계약을 먼저 고르세요</option>'; $('#pvItem').disabled = !cc; };
-    fillItems(d.key); $('#pvContract').onchange = (e) => fillItems(e.target.value);
+    // 서류 종류: 그 계약 목록에서 제목으로 찾은 것을 '추천'으로 맨 위에 두고 골라 둠(사람이 확인)
+    const fillItems = (key) => {
+      const cc = key ? db.contracts[key] : null;
+      if (!cc) { $('#pvItem').innerHTML = '<option value="">계약을 먼저 고르세요</option>'; $('#pvItem').disabled = true; return; }
+      const g = classifyDoc(cc, d.name, d.title, d.heads), sel = key === d.key && d.itemId ? d.itemId : g.id || '';
+      $('#pvItem').innerHTML = itemOptions(classList(cc), sel, false, [g.id, ...(g.alts || []), ...(key === d.key && d.itemId ? [d.itemId] : [])].filter(Boolean)); $('#pvItem').disabled = false;
+    };
+    fillItems(d.key || cands[0]); $('#pvContract').onchange = (e) => fillItems(e.target.value);
     const altNames = (d.alts || []).map((id) => (c && classList(c).find((x) => x.id === id) || {}).name).filter(Boolean);
-    $('#pvWhy').textContent = pv.confirm ? (!c ? '어느 계약 서류인지 찾지 못했습니다.' : !d.itemId ? '어떤 서류인지 찾지 못했습니다.' : d.unsure ? `제목에 다른 서류 이름(${altNames.join(', ')})도 있어 헷갈립니다.` : '') + ' 내용을 보고 맞게 골라 주세요. 고른 답은 배워서 다음부터 같은 제목이면 바로 넣습니다.' : '';
+    $('#pvWhy').textContent = pv.confirm ? (!c ? (cands.length > 1 ? `같은 업체(또는 비슷한 이름) 계약이 ${cands.length}개라 확실하지 않습니다. 가장 가까운 계약을 골라 두었으니 맞는지 확인해 주세요.` : cands.length ? '확실하지 않아 가장 가까운 계약을 골라 두었습니다.' : '어느 계약 서류인지 찾지 못했습니다.') : !d.itemId ? '어떤 서류인지 찾지 못했습니다.' : d.unsure ? `제목에 다른 서류 이름(${altNames.join(', ')})도 있어 헷갈립니다.` : '') + ' 내용을 보고 맞게 골라 주세요. 고른 답은 배워서 다음부터 같은 제목이면 바로 넣습니다.' : '';
     $('#pvAi').hidden = true;
-    if (pv.confirm && c && (!d.itemId || d.unsure)) aiGuess(d, c, tok);
+    if (pv.confirm && (c || cands[0]) && (!d.itemId || d.unsure)) aiGuess(d, c || db.contracts[cands[0]], tok);
     $('#pvPrev').disabled = pv.i === 0; $('#pvNext').textContent = pv.i < pv.ids.length - 1 ? '다음' : '닫기';
     $('#pvSave').textContent = pv.confirm ? '맞음 · 다음' : '이대로 저장';
     const box = $('#pvBody'); box.innerHTML = '<p class="muted">불러오는 중…</p>';
@@ -1879,16 +1900,21 @@
     const d = docById(pv.ids[pv.i]); if (!d) return;
     const key = $('#pvContract').value || null, item = key ? $('#pvItem').value || null : null;
     // 사람이 고른(또는 '맞음'으로 확인한) 서류 종류를 배움
+    if (key && key !== d.key) { const am = learnAlias(d, db.contracts[key]); delete d.cands; if (am) setTimeout(() => toast(am, 'ok'), 80); }
     if (key && item && (pv.confirm || item !== d.itemId)) { const was = d.unsure; delete d.unsure; delete d.alts; const msg = learnFrom(d, db.contracts[key], item); if (msg && (was || item !== d.itemId || !d.itemId)) setTimeout(() => toast(msg, 'ok'), 50); await saveDb(true); }
     if (key !== d.key || item !== d.itemId) { const before = whereOf(d); await recorded(`「${d.name}」 정리`, [d.key, key], [d.id], () => moveDoc(d, key, item, true)); logAct(`「${d.name}」 ${before} → ${whereOf(d)}`); toast(`"${d.name}"을 ${key ? `${db.contracts[key].name}${item ? ' · ' + (lists(db.contracts[key].type).find((x) => x.id === item) || {}).name : ''}` : '미분류'}(으)로 정리했습니다.`, 'ok', undoAction()); }
     if (pv.i < pv.ids.length - 1) { pv.i++; showPreview(); } else { $('#dlgPreview').close(); render(); }
   };
 
   // ---------- 화면: 미분류 ----------
-  function contractOptions(sel) {
+  function contractOptions(sel, rec) {
     const cs = contracts().sort((a, b) => b.updatedAt - a.updatedAt);
     // 설정에서 뺀 담당자의 계약은 고르기 목록에서 뺌(지금 골라져 있는 계약은 남김). data-q: 타자로 찾을 때 쓰는 글(이름·업체·번호·담당자)
     const hide = new Set((cfg.hideOfficers || []).map((x) => L.norm(x)).filter(Boolean));
+    const opt = (c) => `<option value="${esc(c.key)}" data-q="${esc(L.norm([c.name, c.vendor, c.no, ...(c.nums || []), c.officer].join(' ')))}"${c.key === sel ? ' selected' : ''}>${esc(c.name)}${c.vendor ? ` (${esc(c.vendor)})` : ''}${c.officer ? ` · ${esc(c.officer)}` : ''}</option>`;
+    // 추천(서류 내용으로 찾은 후보)을 맨 위에
+    const recs = (rec || []).map((k) => db.contracts[k]).filter(Boolean);
+    if (recs.length) return '<option value="">계약 고르기</option>' + `<optgroup label="추천 — 서류 내용으로 찾은 계약">${recs.map(opt).join('')}</optgroup><optgroup label="전체">` + cs.filter((c) => !rec.includes(c.key) && (c.key === sel || !hide.has(L.norm(c.officer || '')))).map(opt).join('') + '</optgroup>';
     return '<option value="">계약 고르기</option>' + cs.filter((c) => c.key === sel || !hide.has(L.norm(c.officer || ''))).map((c) => `<option value="${esc(c.key)}" data-q="${esc(L.norm([c.name, c.vendor, c.no, ...(c.nums || []), c.officer].join(' ')))}"${c.key === sel ? ' selected' : ''}>${esc(c.name)}${c.vendor ? ` (${esc(c.vendor)})` : ''}${c.officer ? ` · ${esc(c.officer)}` : ''}</option>`).join('');
   }
   // 계약 고르기 + 타자로 찾기: 글자를 치면 맞는 계약만 남기고 첫 번째를 고름, Enter면 그 계약으로 정함
@@ -1915,7 +1941,7 @@
       ${docs.length ? `<table class="grid"><thead><tr><th>파일</th><th>읽은 내용</th><th>계약</th><th></th></tr></thead><tbody>
         ${docs.map((d) => `<tr class="inbox-row"><td><div class="nm">${esc(d.name)}</div><div class="sub">${KIND_LABEL[d.kind]}${d.ocr ? ' · 스캔 인식' : ''} · ${esc(L.fmtDate(d.addedAt))}</div></td>
           <td class="sub">${esc([d.meta && d.meta.name, d.meta && d.meta.vendor].filter(Boolean).join(' / ') || (d.text ? d.text.slice(0, 40) + '…' : '읽을 수 있는 글자가 없음'))}</td>
-          <td>${contractPicker(`<select data-act="assign" data-doc="${d.id}" aria-label="계약">${contractOptions('')}</select>`)}</td>
+          <td>${contractPicker(`<select data-act="assign" data-doc="${d.id}" aria-label="계약">${contractOptions('', (d.cands || []).filter((k) => db.contracts[k]))}</select>`)}${(d.cands || []).filter((k) => db.contracts[k]).length ? `<div class="sub rec-t">추천: ${esc(db.contracts[(d.cands || []).find((k) => db.contracts[k])].name)}${d.cands.length > 1 ? ` 외 ${d.cands.length - 1}` : ''} — 목록 맨 위</div>` : ''}</td>
           <td style="white-space:nowrap"><button class="link" data-act="view" data-doc="${d.id}">보기</button> &nbsp; <button class="btn sm ghost" data-act="del" data-doc="${d.id}" title="우리 서류가 아니면 버림(_삭제됨으로 옮김, 되돌리기 가능)">버리기</button></td></tr>`).join('')}
         </tbody></table>` : `<div class="empty-line">미분류 서류가 없습니다.</div>`}`;
   }
@@ -1994,6 +2020,7 @@
       else if (act === 'folder') await S.open(folderOf(c));
       else if (act === 'pay') openPay(c);
       else if (act === 'edit') openContract(c);
+      else if (act === 'confirmdoc') openPreview([t.dataset.doc], 0, true);
       else if (act === 'view') { const d = docById(t.dataset.doc); openPreview([d.id], 0); }
       else if (act === 'del') { const d = docById(t.dataset.doc); if (confirm(`"${d.name}"을 목록에서 뺄까요? 파일은 데이터 폴더의 _삭제됨으로 옮겨집니다.`)) { await removeDoc(d); render(); } }
       else if (act === 'hwp') {
@@ -2071,7 +2098,8 @@
       } else if (t.dataset.act === 'assign') {
         const d = docById(t.dataset.doc); const c = db.contracts[t.value]; if (!c) return;
         await moveDoc(d, c.key, classifyDoc(c, d.name, d.title, d.heads).id);
-        toast(`"${c.name}"으로 옮겼습니다.`, 'ok', { label: '계약 보기', run: () => { ui.sel = c.key; setView('contracts'); } });
+        const am = learnAlias(d, c); delete d.cands; if (am) await saveDb(true);
+        toast(`"${c.name}"으로 옮겼습니다.${am ? ' ' + am : ''}`, 'ok', { label: '계약 보기', run: () => { ui.sel = c.key; setView('contracts'); } });
         render();
       } else if (t.dataset.act === 'validset' || t.dataset.act === 'docdate') {
         const d = docById(t.dataset.doc); const v = t.value.replace(/-/g, '');

@@ -589,7 +589,34 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     assert.equal(await page.evaluate(() => JH.app.db.docs.find((d) => d.name === '사본확약.hwp').itemId), 'c-related');
     await page.evaluate(() => document.querySelectorAll('.toast').forEach((t) => t.remove()));
   }
-  step('배우기: 모르는 제목·헷갈리는 제목은 팝업으로 묻고, 고른 답을 배워 다음부터 같은 제목이면 묻지 않고 바로 넣음');
+  // 추천: 같은 업체 계약이 둘이면 정하지 않고 묻되, 가장 가까운 계약·서류 종류를 '추천'으로 골라 둠
+  {
+    const upTop = async (name, lines) => { const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('#btnAdd')]); await fc.setFiles({ name, mimeType: 'application/octet-stream', buffer: hwpBytes(lines) }); await waitFor(() => page.evaluate((n) => JH.app.db.docs.some((d) => d.name === n), name), 30000, '올림 ' + name); };
+    await page.evaluate(() => { const a = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사'); JH.app.db.contracts.twin = { ...JSON.parse(JSON.stringify(a)), key: 'twin', name: '도서관 외벽 보수공사', nums: ['R26BK0999999900'], no: 'R26BK0999999900', pays: [], folder: '', updatedAt: 1, paidDate: '' }; });
+    await upTop('업체서류.hwp', ['사업자등록증', '상호 (주)다해토건', '대표자 홍길동']);
+    await page.waitForSelector('#dlgPreview[open]', { timeout: 10000 });
+    assert.match(await page.textContent('#pvWhy'), /계약이 2개라 확실하지 않습니다/);
+    assert.equal(await page.$$eval('#pvContract optgroup[label^="추천"] option', (o) => o.length), 2, '추천 후보 2개가 맨 위');
+    assert.ok(await page.inputValue('#pvContract'), '가장 가까운 계약을 골라 둠');
+    assert.equal(await page.inputValue('#pvItem'), 'c-bizreg', '서류 종류도 골라 둠');
+    await page.click('#pvTrash'); await page.waitForSelector('#dlgPreview:not([open])', { state: 'attached' });
+    await page.evaluate(() => { delete JH.app.db.contracts.twin; });
+    // 미분류를 사람이 계약으로 정리하면 서류에 적힌 공사명을 그 계약의 다른 이름으로 배움 → 다음엔 바로 그 계약
+    await upTop('현장서류1.hwp', ['안전관리계획서', '공사명: 용인 청사 지붕 방수 보수', '작성일 2026.10.01']);
+    await page.waitForSelector('#dlgPreview[open]', { timeout: 10000 });
+    await page.fill('#pvSearch', '방수'); await page.click('#pvSave');
+    await page.waitForSelector('#dlgPreview:not([open])', { state: 'attached' });
+    assert.ok(await page.evaluate(() => (Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사').aliases || []).includes('용인청사지붕방수보수')), '다른 이름 배움');
+    await upTop('현장서류2.hwp', ['품질관리계획서', '공사명: 용인 청사 지붕 방수 보수']);
+    assert.equal(await page.evaluate(() => JH.app.db.contracts[JH.app.db.docs.find((d) => d.name === '현장서류2.hwp').key].name), '시청사 옥상 방수공사', '배운 이름으로 바로 그 계약');
+    // 계약은 배운 이름으로 정해졌고, 서류 종류(품질관리계획서)는 모르는 제목이라 물음 → 이번엔 버림
+    await page.waitForSelector('#dlgPreview[open]', { timeout: 10000 });
+    assert.match(await page.textContent('#pvWhy'), /어떤 서류인지 찾지 못했습니다/);
+    await page.click('#pvTrash'); await page.waitForSelector('#dlgPreview:not([open])', { state: 'attached' });
+    await page.evaluate(() => document.querySelectorAll('.toast').forEach((t) => t.remove()));
+    if (!(await page.$('.citem.on:has-text("시청사 옥상 방수공사")'))) await page.click('.citem:has-text("시청사 옥상 방수공사")');
+  }
+  step('배우기: 모르는 제목·헷갈리는 제목은 팝업으로 묻되 추천을 골라 두고, 고른 답(서류 종류·서류에 적힌 공사명)을 배워 다음부터 묻지 않고 바로 넣음');
   step('되돌리기: 서류 종류 바꿈(어디로 갔는지 알림)·빼기·올림을 [되돌리기]·Ctrl+Z·최근 작업에서 원래대로(파일 자리·이름까지)');
   step('지출 회차(선금·기성·노무비): 기성계·지정통보·검사조서가 오면 기성 회차 저절로 → 감독관 경유 → 청구 서류 요청 메일 → 청구 서류도 그 회차로 → 지출 처리로 완료, 다음 청구는 준공으로 · 기성 12회도 한눈에');
 
