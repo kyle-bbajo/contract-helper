@@ -215,7 +215,7 @@ table.grid { width: 100%; border-collapse: separate; border-spacing: 0; backgrou
 .progress { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); background: var(--ink); color: #fff; border-radius: 10px; padding: 10px 16px; display: flex; gap: 12px; align-items: center; z-index: 40; box-shadow: 0 6px 24px rgba(30,38,51,.25); }
 .progress-bar { width: 160px; height: 5px; background: rgba(255,255,255,.25); border-radius: 5px; overflow: hidden; }
 .progress-bar i { display: block; height: 100%; width: 0; background: #fff; transition: width .2s; }
-.toasts { position: fixed; right: 20px; bottom: 20px; display: grid; gap: 8px; z-index: 60; }
+.toasts { position: fixed; left: 20px; bottom: 20px; display: grid; gap: 8px; z-index: 60; }
 .toast { background: var(--sheet); border: 1px solid var(--rule); border-left: 4px solid var(--ink); border-radius: 8px; padding: 10px 14px; max-width: 420px; box-shadow: 0 6px 20px rgba(30,38,51,.14); display: flex; gap: 10px; align-items: start; }
 .toast.err { border-left-color: var(--seal); }
 .toast.ok { border-left-color: var(--ok); }
@@ -912,3 +912,9 @@ body.only-notice .bar .btn.back { display: none; }
 .sp-row.on .sp-no { background: var(--ink); color: #fff; }
 .sp-row .sp-pages { font-variant-numeric: tabular-nums; }
 .sp-pgv { cursor: pointer; }
+
+/* 확인 팝업: 묶음 파일이면 [쪽별로 나누기]를 눈에 띄게 */
+.pv-acts .split-hot { border-color: var(--amber, #b7791f); color: var(--text); background: #fff7e6; font-weight: 700; }
+.chg-etc { width: 12em; padding: 3px 6px; font-size: 13px; }
+
+.sp-tools { display: flex; gap: 6px; flex-wrap: wrap; }

@@ -3,7 +3,7 @@
 // 나라장터·첨부파일은 시험용 응답으로 대신함(브라우저의 /api/nara, /api/fetchfile 요청을 가로챔)
 import { chromium } from 'playwright-core';
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, renameSync, copyFileSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, renameSync, copyFileSync, rmSync, statSync, utimesSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -1152,7 +1152,11 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     assert.match(await page.$eval('#pvContract', (s) => s.selectedOptions[0].textContent), /시청사 옥상 방수공사/, '추천 계약 골라 둠');
     assert.match(await page.$eval('#pvItem', (s) => s.selectedOptions[0].textContent), /고용·산재 가입증명원/, '서류 종류 골라 둠');
     assert.match(await page.textContent('#pvWhy'), /이렇게 넣었습니다/);
+    await page.click('nav [data-view="board"]').catch(() => {}); // (팝업 뒤 화면을 현황판으로 바꿔 둠 — 팝업이 막고 있으면 무시)
+    await page.evaluate(() => JH.app.setView('board'));
     await page.click('#pvSave'); await page.waitForFunction(() => !document.querySelector('#dlgPreview').open);
+    await page.waitForSelector('#view-contracts.on', { timeout: 5000 });
+    assert.match(await page.textContent('#detail .cname'), /시청사 옥상 방수공사/, '확인을 마치면 그 계약 화면으로');
     // 다른 창(설정)이 열려 있을 때 올리면: 설정을 닫는 즉시 확인 팝업
     await page.click('#btnSettings'); await page.waitForSelector('#dlgSettings[open]');
     await page.evaluate(() => JH.app.ingest([new File([new Uint8Array([37, 80, 68, 70])], '통장 사본.pdf', { type: 'application/pdf' })], null, null));
@@ -1260,6 +1264,63 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   }
   step('묶음 파일: 한 칸 줄의 ✕는 그 칸에서만 빼고(파일·다른 칸 그대로), 함께 든 서류 줄의 ✕는 그 표시만 뺌');
 
+  // 자동으로 읽을 폴더 [폴더 안 파일 모두 읽기]: 폴더를 더하기 전부터 있던(오래된) 파일도 읽음 · 몇 초마다 보는 것은 새 파일만
+  {
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    const old = join(WATCH2, '예전부터있던_통장사본.pdf'); copyFileSync(join(DOCS, 'noname(3).pdf'), old);
+    const t0 = new Date(Date.now() - 400 * 864e5); utimesSync(old, t0, t0);
+    await page.waitForTimeout(7000); // 몇 초마다 보는 자동 읽기는 오래된 파일을 건너뜀
+    assert.ok(!(await page.evaluate(() => JH.app.db.docs.some((d) => d.name === '예전부터있던_통장사본.pdf'))), '오래된 파일은 자동으로는 안 읽음');
+    await page.click('#btnSettings'); await page.click('[data-tab="data"], [data-stab="data"], .tabs-h [data-tab="data"]').catch(() => {});
+    await page.evaluate(() => document.getElementById('btnWatchAll').click());
+    await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => d.name === '예전부터있던_통장사본.pdf')), 60000, '모두 읽기');
+    await waitFor(async () => !(await page.isVisible('#progress')), 30000, '정리 끝'); await page.waitForTimeout(800);
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+  }
+  step('자동으로 읽을 폴더: [지금 읽기]·[폴더 안 파일 모두 읽기](폴더를 더하기 전부터 있던 파일도), [새로고침]도 새 파일을 읽음');
+
+  // 올릴 때마다 확인 중 묶음 파일(착수계 묶음)이 오면 바로 '쪽별로 나누기' 화면 → 닫으면 다음 파일 확인으로
+  {
+    await page.evaluate(async () => { JH.app.cfg.uploadConfirm = true; await JH.app.saveCfg(); document.querySelectorAll('dialog[open]').forEach((d) => d.close()); });
+    const mk = await page.context().newPage();
+    const pg = (t) => `<section style="page-break-after:always;font-family:'Noto Sans CJK KR';padding:40px"><h1 style="font-size:36px;text-align:center">${t}</h1><p>공사명 : 시청사 옥상 방수공사</p></section>`;
+    await mk.setContent('<body style="margin:0">' + ['착공계', '현장대리인계', '예정공정표', '4대 사회보험 가입자명부'].map(pg).join('') + '</body>');
+    const pdf = await mk.pdf({ format: 'A4' }); await mk.close();
+    await page.click('nav [data-view="contracts"]'); await page.click('.citem:has-text("시청사 옥상 방수공사")');
+    const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('[data-act="addhere"]')]);
+    await fc.setFiles([{ name: '착수계묶음2.pdf', mimeType: 'application/pdf', buffer: pdf }, { name: '통장사본2.pdf', mimeType: 'application/pdf', buffer: readFileSync(join(DOCS, 'noname(2).pdf')) }]);
+    await page.waitForSelector('#dlgSplit[open]', { timeout: 60000 });
+    await page.waitForSelector('#spRows .sp-row', { timeout: 60000 });
+    assert.ok((await page.$$eval('#spRows .sp-row', (x) => x.length)) >= 2, '묶음이면 나누기 화면이 바로');
+    await page.click('#spCancel');
+    await page.waitForSelector('#dlgPreview[open]', { timeout: 10000 });
+    assert.match(await page.textContent('#pvName'), /통장사본2/, '닫으면 다음 파일 확인으로');
+    await page.click('#dlgPreview button[value="close"]');
+    await page.evaluate(async () => { JH.app.cfg.uploadConfirm = false; await JH.app.saveCfg(); });
+    await waitFor(async () => !(await page.isVisible('#progress')), 30000, '정리 끝'); await page.waitForTimeout(800);
+  }
+  step('올릴 때 확인: 여러 서류가 든 묶음 파일 차례가 오면 바로 쪽별로 나누기 화면, 닫으면 다음 파일 확인으로');
+
+  // 특정 쪽만 잘라 넣기: [+ 새 서류] → 종류 고르고 → 그 쪽만 누르기 → 저장(고르지 않은 쪽은 원래 칸에 남음) · 확인을 마치면 그 계약 화면으로
+  {
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    const id = await page.evaluate(() => JH.app.db.docs.find((d) => d.name === '착수계묶음2.pdf').id);
+    await page.click(`[data-act="split"][data-doc="${id}"]`);
+    await page.waitForSelector('#spView .sp-pgv[data-p="4"]', { timeout: 60000 });
+    // [처음부터 직접 고르기] → 새 서류 줄이 생김 → 가입자명부로 찾아 고르고 4쪽만 누름
+    await page.click('#spClear'); await page.fill('#spRows .sp-row.on .cpick-q', '가입자명부');
+    await page.click('#spView .sp-pgv[data-p="4"]'); await page.waitForTimeout(400);
+    assert.ok(!(await page.$eval('#spSave', (b) => b.disabled)), '한 서류만 골라도 저장 가능');
+    assert.match(await page.textContent('#spErr'), /고르지 않은 쪽 1~3쪽은 원래 파일 칸/);
+    await page.click('#spSave');
+    await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => d.splitFrom === '착수계묶음2.pdf' && /-roster$/.test(d.itemId))), 60000, '4쪽만 잘라 넣음');
+    const parts = await page.evaluate(() => JH.app.db.docs.filter((d) => d.splitFrom === '착수계묶음2.pdf').map((d) => [d.name, d.itemId]));
+    assert.equal(parts.length, 2, '잘라 낸 것 + 남은 쪽 ' + JSON.stringify(parts));
+    assert.ok(parts.some(([n]) => /_1-3쪽\.pdf$/.test(n)), '남은 1~3쪽 묶음');
+    assert.ok(await page.isVisible('#view-contracts.on'), '그 계약 화면');
+  }
+  step('특정 쪽만 잘라 넣기: 서류 종류를 고르고 그 쪽만 누르면 잘려 그 칸으로, 고르지 않은 쪽은 원래 칸에 남음 · 마치면 그 계약 화면');
+
   // 동료 규칙 받기: 받은 규칙에 맞는 '종류 못 정한/확인 필요' 서류는 그 자리에서 정해짐(사람이 고른 것은 그대로)
   {
     const r = await page.evaluate(async () => {
@@ -1285,8 +1346,9 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   // 공고문 전용 새 창: 서류대장을 저장하지 않고(두 창이 덮어쓰지 않게), 원래 창의 공고문 화면은 잠김 → 공고문 창을 닫으면 풀림
   {
     const ledger = join(data, '서류대장.json');
+    await page.evaluate(() => JH.app.setView('home')); // 계약 화면에서 뒤에서 하던 감사 칸 채우기 등이 끝나게
     // 앞 단계에서 원래 창이 하던 저장이 끝나 파일이 3초 동안 그대로일 때부터 잼
-    { let last = statSync(ledger).mtimeMs, quiet = Date.now(); const t0 = Date.now(); while (Date.now() - quiet < 3000 && Date.now() - t0 < 20000) { await page.waitForTimeout(300); const m = statSync(ledger).mtimeMs; if (m !== last) { last = m; quiet = Date.now(); } } }
+    { let last = statSync(ledger).mtimeMs, quiet = Date.now(); const t0 = Date.now(); while (Date.now() - quiet < 8000 && Date.now() - t0 < 45000) { await page.waitForTimeout(300); const m = statSync(ledger).mtimeMs; if (m !== last) { last = m; quiet = Date.now(); } } }
     const m0 = statSync(ledger).mtimeMs;
     const p2 = await page.context().newPage(); await p2.goto(base + '?only=notice');
     await p2.waitForSelector('body.only-notice #view-notice.on', { timeout: 20000 });

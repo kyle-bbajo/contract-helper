@@ -73,7 +73,7 @@
       budget: num(budget.v), design: num(design.v), est: estN, award: awardN, amount: c.amount || awardN,
       rate: estN && awardN ? awardN / estN * 100 : null,
       actual: actual.v, extOrig: extOrig.v, extDate: extDate.v, extWhy: m.aExtWhy || '',
-      chg, chgWhy: m.aChgWhy || '',
+      chg, chgWhy: m.aChgWhy || (plan ? [...new Set(plan.design.map((r) => (r.kind === 'settle' ? '준공정산' : r.kind === 'etc' ? ((m.chgEtc || {})[r.no] || '') : '')).filter(Boolean))].join(', ') : ''),
       method: method.v, rep: rep.v, addr: addr.v, reason: reason.v, team: team.v,
       src: { budget: budget.src, design: design.src, est: est.src, award: award.src, rep: rep.src, addr: addr.src, actual: actual.src, method: method.src, reason: reason.src, extOrig: extOrig.src, extDate: extDate.src },
     };

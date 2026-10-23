@@ -187,7 +187,7 @@
     if (kind !== 'pdf') return null;
     const doc = await (await pdfjs()).getDocument({ data: bytes.slice(), ...PDFJS_OPTS }).promise;
     const heads = []; heads.rows = []; heads.total = doc.numPages;
-    const OCR_MAX = opt.ocrMax || 8;
+    const OCR_MAX = opt.ocrMax || 20; // 올릴 때도 스캔 묶음 20쪽까지 쪽마다 제목 읽기(서류 나누기가 중요)
     try {
       const n = Math.min(opt.max || 40, doc.numPages);
       if (n < 2 && !opt.max) return null;

@@ -520,7 +520,7 @@
         const { lines, ocr } = await R.read(bytes, kind, f.type);
         recs.push({
           id: L.uid(), name: f.name, kind, size: f.size, mime: f.type, bytes, ocr, lines,
-          meta: L.findMeta(lines), text: L.norm(lines.join(' ')).slice(0, 6000), title: L.norm(lines.slice(0, 8).join(' ')).slice(0, 300), heads: L.headLines(lines),
+          meta: L.findMeta(lines), text: L.maskPrivate(L.norm(lines.join(' ')).slice(0, 6000)), title: L.maskPrivate(L.norm(lines.slice(0, 8).join(' ')).slice(0, 300)), heads: L.headLines(lines),
           dates: L.extractDates(lines),
         });
       }
@@ -824,7 +824,7 @@
       try {
         const bytes = await S.readBytes(f.path);
         const { lines, ocr } = await R.read(bytes, kind);
-        const text = L.norm(lines.join(' ')).slice(0, 6000), title = L.norm(lines.slice(0, 8).join(' ')).slice(0, 300);
+        const text = L.maskPrivate(L.norm(lines.join(' ')).slice(0, 6000)), title = L.maskPrivate(L.norm(lines.slice(0, 8).join(' ')).slice(0, 300));
         let c = contracts().find((x) => x.folder && (dir === x.folder || dir.startsWith(x.folder + '/'))) || L.matchContract(contracts(), L.norm(L.stem(name)) + '|' + text);
         const doc = { id: L.uid(), key: c ? c.key : null, itemId: c ? classifyDoc(c, name, title, L.headLines(lines)).id : null, heads: L.headLines(lines), path: f.path, name, kind, size: f.size,
           addedAt: new Date().toISOString(), ocr, meta: L.findMeta(lines), text, title, dates: L.extractDates(lines), manual: false };
@@ -851,8 +851,9 @@
   // 다운로드 폴더처럼 계약과 상관없는 파일도 섞인 곳이라, 우리 계약에 맞는 파일만 가져오고 나머지는 미분류에 쌓지 않고 건너뜀
   const watch = { dirs: [], last: new Map(), busy: false, timer: null };
   const watchSig = (f) => `${f.name}|${f.size}|${f.mtime}`;
-  async function watchTick() {
-    if (watch.busy || !S.online || !watch.dirs.length) return;
+  // opt.now: 다 받아졌는지 두 번 보지 않고 바로(지금 읽기) · opt.all: 폴더를 더하기 전부터 있던 파일도(이미 읽은 것·같은 파일은 빼고)
+  async function watchTick(opt = {}) {
+    if (watch.busy || !S.online || !watch.dirs.length) { if (opt.now && !watch.dirs.length) toast('자동으로 읽을 폴더가 없습니다. 설정 → 데이터 폴더 → 자동으로 읽을 폴더에서 더하세요.', 'err'); return; }
     watch.busy = true;
     try {
       const r = await S.watch();
@@ -866,15 +867,16 @@
       const dirOfIdx = (name) => { const i = +String(name).split('|')[0]; return ((r.dirs || [])[i] || {}).dir; };
       const newer = (f) => { const since = db.watchSince[dirOfIdx(f.name)]; const t = [f.mtime, f.ctime].filter(Boolean).sort().pop() || ''; return !!since && t > since; };
       const seen = new Set(db.watchSeen || []);
-      const fresh = (r.files || []).filter((f) => DOC_EXT.test(f.name) && newer(f) && !seen.has(watchSig(f)));
+      const fresh = (r.files || []).filter((f) => DOC_EXT.test(f.name) && (opt.all || newer(f)) && !seen.has(watchSig(f)));
       if (sinceNew) await saveDb();
-      const ready = fresh.filter((f) => watch.last.get(f.name) === f.size); // 받는 중인 파일은 다음 번에
-      watch.last = new Map(fresh.map((f) => [f.name, f.size]));
-      if (!ready.length) return;
+      const ready = opt.now ? fresh : fresh.filter((f) => watch.last.get(f.name) === f.size); // 받는 중인 파일은 다음 번에
+      if (!opt.now) watch.last = new Map(fresh.map((f) => [f.name, f.size]));
+      if (!ready.length) { if (opt.now) toast(opt.all ? '자동으로 읽을 폴더에 새로 읽을 파일이 없습니다(이미 읽은 파일은 다시 읽지 않음).' : '자동으로 읽을 폴더에 새로 들어온 파일이 없습니다.', 'ok'); return; }
       const files = [];
       for (const f of ready) {
-        try { const b = await S.watchFile(f.name); files.push(new File([b], f.name.split('|').pop().split('/').pop(), { type: '' })); seen.add(watchSig(f)); }
+        try { const b = await S.watchFile(f.name); files.push(new File([b], f.name.split('|').pop().split('/').pop(), { type: '' })); }
         catch (e) { console.warn('자동 읽기 실패', f.name, e); }
+        seen.add(watchSig(f)); // 읽지 못한 파일도 다시 시도하지 않음(고치면 수정한 때가 바뀌어 다시 읽음)
       }
       db.watchSeen = [...seen].slice(-3000); // 시작한 때 뒤의 것만 담으니 작음
       if (files.length) await ingest(files, null, null, { onlyMatched: true, from: '내려받은 폴더' });
@@ -965,7 +967,9 @@
           }
         }
       }
-      mergeSameContracts(); // 새로 받은 차수(-01 …)가 따로 생겼으면 바로 합침
+      mergeSameContracts();
+      // 예전 버전이 저장한 서류 글자에서도 개인 식별번호를 한 번 가림(서류본문.json)
+      if (!db.masked) { let n = 0; for (const d of db.docs) { for (const k of ['text', 'title']) if (d[k]) { const v = L.maskPrivate(d[k]); if (v !== d[k]) { d[k] = v; n++; } } } db.masked = 1; if (n) textDirty = true; saveDb(true); } // 새로 받은 차수(-01 …)가 따로 생겼으면 바로 합침
       cfg.lastFetch = new Date().toISOString(); await saveCfg();
       // 나라장터가 준 그대로를 남겨 둠(어떤 항목이 오는지 확인할 때: 데이터 폴더 \진단\나라장터_계약응답.json)
       if (raw.length) S.writeJson('진단/나라장터_계약응답.json', { at: cfg.lastFetch, count: raw.length, items: raw }).catch(() => {});
@@ -1180,7 +1184,7 @@
     const chk = d.unsure ? `<button type="button" class="ft warn chk-btn" data-act="confirmdoc" data-doc="${d.id}" title="제목에 다른 서류 이름도 있어 헷갈립니다. 눌러서 확인하면 배웁니다">확인 필요</button>` : '';
     return `<div class="file">${tag}${revTag}${chk}<span class="fn" title="${esc(d.name)}">${esc(d.name)}</span>${conv}${dt}
       <span class="cpick mini"><input type="search" class="cpick-q" placeholder="종류 찾기" autocomplete="off" aria-label="서류 종류 찾기" title="면허·등록증·통장처럼 치면 맞는 종류만 남고, Enter를 누르면 첫 번째로 옮깁니다"><select data-act="moveitem" data-doc="${d.id}" aria-label="서류 종류">${itemOptions(list, d.itemId, true)}</select></span>${payOptions(d)}
-      <button class="link" data-act="view" data-doc="${d.id}">보기</button>${d.kind === 'pdf' && d.key && ((d.also && d.also.length) || d.pages > 1) ? `
+      <button class="link" data-act="view" data-doc="${d.id}">보기</button>${d.kind === 'pdf' && d.key && !(d.pages === 1) ? `
       <button class="link" data-act="split" data-doc="${d.id}" title="한 파일에 여러 서류를 스캔했으면 서류마다 따로 잘라 각 칸에 넣음">나누기</button>` : ''}
       <button class="x" data-act="del" data-doc="${d.id}" title="빼기" aria-label="빼기">✕</button></div>`;
   }
@@ -1651,7 +1655,7 @@
         const cur = picked[r.no] || r.auto || '';
         const opts = (cur ? '' : '<option value="" selected>고르세요</option>') + Object.entries(K).map(([k, t]) => `<option value="${k}"${k === cur ? ' selected' : ''}>${esc(t)}${k === r.auto ? ' (자동)' : ''}</option>`).join('');
         const tag = picked[r.no] ? '<small class="as">직접</small>' : r.auto ? '<small class="as">자동</small>' : '<small class="as warn">앞 차수가 없어 직접 골라 주세요</small>';
-        sel = `<select data-chgkind="${esc(r.no)}">${opts}</select> ${tag}`;
+        sel = `<select data-chgkind="${esc(r.no)}">${opts}</select> ${tag}${cur === 'etc' ? ` <input type="text" class="chg-etc" data-chgetc="${esc(r.no)}" value="${esc((m.chgEtc || {})[r.no] || '')}" placeholder="구분 직접 쓰기(예: 물가변동)" aria-label="기타 구분">` : ''}`;
       }
       return `<tr${picked[r.no] === 'none' || (!picked[r.no] && r.auto === 'none') ? ' class="off"' : ''}><td>${ordLabel(r)}<br><small class="muted">${esc(r.no)}</small></td><td>${esc(L.fmtDate(r.date))}</td><td class="num">${amt}</td><td>${end}</td><td>${sel}</td></tr>`;
     }).join('');
@@ -1936,12 +1940,20 @@
   // 파일을 따로 열지 않고 창 안에서 보고, 그 자리에서 계약·서류 종류를 맞게 고름. 여러 개면 [이전]·[다음]
   const pv = { ids: [], i: 0, confirm: false, tok: 0 };
   function openPreview(ids, i = 0, confirmMode = false) {
+    if (!$('#dlgPreview').open) pv.lastKey = null;
     pv.ids = ids.filter((id) => docById(id)); pv.i = Math.min(i, pv.ids.length - 1); pv.confirm = confirmMode;
     if (!pv.ids.length) return;
     $('#dlgPreview').showModal(); showPreview();
   }
   async function showPreview() {
     const d = docById(pv.ids[pv.i]); if (!d) return;
+    // 확인 중에 여러 서류가 든 묶음 파일(착수계 묶음 등)이 오면 바로 '쪽별로 나누기' 화면으로 — 나누거나 닫으면 다음 파일로 이어짐
+    if (pv.confirm && d.kind === 'pdf' && d.key && db.contracts[d.key] && d.also && d.also.length && !d.splitAsked) {
+      d.splitAsked = true; saveDb();
+      sp.resume = pv.ids.slice(pv.i + 1);
+      if ($('#dlgPreview').open) $('#dlgPreview').close();
+      openSplit(d); return;
+    }
     const tok = ++pv.tok, c = d.key ? db.contracts[d.key] : null;
     $('#pvTitle').textContent = pv.confirm ? `맞는지 확인해 주세요 (${pv.i + 1}/${pv.ids.length})` : d.name;
     $('#pvName').textContent = d.name;
@@ -1992,7 +2004,7 @@
           await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise; if (tok !== pv.tok) return; box.append(cv);
         }
         if (doc.numPages > n) box.insertAdjacentHTML('beforeend', `<p class="muted">… 모두 ${doc.numPages}쪽 중 ${n}쪽까지 보여 줍니다.</p>`);
-        const spb = $('#pvSplit'); if (spb) spb.hidden = !(doc.numPages > 1 && d.key && db.contracts[d.key]);
+        const spb = $('#pvSplit'); if (spb) { spb.hidden = !(doc.numPages > 1 && d.key && db.contracts[d.key]); const multi = !!(d.also && d.also.length); spb.className = multi ? 'btn sm split-hot' : 'link sm'; spb.textContent = multi ? `쪽별로 나누기 — 이 파일에 서류 ${d.also.length + 1}개(권장)` : '쪽별로 나누기'; }
         doc.destroy();
       } else if (kind === 'image') {
         const url = URL.createObjectURL(new Blob([await S.readBytes(path)])); box.innerHTML = `<img alt="${esc(d.name)}" src="${url}">`;
@@ -2009,7 +2021,7 @@
     if (!c) { toast('먼저 어느 계약 서류인지 정해 주세요. 계약을 고른 뒤 나눌 수 있습니다.', 'err'); return; }
     const tok = ++sp.tok;
     Object.assign(sp, { doc: d, rows: [], lines: [], n: 0, act: null, lastP: null, bytes: null });
-    $('#spName').textContent = d.name; $('#spErr').hidden = true; $('#spSave').disabled = true;
+    $('#spName').textContent = d.name + (sp.resume ? ` — 여러 서류가 든 파일이라 나누기 화면을 열었습니다. 나누지 않으려면 [닫기](묶음 그대로 두고 다음으로)` : ''); $('#spErr').hidden = true; $('#spSave').disabled = true;
     $('#spRows').innerHTML = '<p class="muted small">쪽을 읽는 중…</p>'; $('#spView').innerHTML = '';
     if ($('#dlgPreview').open) $('#dlgPreview').close();
     $('#dlgSplit').showModal();
@@ -2046,8 +2058,8 @@
     const list = classList(db.contracts[sp.doc.key]);
     sp.rows.sort((x, y) => firstPage(x) - firstPage(y));
     if (!sp.rows.includes(sp.act)) sp.act = sp.rows[0] || null;
-    $('#spRows').innerHTML = sp.rows.map((r, i) => `<div class="sp-row${r === sp.act ? ' on' : ''}" data-spi="${i}">
-      <div class="sp-pg"><span class="sp-no">${i + 1}</span><b class="sp-pages">${pagesText(r.pages)}</b>${r.item && r.item === r.sugg ? ' <small class="muted">제목으로 찾음</small>' : ''}${sp.rows.length > 1 ? `<button type="button" class="x" data-spdel="${i}" title="이 서류 빼기(쪽은 앞 서류에 붙음)" aria-label="이 서류 빼기">✕</button>` : ''}</div>
+    $('#spRows').innerHTML = (sp.rows.length ? '' : '<p class="muted small">잘라 낼 서류가 없습니다. [+ 새 서류]를 누르고 종류를 고른 뒤 쪽을 누르세요.</p>') + sp.rows.map((r, i) => `<div class="sp-row${r === sp.act ? ' on' : ''}" data-spi="${i}">
+      <div class="sp-pg"><span class="sp-no">${i + 1}</span><b class="sp-pages">${pagesText(r.pages)}</b>${r.item && r.item === r.sugg ? ' <small class="muted">제목으로 찾음</small>' : ''}<button type="button" class="x" data-spdel="${i}" title="이 서류 빼기(쪽은 앞 서류에 붙고, 앞 서류가 없으면 원래 파일에 남음)" aria-label="이 서류 빼기">✕</button></div>
       <div class="cpick"><input type="search" class="cpick-q" placeholder="서류 찾기(예: 재해율, 보험)" autocomplete="off" aria-label="서류 찾기"><select data-spf="item" data-autopick aria-label="서류 종류">${itemOptions(list, r.item, false)}</select></div>
     </div>`).join('');
     checkSplitUi(); markPages();
@@ -2056,11 +2068,13 @@
     const used = new Set(sp.rows.flatMap((r) => r.pages)), miss = [];
     for (let p = 1; p <= sp.n; p++) if (!used.has(p)) miss.push(p);
     const empty = sp.rows.filter((r) => !r.pages.length).length;
-    const msg = !sp.n ? '' : miss.length ? `아직 어느 서류에도 넣지 않은 쪽: ${pagesText(miss)} — 서류 줄을 고르고 그 쪽 그림을 누르세요` : empty ? '쪽이 없는 서류 줄이 있습니다 — 그 줄을 고르고 쪽을 누르거나 ✕로 빼세요' : '';
-    $('#spErr').textContent = msg; $('#spErr').hidden = !msg;
-    const many = sp.rows.filter((r) => r.pages.length).length >= 2;
-    $('#spSave').disabled = !!msg || !many;
-    $('#spSave').title = !many ? '나눌 서류가 하나뿐입니다. [+ 새 서류]를 누르고 그 서류에 넣을 쪽을 누르세요' : '';
+    const keepNm = sp.doc && db.contracts[sp.doc.key] ? ((classList(db.contracts[sp.doc.key]).find((x) => x.id === sp.doc.itemId) || {}).name || '종류 미정') : '';
+    const msg = '', note = !sp.n ? '' : miss.length ? `고르지 않은 쪽 ${pagesText(miss)}은 원래 파일 칸(${keepNm})에 남깁니다.` : '';
+    $('#spErr').textContent = note; $('#spErr').hidden = !note; $('#spErr').classList.toggle('warn-t', false);
+    const filled = sp.rows.filter((r) => r.pages.length).length;
+    const can = filled >= 2 || (filled >= 1 && miss.length > 0);
+    $('#spSave').disabled = !!msg || !can;
+    $('#spSave').title = !can ? '잘라 낼 쪽이 없습니다. [+ 새 서류]를 누르고 서류 종류를 고른 뒤 그 서류의 쪽을 누르세요' : '';
   }
   function markPages(scroll) {
     const list = sp.doc && db.contracts[sp.doc.key] ? classList(db.contracts[sp.doc.key]) : [];
@@ -2112,7 +2126,7 @@
   });
   $('#spRows').addEventListener('click', (e) => {
     const x = e.target.closest('[data-spdel]');
-    if (x) { const i = +x.dataset.spdel, r = sp.rows[i], to = sp.rows[i - 1] || sp.rows[i + 1]; if (to) to.pages = [...to.pages, ...r.pages].sort((a, b) => a - b); sp.rows.splice(i, 1); sp.act = to || sp.rows[0]; paintSplit(); return; }
+    if (x) { const i = +x.dataset.spdel, r = sp.rows[i], to = sp.rows[i - 1] || sp.rows[i + 1]; if (to && !e.shiftKey) to.pages = [...to.pages, ...r.pages].sort((a, b) => a - b); sp.rows.splice(i, 1); sp.act = to || sp.rows[0] || null; paintSplit(); return; }
     const row = e.target.closest('[data-spi]'); if (!row) return;
     const r = sp.rows[+row.dataset.spi]; if (!r || r === sp.act) return;
     sp.act = r; $$('#spRows .sp-row').forEach((el) => el.classList.toggle('on', sp.rows[+el.dataset.spi] === sp.act)); markPages(true);
@@ -2124,22 +2138,31 @@
     clearTimeout(spClick); if (e.detail > 1) return;
     const p = +f.dataset.p, shift = e.shiftKey;
     spClick = setTimeout(() => {
+      if (!sp.act) { toast('먼저 왼쪽에서 서류 줄을 고르거나 [+ 새 서류]를 누르세요.', 'err'); return; }
       if (shift && sp.lastP) { const a = Math.min(sp.lastP, p), b = Math.max(sp.lastP, p), ps = []; for (let q = a; q <= b; q++) ps.push(q); putPages(ps); }
+      else if (sp.act.pages.includes(p)) { sp.act.pages = sp.act.pages.filter((x) => x !== p); paintSplit(); } // 이미 든 쪽을 다시 누르면 빠짐(원래 파일에 남음)
       else putPages([p]);
       sp.lastP = p;
     }, 260);
   });
   $('#spView').addEventListener('dblclick', (e) => { clearTimeout(spClick); const f = e.target.closest('.sp-pgv'); if (f) cutAt(+f.dataset.p); });
+  // 처음부터 직접 고르기: 자동 안을 비우고 내가 고른 쪽만 잘라 냄(나머지는 원래 파일로 남음)
+  $('#spClear').onclick = () => { sp.rows = []; sp.act = null; paintSplit(); $('#spAddRow').click(); };
   $('#spAddRow').onclick = () => {
     const nr = { pages: [], item: null, sugg: undefined }; sp.rows.push(nr); sp.act = nr; paintSplit();
     toast('새 서류 줄을 만들었습니다. 오른쪽에서 이 서류에 넣을 쪽 그림을 누르세요(Shift+누르기로 범위).', 'ok');
   };
   $('#spCancel').onclick = () => { sp.tok++; $('#dlgSplit').close(); };
-  $('#dlgSplit').addEventListener('close', () => { sp.tok++; });
+  // 나누기 화면을 닫으면(나눴든 안 나눴든) 확인하던 다음 파일로 이어짐
+  $('#dlgSplit').addEventListener('close', () => { sp.tok++; const rest = sp.resume || []; sp.resume = null; if (rest.length) askLater(rest); });
   $('#spSave').onclick = async () => {
     checkSplitUi(); if ($('#spSave').disabled) return;
     const d = sp.doc, c = d && db.contracts[d.key]; if (!c) return;
-    const rows = sp.rows.filter((r) => r.pages.length).sort((x, y) => firstPage(x) - firstPage(y));
+    // 고르지 않은 쪽은 원래 파일 칸으로 남김(남은 쪽 묶음)
+    const used = new Set(sp.rows.flatMap((r) => r.pages)), rest = []; for (let p = 1; p <= sp.n; p++) if (!used.has(p)) rest.push(p);
+    const rows0 = sp.rows.filter((r) => r.pages.length);
+    if (rest.length) rows0.push({ pages: rest, item: d.itemId || null, sugg: d.itemId || null, rest: true });
+    const rows = rows0.sort((x, y) => firstPage(x) - firstPage(y));
     $('#spSave').disabled = true;
     try {
       const PDFLib = await JH.lib('pdflib');
@@ -2159,7 +2182,7 @@
           const saved = await S.save(place.dir, tidyName(item, c, nm, place.n), bytes);
           const top = sp.lines[ps[0] - 1] || [], heads = L.headLines(top);
           const nd = { id: L.uid(), key: c.key, itemId: item ? item.id : null, path: saved.path, name: nm, kind: 'pdf', size: bytes.length, mime: 'application/pdf',
-            addedAt: new Date().toISOString(), ocr: d.ocr, text: L.norm(ps.flatMap((p) => sp.lines[p - 1] || []).join(' ')).slice(0, 6000), title: L.norm(top.join(' ')).slice(0, 300),
+            addedAt: new Date().toISOString(), ocr: d.ocr, text: L.maskPrivate(L.norm(ps.flatMap((p) => sp.lines[p - 1] || []).join(' ')).slice(0, 6000)), title: L.maskPrivate(L.norm(top.join(' ')).slice(0, 300)),
             manual: true, splitFrom: d.name, ...(heads.length ? { heads } : {}), ...(rnd ? { pay: rnd.id } : {}), ...(ps.length > 1 ? { pages: ps.length } : {}) };
           db.docs.push(nd);
           if (item && r.sugg !== item.id && learnFrom(nd, c, item.id)) learned++; // 사람이 정하거나 고친 종류는 배움
@@ -2168,6 +2191,7 @@
         await removeDoc(d);
       });
       textDirty = true; await saveDb(true);
+      ui.sel = c.key; if (!(sp.resume && sp.resume.length)) setView('contracts'); // 나눈 계약 화면으로
       $('#dlgSplit').close(); render();
       logAct(`나눔 「${d.name}」 → ${rows.length}개 파일`);
       toast(`「${d.name}」을 ${rows.length}개 파일로 나눠 서류마다 넣었습니다.${learned ? ` 직접 정한 종류 ${learned}개는 배웠습니다.` : ''} 원래 파일은 _삭제됨에 있습니다.`, 'ok', undoAction());
@@ -2176,6 +2200,13 @@
   };
   $('#pvSplit') && ($('#pvSplit').onclick = () => { const d = docById(pv.ids[pv.i]); if (d) openSplit(d); });
   $('#pvPrev').onclick = () => { if (pv.i > 0) { pv.i--; showPreview(); } };
+  // 확인 팝업을 다 마치면(닫으면) 마지막으로 저장한 서류의 계약 화면으로 이동
+  $('#dlgPreview').addEventListener('close', () => {
+    const k = pv.lastKey; pv.lastKey = null;
+    if (!k || !db.contracts[k] || ONLY || sp.resume || askQueue.length) return;
+    ui.sel = k; setView('contracts');
+    setTimeout(() => { const el = $(`.citem[data-key="${CSS.escape(k)}"]`); if (el) el.scrollIntoView({ block: 'nearest' }); }, 50);
+  });
   $('#pvNext').onclick = () => { if (pv.i < pv.ids.length - 1) { pv.i++; showPreview(); } else { $('#dlgPreview').close(); render(); } };
   // PC 안 AI가 준비돼 있으면 헷갈리는 서류의 종류를 추정해 보여 줌(서류 내용은 이 PC 안 AI에만, 사람이 고르기 전까지 미리 골라만 둠)
   async function aiGuess(d, c, tok) {
@@ -2207,6 +2238,7 @@
   $('#pvSave').onclick = async () => {
     const d = docById(pv.ids[pv.i]); if (!d) return;
     const key = $('#pvContract').value || null, item = key ? $('#pvItem').value || null : null;
+    if (pv.confirm && key) pv.lastKey = key; // 확인을 마치면 이 계약 화면으로
     // 수정본 확인: 같은 칸 그대로 저장하면 '수정본' 표시
     if (d.revOf) { const p0 = docById(d.revOf); if (p0 && key === p0.key && item === p0.itemId) d.rev = true; delete d.revOf; await saveDb(true); }
     // 사람이 고른(또는 '맞음'으로 확인한) 서류 종류를 배움
@@ -2692,6 +2724,8 @@
     saveDb().then(() => { const s2 = $('#memoState'); if (s2) s2.textContent = '저장됨 · 이 PC에만 저장, 인쇄본에는 들어가지 않습니다'; });
   });
   document.addEventListener('change', (e) => {
+    const te = e.target.closest && e.target.closest('[data-chgetc]');
+    if (te) { const c = db.contracts[ui.sel]; if (!c) return; const ce = { ...((c.memo || {}).chgEtc || {}) }; if (te.value.trim()) ce[te.dataset.chgetc] = te.value.trim(); else delete ce[te.dataset.chgetc]; c.memo = { ...(c.memo || {}), chgEtc: ce }; c.memoAt = new Date().toISOString(); saveDb(); return; }
     const t = e.target.closest && e.target.closest('[data-chgkind]'); if (!t) return;
     const c = ui.sel && db.contracts[ui.sel]; if (!c) return;
     const row = ((L.changesOf(c) || {}).rows || []).find((r) => r.no === t.dataset.chgkind);
@@ -2866,6 +2900,7 @@
   $('#btnFetch').onclick = async () => {
     try { await fetchContracts(); } catch (e) { console.warn(e); }
     try { progress('계약 폴더 다시 읽는 중', .5); await reconcile(); } catch (e) { console.warn('폴더 확인 실패', e); } finally { progress(null); render(); }
+    if (watch.dirs.length) { try { await watchTick({ now: true }); } catch (e) { console.warn('자동 읽기', e); } }
   };
   $('#btnNewContract').onclick = () => openContract(null);
   let pickTarget = null;
@@ -3004,7 +3039,7 @@
 
   root.JH.app = {
     get cfg() { return cfg; }, set cfg(v) { cfg = v; }, get db() { return db; }, get org() { return org; },
-    get share() { return ui.share; }, get recording() { return recording; }, get undoLabels() { return undoStack.map((u) => u.label); }, pullShare, pushShare, fitWindow, syncTab, shareableRule: (r) => shareable(r, privateNames()),
+    readWatch: (all) => watchTick({ now: true, all: !!all }), get share() { return ui.share; }, get recording() { return recording; }, get undoLabels() { return undoStack.map((u) => u.label); }, pullShare, pushShare, fitWindow, syncTab, shareableRule: (r) => shareable(r, privateNames()),
     defaults, lists, printList, startWatch, checkAccounts, saveCfg, saveDb, fetchContracts, enrichContracts, fillFromDocs, openForms, render, toast, banner, start, ingest, setView, progress,
     setChecklists(v) { db.checklists = v; return saveDb(true); },
   };

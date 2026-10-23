@@ -325,6 +325,15 @@
     }
     return { no, name, vendor };
   }
+  // 서류에서 읽은 글자를 저장하기 전에 개인 식별번호를 가림(분류에는 필요 없음): 주민·외국인등록번호, 휴대전화, 카드번호.
+  // 사업자등록번호(000-00-00000)·계약번호는 그대로(계약 찾기에 씀)
+  function maskPrivate(t) {
+    return String(t == null ? '' : t)
+      .replace(/(\d{2}[01]\d[0-3]\d)\s*-\s*[1-8]\d{6}/g, '$1-*******')
+      .replace(/(^|[^\d])(\d{2}[01]\d[0-3]\d)[1-8]\d{6}(?!\d)/g, '$1$2*******')
+      .replace(/(01[016789])[\s-]?\d{3,4}[\s-]?(\d{4})(?!\d)/g, '$1-****-$2')
+      .replace(/(^|[^\d])(\d{4})[\s-]?\d{4}[\s-]?\d{4}[\s-]?(\d{4})(?!\d)/g, '$1$2-****-****-$3');
+  }
   // 계약명으로 쓸 만한 글인지(스캔 글자 인식이 깨진 '.,'(신갈동..)석명하체 ㅓ리용역 _ _. ㅗ ㄱㄱ' 같은 것은 안 됨)
   function goodName(s) {
     const t = String(s || '').trim();
@@ -469,15 +478,17 @@
     const amt = !!(r.amount && r.prevAmount && r.amount !== r.prevAmount), end = !!(r.end && r.prevEnd && r.end !== r.prevEnd);
     return amt && end ? 'both' : amt ? 'design' : 'ext';
   }
-  const CHG_KINDS = { design: '설계변경', ext: '기간연장', both: '둘 다', none: '해당 없음' };
+  const CHG_KINDS = { design: '설계변경', ext: '기간변경', both: '둘 다(기간변경+설계변경)', settle: '준공정산', etc: '기타(직접 쓰기)', none: '해당 없음' };
   // 차수마다 고른 값(chgKind[차수번호]) > 자동. 원계약은 빼고, 해당 없음·모름도 뺌
   function chgPlan(rows, picked = {}) {
     const out = { design: [], ext: [] };
     for (const r of rows || []) {
       if (r.first) continue;
       const k = (picked && picked[r.no]) || r.auto;
-      if (k === 'design' || k === 'both') out.design.push(r);
-      if (k === 'ext' || k === 'both') out.ext.push(r);
+      // 준공정산은 금액 변경(설계변경 칸)으로, 기타는 실제로 바뀐 것(금액·준공일)에 따라
+      const amt = !!(r.amount && r.prevAmount && r.amount !== r.prevAmount), end = !!(r.end && r.prevEnd && r.end !== r.prevEnd);
+      if (k === 'design' || k === 'both' || k === 'settle' || (k === 'etc' && amt)) out.design.push({ ...r, kind: k });
+      if (k === 'ext' || k === 'both' || (k === 'etc' && end)) out.ext.push({ ...r, kind: k });
     }
     return out;
   }
@@ -949,7 +960,7 @@
     API_BASE, API_OPS, TYPES, apiUrl, keyParam, monthRanges, parseApiText, parseApiBody, parseCorpList, parseCorpRows, normalizeApiItem, detectExtFinance,
     G2B, g2bUrl, scanAuditFields, summarizeChanges, chgPlan, autoKind, CHG_KINDS, changesOf, ordSnap, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
     ordOf, viaParts, viaKey, viaStatus, itemsInName, isRecentItem, issuedTooEarly, isAdvBond, advBondCheck, ADV_DAYS, matchCandidates, checklistStatus, holds, hasItem, classifyPages, classifyTitleLines, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail, issueCond,
-    headLines, learnSigs, learnedItem, classifyInfo, suffixOf, shareSafe, splitPlan, checkSplit, goodName, isG2bNo,
+    headLines, learnSigs, learnedItem, classifyInfo, suffixOf, shareSafe, splitPlan, checkSplit, goodName, isG2bNo, maskPrivate,
     PAY_KINDS, typeKey, hasRounds, roundOnly, roundSteps, roundHint, roundLabel, routeRound,
   };
   root.JH = root.JH || {};

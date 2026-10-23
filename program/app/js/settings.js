@@ -289,6 +289,9 @@
   $('#btnQuit').onclick = async () => { if (!confirm('프로그램을 종료할까요? 다시 쓰려면 바탕화면의 계약업무 도우미를 누르세요.')) return; try { await S.quit(); } catch (_) {} window.close(); };
 
   // 설정 → 정보 [지금 업데이트 확인]
+  const bwn = document.getElementById('btnWatchNow'), bwa = document.getElementById('btnWatchAll');
+  if (bwn) bwn.onclick = () => { $('#dlgSettings').close(); JH.app.readWatch(false); };
+  if (bwa) bwa.onclick = () => { $('#dlgSettings').close(); JH.app.readWatch(true); };
   const chkUc = document.getElementById('chkUploadConfirm');
   if (chkUc) chkUc.addEventListener('change', async () => { JH.app.cfg.uploadConfirm = chkUc.checked; await JH.app.saveCfg(); JH.app.toast(chkUc.checked ? '올린 서류는 팝업으로 하나씩 확인합니다.' : '확실한 서류는 바로 넣고, 헷갈리는 것만 묻습니다.', 'ok'); });
   const chkWc = document.getElementById('chkWatchConfirm');

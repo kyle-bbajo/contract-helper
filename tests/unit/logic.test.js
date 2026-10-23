@@ -292,3 +292,21 @@ test('면허 등록증·등록수첩·통장사본: 파일 이름·제목(통장
   assert.equal(name('스캔.pdf', '엔지니어링사업자 신고증'), '면허 등록증 사본');
   assert.equal(name('스캔.pdf', '사업자등록증 등록번호 123-45-67890'), '사업자등록증 사본');
 });
+
+test('변경 구분: 기간변경·설계변경·둘 다·준공정산·기타·해당 없음', () => {
+  assert.equal(L.CHG_KINDS.ext, '기간변경');
+  assert.equal(L.CHG_KINDS.both, '둘 다(기간변경+설계변경)');
+  assert.equal(L.CHG_KINDS.settle, '준공정산');
+  const rows = [{ no: 'a', first: true }, { no: 'b', amount: 90, prevAmount: 100, end: '20261130', prevEnd: '20261130', auto: 'design' }, { no: 'c', amount: 90, prevAmount: 90, end: '20261231', prevEnd: '20261130', auto: 'ext' }];
+  const p = L.chgPlan(rows, { b: 'settle', c: 'etc' });
+  assert.deepEqual(p.design.map((r) => [r.no, r.kind]), [['b', 'settle']]);
+  assert.deepEqual(p.ext.map((r) => [r.no, r.kind]), [['c', 'etc']], '기타는 실제로 바뀐 준공일 쪽');
+  assert.equal(L.chgPlan(rows, { b: 'none', c: 'none' }).design.length + L.chgPlan(rows, { b: 'none', c: 'none' }).ext.length, 0);
+});
+
+test('저장하는 서류 글자에서 주민등록번호·휴대전화·카드번호 가림(사업자번호·계약번호는 그대로)', () => {
+  const t = L.maskPrivate('대표자 홍길동 800101-1234567 연락처 010-1234-5678 사업자등록번호 123-45-67890 계약번호 R26BK01234567-00 카드 1234-5678-9012-3456');
+  assert.ok(!/1234567(?!\d)/.test(t.replace('R26BK01234567', '')), t);
+  assert.match(t, /800101-\*{7}/); assert.match(t, /010-\*{4}-5678/); assert.match(t, /123-45-67890/); assert.match(t, /R26BK01234567-00/); assert.match(t, /1234-\*{4}-\*{4}-3456/);
+  assert.match(L.maskPrivate(L.norm('주민번호 8001011234567')), /800101\*{7}/);
+});

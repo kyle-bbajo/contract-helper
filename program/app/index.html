@@ -181,6 +181,7 @@
       <h3 class="sub-h">자동으로 읽을 폴더</h3>
       <p class="help">문서함·메일에서 서류를 내려받는 폴더(예: 다운로드)를 골라 두면, 프로그램이 켜져 있는 동안 몇 초마다 새 파일을 읽어 <b>우리 계약에 맞는 서류만</b> 사본을 만들어 계약별·서류 종류별로 정리합니다(이름도 "서류명_계약명"으로). 원래 파일은 그대로 두고, 계약과 상관없는 파일(다른 공고문·개인 파일 등)은 가져오지 않습니다. 폴더는 여러 개 골라도 됩니다.</p>
       <ul class="watch-list" id="watchList"><li class="muted">꺼짐</li></ul>
+      <div class="watch-add"><button type="button" class="btn sm" id="btnWatchNow" title="자동으로 읽을 폴더에 새로 들어온 파일을 지금 읽음(다 받아지기를 기다리지 않음)">지금 읽기</button><button type="button" class="btn sm" id="btnWatchAll" title="폴더를 더하기 전부터 있던 파일까지 모두 읽음(이미 읽은 파일·같은 파일은 빼고). 계약과 상관없는 파일은 가져오지 않음">폴더 안 파일 모두 읽기</button><span class="muted small">[새로고침]을 눌러도 새로 들어온 파일을 읽습니다</span></div>
       <label class="chk"><input type="checkbox" id="chkWatchConfirm"> 자동으로 가져온 서류는 넣은 뒤 확인 팝업으로 하나씩 보여 주기(맞으면 [이대로 저장], 틀리면 고르면 배움)</label>
       <div class="watch-add">
         <span class="muted small">바로 더하기</span>
@@ -423,10 +424,10 @@
   <div class="dlg-body sp">
     <div class="sp-side">
       <div class="pv-name" id="spName"></div>
-      <p class="small muted" id="spWhy">쪽마다 제목을 읽어 나눌 안을 만들었습니다. 왼쪽에서 서류 줄을 고르고 오른쪽 쪽 그림을 누르면 그 쪽이 그 서류로 들어갑니다(Shift+누르기 = 범위, 떨어진 쪽도 묶임, 두 번 누르기 = 그 쪽부터 새 서류). 서류 종류를 확인하고 [나누어 저장]. 원래 파일은 _삭제됨으로(되돌리기 가능).</p>
-      <p class="warn-t small" id="spErr" hidden></p>
+      <p class="small muted" id="spWhy">특정 쪽만 잘라 넣으려면: [+ 새 서류] → 서류 종류 고르기(찾기 칸에 '보험' 등) → 오른쪽에서 그 서류의 쪽만 누르기 → [나누어 저장]. 고르지 않은 쪽은 원래 파일 칸에 남습니다. 쪽마다 제목을 읽어 만든 안도 같은 방식으로 고칩니다(Shift+누르기 = 범위, 두 번 누르기 = 그 쪽부터 새 서류). 원래 파일은 _삭제됨으로(되돌리기 가능).</p>
+      <p class="small muted" id="spErr" hidden></p>
       <div class="sp-rows" id="spRows"></div>
-      <button type="button" class="link sm" id="spAddRow">+ 새 서류</button>
+      <div class="sp-tools"><button type="button" class="btn sm" id="spAddRow">+ 새 서류</button><button type="button" class="btn sm ghost" id="spClear" title="자동으로 만든 안을 비우고, 고른 쪽만 잘라 냄(나머지 쪽은 원래 파일로 남음)">처음부터 직접 고르기</button></div>
       <div class="pv-acts">
         <button type="button" class="btn primary" id="spSave">나누어 저장</button>
         <button type="button" class="btn ghost" id="spCancel">닫기</button>
