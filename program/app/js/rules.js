@@ -213,9 +213,58 @@
     const same = qa.items.find((x) => L.norm(x.q) === L.norm(q));
     if (same) { same.a = a.trim(); same.refs = refs; same.uat = new Date().toISOString(); }
     else qa.items.unshift({ id: L.uid(), q: q.trim(), a: a.trim(), refs, at: new Date().toISOString() });
+    queueQa(same || qa.items[0]);
     await saveQa();
     app().toast(same ? '같은 질문의 답을 고쳐 저장했습니다. 다음부터 이 답을 먼저 씁니다.' : '질문과 답을 저장했습니다. 비슷한 질문이 오면 이 답을 먼저 씁니다.', 'ok');
     render();
+  }
+
+  // ---------- 저장한 질문답변 나누기(GitHub 이슈 '[자동] 규정 질문답변') ----------
+  // 저장·고치면 20초쯤 뒤 모아서 올리고, 켤 때와 켜 둔 동안 30분마다 동료가 저장한 것을 받음.
+  // 같은 질문(같은 id)은 더 늦게 고친 답으로 바꾸고, 내가 직접 저장한 같은 질문은 내 답을 먼저. 내가 지운 것은 다시 받지 않음
+  let qaTimer = null;
+  const tOf = (x) => Date.parse(x.uat || x.at || 0) || 0;
+  function queueQa(it) {
+    if (!it || !it.a) return;
+    const one = { id: it.id, q: it.q, a: it.a, refs: it.refs || [], at: it.at, uat: it.uat };
+    qa.pending = [...(qa.pending || []).filter((x) => x.id !== it.id), one].slice(-300);
+    clearTimeout(qaTimer); qaTimer = setTimeout(pushQa, 20000);
+  }
+  async function pushQa() {
+    const p = qa.pending || []; if (!p.length || !S.online) return;
+    // GitHub 댓글 하나는 6만 자까지라 나눠 올림
+    const parts = []; let cur = [], len = 0;
+    for (const x of p) { const n = JSON.stringify(x).length; if (cur.length && len + n > 45000) { parts.push(cur); cur = []; len = 0; } cur.push(x); len += n; }
+    if (cur.length) parts.push(cur);
+    try {
+      for (const part of parts) { const r = await S.sharePost(part, 'qa'); if (r.skipped) return; }
+      qa.pending = []; await saveQa();
+    } catch (_) { /* 다음에 받을 때 다시 올림 */ }
+  }
+  async function pullQa() {
+    if (!S.online) return 0;
+    await load();
+    const r = await S.shareGet('qa'); if (!r || r.skipped) return 0;
+    // 다른 창(공고문 전용 창)이 그 사이 저장했을 수 있으니 디스크에서 다시 읽고 합침
+    const disk = await S.readJson(QA_PATH).catch(() => null); if (disk && Array.isArray(disk.items)) { qa = disk; qidx = null; }
+    const got = new Map();
+    for (const b of r.bodies || []) {
+      const m = String(b).match(/```json\s*([\s\S]*?)```/); if (!m) continue;
+      try { for (const x of JSON.parse(m[1])) if (x && x.id && x.q && x.a) { const o = got.get(x.id); if (!o || tOf(x) >= tOf(o)) got.set(x.id, x); } } catch (_) {}
+    }
+    const hidden = new Set(qa.hidden || []); let n = 0;
+    for (const x of got.values()) {
+      if (hidden.has(x.id)) continue;
+      const byId = qa.items.find((y) => y.id === x.id);
+      if (byId) { if (tOf(x) > tOf(byId)) { Object.assign(byId, { q: x.q, a: x.a, refs: x.refs || [], uat: x.uat || x.at }); n++; } continue; }
+      const sameQ = qa.items.find((y) => L.norm(y.q) === L.norm(x.q));
+      if (sameQ && !sameQ.shared) continue;
+      if (sameQ) { if (tOf(x) > tOf(sameQ)) { Object.assign(sameQ, { id: x.id, q: x.q, a: x.a, refs: x.refs || [], at: x.at, uat: x.uat }); n++; } continue; }
+      qa.items.push({ id: x.id, q: x.q, a: x.a, refs: x.refs || [], at: x.at, uat: x.uat, shared: true }); n++;
+    }
+    if (n) { qa.items.sort((p1, p2) => tOf(p2) - tOf(p1)); await saveQa(); if (view() && view().classList.contains('on')) render(); }
+    if ((qa.pending || []).length) pushQa();
+    return n;
   }
 
   // ---------- 화면 ----------
@@ -227,7 +276,7 @@
     const revs = kb.sources.filter((s) => s.mine && s.rev).map((s) => s.rev).sort();
     const revTxt = nMine ? ` · 우리 규정 ${revs.length ? `${L.fmtDate(revs[revs.length - 1])} 개정분까지` : '개정일 모름'}` : '';
     el.innerHTML = `<div class="rules">
-      <div class="rules-head"><h2>규정·질문 답변</h2><span class="muted">법령·예규 ${nLaw}건 · 우리 규정 ${nMine}건${esc(revTxt)} · 조항 ${nChunk.toLocaleString('ko-KR')}개 · 저장한 질문답변 ${qa.items.length}건 — 모두 이 PC 안에서만 처리</span>
+      <div class="rules-head"><h2>규정·질문 답변</h2><span class="muted">법령·예규 ${nLaw}건 · 우리 규정 ${nMine}건${esc(revTxt)} · 조항 ${nChunk.toLocaleString('ko-KR')}개 · 저장한 질문답변 ${qa.items.length}건 — 질문은 이 PC 안 AI만 읽고, 저장한 질문답변은 동료와 나눔</span>
         <div class="seg" role="tablist"><button type="button" data-rtab="ask" class="${st.tab === 'ask' ? 'on' : ''}">질문하기</button><button type="button" data-rtab="qa" class="${st.tab === 'qa' ? 'on' : ''}">질문답변 모음 ${qa.items.length}</button><button type="button" data-rtab="src" class="${st.tab === 'src' ? 'on' : ''}">자료(법령·규정)</button></div></div>
       ${lawBox()}
       ${st.tab === 'ask' ? askPane() : st.tab === 'qa' ? qaPane() : srcPane()}</div>`;
@@ -254,7 +303,7 @@
     const f = L.norm(st.qaFilter);
     const items = qa.items.filter((x) => !f || L.norm(x.q + x.a).includes(f));
     return `<section class="rqa"><input type="search" id="rqaQ" placeholder="저장한 질문·답에서 찾기" value="${esc(st.qaFilter)}">
-      ${items.length ? items.map((x) => `<details class="rqa-it"${st.open === x.id ? ' open' : ''} data-qid="${esc(x.id)}"><summary><b>${esc(x.q)}</b> <small class="muted">${esc(L.fmtDate((x.uat || x.at).slice(0, 10)))}</small></summary>
+      ${items.length ? items.map((x) => `<details class="rqa-it"${st.open === x.id ? ' open' : ''} data-qid="${esc(x.id)}"><summary><b>${esc(x.q)}</b> <small class="muted">${esc(L.fmtDate((x.uat || x.at).slice(0, 10)))}${x.shared ? ' · 동료' : ''}</small></summary>
         <label>질문<input type="text" data-qf="q" value="${esc(x.q)}"></label><label>답<textarea data-qf="a" rows="8">${esc(x.a)}</textarea></label>
         ${x.refs && x.refs.length ? `<p class="muted small">근거: ${esc(x.refs.join(' · '))}</p>` : ''}
         <div class="rq-acts"><button type="button" class="btn sm primary" data-ract="qasave">고쳐 저장</button><button type="button" class="btn sm ghost danger" data-ract="qadel">지우기</button></div></details>`).join('')
@@ -296,8 +345,8 @@
     } else if (a === 'srcdel') { const id = b.dataset.sid; const s = kb.sources.find((x) => x.id === id); if (s && confirm(`「${s.name}」을 자료에서 뺄까요?`)) { kb.sources = kb.sources.filter((x) => x.id !== id); saveKb().then(render); } }
     else if (a === 'qasave' || a === 'qadel') {
       const box = b.closest('[data-qid]'); const it = qa.items.find((x) => x.id === box.dataset.qid); if (!it) return;
-      if (a === 'qadel') { if (!confirm('이 질문답변을 지울까요?')) return; qa.items = qa.items.filter((x) => x !== it); }
-      else { it.q = $('[data-qf="q"]', box).value.trim() || it.q; it.a = $('[data-qf="a"]', box).value.trim(); it.uat = new Date().toISOString(); st.open = it.id; }
+      if (a === 'qadel') { if (!confirm('이 질문답변을 지울까요? (이 PC에서만 지웁니다. 동료 PC의 것은 그대로)')) return; qa.items = qa.items.filter((x) => x !== it); qa.hidden = [...new Set([...(qa.hidden || []), it.id])].slice(-2000); qa.pending = (qa.pending || []).filter((x) => x.id !== it.id); }
+      else { it.q = $('[data-qf="q"]', box).value.trim() || it.q; it.a = $('[data-qf="a"]', box).value.trim(); it.uat = new Date().toISOString(); st.open = it.id; if (it.a) queueQa(it); }
       saveQa().then(() => { app().toast(a === 'qadel' ? '지웠습니다.' : '고쳐 저장했습니다.', 'ok'); render(); });
     } else if (a === 'qanew') { const it = { id: L.uid(), q: '새 질문', a: '', refs: [], at: new Date().toISOString() }; qa.items.unshift(it); st.open = it.id; render(); }
   }
@@ -314,5 +363,5 @@
   }
   async function show() { bind(); try { await load(); } catch (e) { console.warn(e); } render(); if (!st.law || st.law.state !== 'ok') checkLaw(); }
 
-  root.JH.rules = { show, load, ask, uploadRules, amendRules, fetchLaws, checkLaw, get kb() { return kb; }, get qa() { return qa; } };
+  root.JH.rules = { show, load, ask, pullQa, pushQa, uploadRules, amendRules, fetchLaws, checkLaw, get kb() { return kb; }, get qa() { return qa; } };
 })(window);

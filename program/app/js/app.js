@@ -105,6 +105,7 @@
       ui.share = { state: 'ok', at: Date.now(), n: add.length };
       if (add.length) { await saveDb(); const n = await applyShared(); if (n) { render(); toast(`동료가 배운 규칙으로 서류 ${n}건의 종류를 정했습니다. [최근 작업]에서 되돌릴 수 있습니다.`, 'ok'); } }
       if ((db.sharePending || []).length) pushShare();
+      try { const nq = await JH.rules.pullQa(); if (nq) toast(`동료가 저장한 규정 질문답변 ${nq}건을 받았습니다(규정·질문 → 질문답변 모음).`, 'ok'); } catch (_) {}
     } catch (e) { ui.share = { state: 'err', why: e.message }; }
   }
   // 새로 받은 동료 규칙으로, 계약은 정해졌는데 종류를 못 정했거나 [확인 필요]인 서류를 다시 봄(배운 규칙에 맞을 때만, 사람이 고른 것은 그대로)

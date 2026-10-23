@@ -13,7 +13,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '1.6.6'
+$Version = '1.6.7'
 $AppRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $WebRoot = Join-Path $AppRoot 'app'
 $LocalCfg = Join-Path $AppRoot 'local.json'
@@ -574,15 +574,18 @@ function Handle($stream, $req) {
       $u = Get-UpdateCfg
       if (-not $u) { Send-Json $stream 200 @{ ok = $true; skipped = '공용 설정에 GitHub 토큰이 없습니다' }; return }
       $hdr = @{ Authorization = "Bearer $($u.token)"; 'User-Agent' = 'JichulHelper'; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
-      $base = "https://api.github.com/repos/$($u.repo)"; $title = '[자동] 배운 서류 분류 규칙'
-      $sf = Join-Path $AppRoot 'share.json'
+      # kind=qa: 규정·질문의 저장한 질문답변(별도 이슈 '[자동] 규정 질문답변')
+      $isQa = ([string]$q['kind']) -eq 'qa'
+      $base = "https://api.github.com/repos/$($u.repo)"; $title = if ($isQa) { '[자동] 규정 질문답변' } else { '[자동] 배운 서류 분류 규칙' }
+      $sf = Join-Path $AppRoot $(if ($isQa) { 'share-qa.json' } else { 'share.json' })
       try {
         $st = Read-JsonFile $sf; $num = if ($st -and $st.issue) { [int]$st.issue } else { 0 }
         if (-not $num) {
           $list = Invoke-RestMethod -UseBasicParsing -Uri "$base/issues?state=all&per_page=100" -Headers $hdr -TimeoutSec 15
           $hit = @($list | Where-Object { $_.title -eq $title -and -not $_.pull_request }) | Select-Object -First 1
           if (-not $hit -and $req.Method -eq 'POST') {
-            $b = @{ title = $title; body = "계약업무 도우미가 PC마다 배운 서류 분류 규칙(서류 제목 → 서류 종류)을 자동으로 모으는 곳입니다. 다른 PC도 이 규칙을 받아 씁니다. 지우거나 닫지 마세요." } | ConvertTo-Json
+            $intro = if ($isQa) { "계약업무 도우미의 규정·질문 답변에서 PC마다 저장한 질문과 답을 자동으로 모으는 곳입니다. 다른 PC도 이 답을 받아 씁니다. 지우거나 닫지 마세요." } else { "계약업무 도우미가 PC마다 배운 서류 분류 규칙(서류 제목 → 서류 종류)을 자동으로 모으는 곳입니다. 다른 PC도 이 규칙을 받아 씁니다. 지우거나 닫지 마세요." }
+            $b = @{ title = $title; body = $intro } | ConvertTo-Json
             $hit = Invoke-RestMethod -UseBasicParsing -Method Post -Uri "$base/issues" -Headers $hdr -Body ([Text.Encoding]::UTF8.GetBytes($b)) -ContentType 'application/json; charset=utf-8' -TimeoutSec 15
           }
           if ($hit) { $num = [int]$hit.number; [IO.File]::WriteAllText($sf, (@{ issue = $num } | ConvertTo-Json -Compress), $Utf8) }

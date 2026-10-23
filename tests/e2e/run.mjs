@@ -901,6 +901,33 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   await page.fill('#rqQ', '선금 몇 퍼센트까지 가능한가요'); await page.click('[data-ract="ask"]');
   await page.waitForSelector('.rq-prev:has-text("보증서를 먼저 받으세요")', { timeout: 30000 });
   await page.click('[data-rtab="qa"]'); assert.match(await page.textContent('.rqa'), /선금은 계약금액의 몇 퍼센트까지/);
+  // 저장한 질문답변 나누기: 올릴 것에 들어가고, 동료 것은 받아 쌓되 내가 저장한 같은 질문은 내 답 그대로
+  {
+    const r = await page.evaluate(async () => {
+      const R = JH.rules, Sv = JH.server; const sent = [];
+      const og = Sv.shareGet, op = Sv.sharePost;
+      Sv.sharePost = async (x, kind) => { sent.push({ kind, x }); return { ok: true }; };
+      const mine = R.qa.items[0];
+      Sv.shareGet = async (kind) => ({ ok: true, bodies: kind !== 'qa' ? [] : ['```json\n' + JSON.stringify([
+        { id: 'colleague1', q: '수의계약 견적 제출 기간은?', a: '동료 답: 공고일부터 3일 이상', at: '2026-10-20T00:00:00Z' },
+        { id: 'colleague2', q: mine.q, a: '다른 답', at: '2030-01-01T00:00:00Z' }]) + '\n```'] });
+      try {
+        const pend = (R.qa.pending || []).length;
+        await R.pushQa();
+        const n = await R.pullQa();
+        return { pend, sent: sent.filter((s) => s.kind === 'qa').flatMap((s) => s.x.map((y) => y.q)), n, items: R.qa.items.map((x) => [x.q, x.a, !!x.shared]), myA: mine.a, left: (R.qa.pending || []).length };
+      } finally { Sv.shareGet = og; Sv.sharePost = op; }
+    });
+    assert.equal(r.pend, 1, '저장하면 올릴 것에 들어감');
+    assert.ok(r.sent.some((q) => /선금은 계약금액/.test(q)), '질문답변 올림');
+    assert.equal(r.left, 0, '올린 뒤 비움');
+    assert.equal(r.n, 1, '동료 것 1건만 받음(같은 질문은 내 답 유지)');
+    assert.ok(r.items.some(([q, a, sh]) => /견적 제출 기간/.test(q) && sh), '동료 질문답변 받음');
+    assert.ok(!r.items.some(([, a]) => a === '다른 답'), '내 답은 그대로');
+    await page.click('[data-rtab="ask"]'); await page.click('[data-rtab="qa"]');
+    assert.match(await page.textContent('.rqa'), /견적 제출 기간[\s\S]*동료/);
+  }
+  step('저장한 질문답변 나누기: 저장하면 GitHub 이슈로 올리고, 동료가 저장한 것은 받아 [질문답변 모음]에(동료 표시), 같은 질문은 내 답 우선');
   await page.screenshot({ path: join(SHOTS, '7-규정질문답변.png') });
   step('규정·질문 답변: 규정집 올려 조 단위로, 법령·예규 20건 자동으로 받기(국가법령정보센터, 조문 아닌 예규는 첨부파일까지), 규정 개정 조문만 올려 바꿔 끼우기·개정분 날짜, 질문 → 근거 찾아 PC AI 답 → 저장(학습) → 비슷한 질문에 저장한 답 먼저');
 
