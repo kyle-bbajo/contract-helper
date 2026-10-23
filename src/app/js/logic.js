@@ -157,6 +157,21 @@
     // 파일 이름은 글자를 못 읽은 서류(머리 줄 없음)일 때만 배움 — '준공보완서류 소1-69호'처럼 여러 서류에 같이 쓰는 이름은 배우면 안 됨
     return { heads, name: !heads.length && !junk && st.length >= 4 ? st : '' };
   }
+  // 동료와 나눠도 되는 배운 말인지: 서류 '종류'를 알려 주는 제목만. 계약·업체·사람·번호가 들어간 것은 이 PC에만 둠
+  // names: 이 PC의 모든 계약명·업체명·다른 이름·담당자·부서(정규화 전)
+  const PRIVATE_MARK = /(주식회사|유한회사|합자회사|합명회사|대표이사|대표자|귀하|귀중|주소|전화|팩스|휴대|계좌|은행|성명|생년|주민|사업자번호|등록번호|@)/;
+  function shareSafe(text, names) {
+    const t = norm(text);
+    if (t.length < 5 || t.length > 30) return false;
+    if (/\d/.test(t)) return false;
+    if (PRIVATE_MARK.test(t)) return false;
+    if ((t.match(/[가-힣]/g) || []).length < 4) return false;
+    for (const n of names || []) {
+      const k = norm(n); if (k.length >= 2 && t.includes(k)) return false;
+      const v = norm(vendorCore(n)); if (v.length >= 2 && t.includes(v)) return false;
+    }
+    return true;
+  }
   // 배운 규칙에서 찾기: 머리 줄이 배운 머리 줄을 품으면(가장 긴 것), 아니면 파일 이름
   function learnedItem(rules, list, name, heads) {
     if (!rules || !rules.length) return null;
@@ -862,7 +877,7 @@
     API_BASE, API_OPS, TYPES, apiUrl, keyParam, monthRanges, parseApiText, parseApiBody, parseCorpList, parseCorpRows, normalizeApiItem, detectExtFinance,
     G2B, g2bUrl, scanAuditFields, summarizeChanges, chgPlan, autoKind, CHG_KINDS, changesOf, ordSnap, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
     ordOf, viaParts, viaKey, viaStatus, itemsInName, isRecentItem, issuedTooEarly, isAdvBond, advBondCheck, ADV_DAYS, matchCandidates, checklistStatus, holds, hasItem, classifyPages, classifyTitleLines, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail,
-    headLines, learnSigs, learnedItem, classifyInfo, suffixOf,
+    headLines, learnSigs, learnedItem, classifyInfo, suffixOf, shareSafe,
     PAY_KINDS, typeKey, hasRounds, roundOnly, roundSteps, roundHint, roundLabel, routeRound,
   };
   root.JH = root.JH || {};

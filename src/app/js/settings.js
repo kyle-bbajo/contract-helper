@@ -183,8 +183,8 @@
     const rs = JH.app.db.learned || [];
     $('#learnedN').textContent = rs.length;
     const sh = JH.app.share || {}, nShared = rs.filter((r) => r.shared).length;
-    $('#learnedShare').textContent = sh.state === 'ok' ? `동료와 나눔 켜짐 · 다른 PC에서 받은 규칙 ${nShared}개` : sh.state === 'off' ? `동료와 나누기 꺼짐: ${sh.why}` : sh.state === 'err' ? `나누기 실패: ${sh.why}` : '';
-    $('#learnedList').innerHTML = rs.length ? rs.map((r, i) => ({ r, i })).reverse().map(({ r, i }) => `<li>${r.head ? `제목 「${esc(r.head)}」` : `파일 이름 「${esc(r.file)}」`} → <b>${esc(r.item || r.suf)}</b> <small class="muted">${esc(String(r.from || ''))}</small> <button type="button" class="link sm danger" data-learndel="${i}">지우기</button></li>`).join('') : '<li class="muted">아직 없음 — 확인 팝업에서 고르면 여기에 쌓입니다</li>';
+    $('#learnedShare').textContent = sh.state === 'ok' ? `동료와 나눔 켜짐 · 다른 PC에서 받은 규칙 ${nShared}개 · 나누는 것은 '서류 제목 → 종류' 규칙과 저장한 질문답변뿐(계약·서류 파일·업체·금액은 안 나감)` : sh.state === 'off' ? `동료와 나누기 꺼짐: ${sh.why}` : sh.state === 'err' ? `나누기 실패: ${sh.why}` : '';
+    $('#learnedList').innerHTML = rs.length ? rs.map((r, i) => ({ r, i })).reverse().map(({ r, i }) => `<li>${r.head ? `제목 「${esc(r.head)}」` : `파일 이름 「${esc(r.file)}」`} → <b>${esc(r.item || r.suf)}</b> <small class="muted">${r.shared ? '동료에게서 받음 · ' : JH.app.shareableRule(r) ? '' : '이 PC만(계약·업체·번호가 섞여 나누지 않음) · '}${esc(String(r.from || ''))}</small> <button type="button" class="link sm danger" data-learndel="${i}">지우기</button></li>`).join('') : '<li class="muted">아직 없음 — 확인 팝업에서 고르면 여기에 쌓입니다</li>';
   }
   $('#learnedList').addEventListener('click', async (e) => { const b = e.target.closest('[data-learndel]'); if (!b) return; JH.app.db.learned.splice(+b.dataset.learndel, 1); await JH.app.saveDb(true); renderLearned(); JH.app.toast('그 규칙을 지웠습니다.', 'ok'); });
   $('#btnResetLists').onclick = () => { if (confirm('공사·용역 서류 목록을 「전자·서면계약 구비서류 안내」 기준으로 되돌릴까요?')) { draft = L.defaultChecklists(); renderRows(); } };

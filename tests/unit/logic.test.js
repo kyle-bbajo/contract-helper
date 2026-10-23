@@ -188,3 +188,16 @@ test('선금 보증서: 보증기간 읽기, 준공일 + 60일 이상이면 유�
   assert.equal(L.classifyItem(list.용역, '선금보증서_한빛.pdf', ''), 's-advbond');
   const ids = list.공사.map((x) => x.id); assert.ok(ids.indexOf('c-dmgins') < ids.indexOf('c-advbond') && ids.indexOf('c-advbond') < ids.indexOf('c-finish'), '착공계와 준공계 사이');
 });
+
+test('동료와 나누는 배운 말: 서류 종류 제목만, 계약·업체·사람·번호가 섞이면 이 PC에만', () => {
+  const names = ['시청사 옥상 방수공사', '(주)한빛건설', '김담당', '시설관리팀'];
+  assert.equal(L.shareSafe('4대보험 사업장 가입내역 확인서', names), false); // 숫자
+  assert.equal(L.shareSafe('사업장 가입내역 확인서', names), true);
+  assert.equal(L.shareSafe('안전점검 결과 확인서', names), true);
+  assert.equal(L.shareSafe('한빛건설 안전점검 결과', names), false); // 업체명
+  assert.equal(L.shareSafe('시청사 옥상 방수공사 준공검사', names), false); // 계약명
+  assert.equal(L.shareSafe('김담당 확인 요청서', names), false); // 담당자
+  assert.equal(L.shareSafe('주식회사 대한 납품서', names), false); // 회사 표시
+  assert.equal(L.shareSafe('대표자 성명 확인', names), false);
+  assert.equal(L.shareSafe('홍길동', names), false); // 짧은 말(사람 이름일 수 있음)
+});

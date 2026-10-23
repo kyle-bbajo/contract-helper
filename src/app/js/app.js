@@ -84,12 +84,24 @@
   // ---------- 배운 규칙 나누기(GitHub 이슈 댓글) ----------
   // 배우면 잠시 뒤 올리고(한 번에 모아서), 켤 때 다른 PC가 배운 것을 받아 씀(이 PC가 배운 것이 먼저)
   let shareTimer = null; ui.share = ui.share || { state: '' };
+  // 나누는 것은 '서류 제목 → 서류 종류' 규칙뿐. 계약·서류 파일·업체·금액은 올리지 않고, 계약명·업체명·사람·번호가 섞인 제목도 이 PC에만 둠
+  function privateNames() {
+    const out = [];
+    for (const c of Object.values(db.contracts || {})) if (c) out.push(c.name, c.vendor, c.officer, c.dept, ...(c.aliases || []));
+    return out.filter((x) => x && String(x).trim().length >= 2);
+  }
+  const shareable = (r, names) => (r.head ? L.shareSafe(r.head, names) : r.file ? L.shareSafe(r.file, names) : false);
   function queueShare(rules) {
-    db.sharePending = [...(db.sharePending || []), ...rules.map((r) => ({ head: r.head, file: r.file, suf: r.suf, item: r.item }))].slice(-300);
+    const names = privateNames();
+    const ok = rules.filter((r) => shareable(r, names));
+    if (!ok.length) return;
+    db.sharePending = [...(db.sharePending || []), ...ok.map((r) => ({ head: r.head, file: r.file, suf: r.suf, item: r.item }))].slice(-300);
     clearTimeout(shareTimer); shareTimer = setTimeout(pushShare, 20000);
   }
   async function pushShare() {
-    const p = db.sharePending || []; if (!p.length || !S.online) return;
+    const names = privateNames();
+    db.sharePending = (db.sharePending || []).filter((r) => shareable(r, names)); // 예전 버전이 모아 둔 것도 다시 거름
+    const p = db.sharePending; if (!p.length || !S.online) return;
     try { const r = await S.sharePost(p); if (r.skipped) { ui.share = { state: 'off', why: r.skipped }; return; } db.sharePending = []; ui.share = { state: 'ok', at: Date.now() }; await saveDb(); }
     catch (e) { ui.share = { state: 'err', why: e.message }; }
   }
@@ -2455,7 +2467,7 @@
 
   root.JH.app = {
     get cfg() { return cfg; }, set cfg(v) { cfg = v; }, get db() { return db; }, get org() { return org; },
-    get share() { return ui.share; }, pullShare, pushShare,
+    get share() { return ui.share; }, pullShare, pushShare, shareableRule: (r) => shareable(r, privateNames()),
     defaults, lists, printList, startWatch, checkAccounts, saveCfg, saveDb, fetchContracts, enrichContracts, fillFromDocs, openForms, render, toast, banner, start, ingest, setView, progress,
     setChecklists(v) { db.checklists = v; return saveDb(true); },
   };
