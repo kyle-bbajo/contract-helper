@@ -901,3 +901,14 @@ body.only-notice .bar .btn.back { display: none; }
 .stage.folded .fold-ic { transform: rotate(-90deg); }
 .stage.folded > :not(.stage-head) { display: none; }
 .stage.folded .stage-head { border-bottom: 0; }
+
+/* 서류 줄의 종류 고르기 + 찾기 칸(면허·등록증처럼 쳐서 찾기) */
+.cpick.mini { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.cpick.mini .cpick-q { width: 6.5em; padding: 3px 6px; font-size: 12.5px; }
+.cpick.mini .cpick-q:focus { width: 9em; }
+.cpick-q.none { border-color: var(--seal); }
+
+.sp-row .sp-no { width: 20px; height: 20px; border-radius: 50%; background: var(--ink-soft); color: var(--ink); display: inline-grid; place-items: center; font-size: 11.5px; font-weight: 700; flex: none; }
+.sp-row.on .sp-no { background: var(--ink); color: #fff; }
+.sp-row .sp-pages { font-variant-numeric: tabular-nums; }
+.sp-pgv { cursor: pointer; }

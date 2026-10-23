@@ -1081,21 +1081,36 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     const id = await page.evaluate(() => JH.app.db.docs.find((d) => d.name === '스캔묶음.pdf').id);
     await page.click(`[data-act="split"][data-doc="${id}"]`);
     await page.waitForSelector('#spRows .sp-row', { timeout: 60000 });
-    const plan = await page.$$eval('#spRows .sp-row', (rs) => rs.map((r) => `${r.querySelector('[data-spf="from"]').value}-${r.querySelector('[data-spf="to"]').value} ${r.querySelector('select').selectedOptions[0].textContent}`));
-    assert.deepEqual(plan, ['1-2 계약 · 계약서', '3-4 착공계 · 4대 사회보험 가입증명서', '5-5 대금청구 · 지방세 납세증명서', '6-6 대금청구 · 국세 납세증명서'], '나눌 안: ' + plan.join(' / '));
+    const rowsTxt = () => page.$$eval('#spRows .sp-row', (rs) => rs.map((r) => `${r.querySelector('.sp-pages').textContent} ${r.querySelector('select').selectedOptions[0].textContent}`));
+    const plan = await rowsTxt();
+    assert.deepEqual(plan, ['1~2쪽 계약 · 계약서', '3~4쪽 착공계 · 4대 사회보험 가입증명서', '5쪽 대금청구 · 지방세 납세증명서', '6쪽 대금청구 · 국세 납세증명서'], '나눌 안: ' + plan.join(' / '));
     await page.waitForSelector('#spView .sp-pgv[data-p="6"]', { timeout: 30000 });
     await page.screenshot({ path: join(SHOTS, '10-쪽별로나누기.png') });
-    // 직접 지정: 2쪽을 두 번 누르면 2쪽부터 새 서류(종류 모름) → 그 줄 ✕로 다시 앞 서류에 붙임
-    await page.dblclick('#spView .sp-pgv[data-p="2"]');
-    assert.deepEqual(await page.$$eval('#spRows .sp-row', (rs) => rs.map((r) => r.querySelector('[data-spf="from"]').value + '-' + r.querySelector('[data-spf="to"]').value)), ['1-1', '2-2', '3-4', '5-5', '6-6'], '쪽 두 번 눌러 자르기');
+    // 쪽 그림 누르기: 3번째 줄(5쪽 지방세)을 고르고 6쪽을 누르면 6쪽이 지방세로(국세 줄은 비어 사라짐)
+    const pick = async (pn) => { await page.click(`#spView .sp-pgv[data-p="${pn}"]`); await page.waitForTimeout(400); };
+    await page.click('#spRows .sp-row >> nth=2'); await pick(6);
+    assert.deepEqual((await rowsTxt()).map((x) => x.split(' ')[0]), ['1~2쪽', '3~4쪽', '5~6쪽'], '쪽 눌러 옮기기');
+    // [+ 새 서류] → 6쪽을 누르고 '국세'로 찾아 고르기
+    await page.click('#spAddRow'); await pick(6);
+    await page.fill('#spRows .sp-row.on .cpick-q', '국세');
+    assert.deepEqual(await rowsTxt(), plan, '새 서류에 쪽 넣고 종류 고르기');
+    // 떨어진 쪽 묶기: 1번째 줄을 고르고 Shift로 3~4쪽은 아니고 5쪽만 — 확인 후 되돌림
+    await page.click('#spRows .sp-row >> nth=0'); await pick(5);
+    assert.match((await rowsTxt())[0], /^1~2, 5쪽/, '떨어진 쪽도 한 서류로');
+    // 지방세 줄은 비어 사라졌으므로 [+ 새 서류]로 5쪽을 다시 지방세로
+    if ((await rowsTxt()).length !== 4) { await page.click('#spAddRow'); await pick(5); await page.fill('#spRows .sp-row.on .cpick-q', '지방세'); }
+    assert.deepEqual(await rowsTxt(), plan, '다시 원래 안');
+    // 두 번 누르면 그 쪽부터 새 서류 → ✕로 다시 앞 서류에
+    await page.dblclick('#spView .sp-pgv[data-p="2"]'); await page.waitForTimeout(400);
+    assert.deepEqual((await rowsTxt()).map((x) => x.split(' ')[0]), ['1쪽', '2쪽', '3~4쪽', '5쪽', '6쪽'], '두 번 눌러 자르기');
     await page.click('#spRows .sp-row >> nth=1 >> [data-spdel]');
-    assert.equal(await page.$$eval('#spRows .sp-row', (rs) => rs.length), 4, '줄 빼면 앞 서류에 붙음');
+    assert.deepEqual(await rowsTxt(), plan, '✕면 앞 서류에 붙음');
     await page.click('#spSave');
     await waitFor(() => page.evaluate(() => !JH.app.db.docs.some((d) => d.name === '스캔묶음.pdf')), 60000, '나눔');
     const got = await page.evaluate((k) => JH.app.db.docs.filter((d) => d.splitFrom === '스캔묶음.pdf').map((d) => [d.name, d.itemId, d.key === k]), key);
     assert.deepEqual(got.map((x) => x[1]), ['c-contract', 'c-insjoin', 'c-ltax', 'c-tax'], '서류마다 칸으로');
     assert.ok(got.every((x) => x[2]), '같은 계약');
-    assert.match(got[0][0], /_1-2쪽\.pdf$/);
+    assert.match(got[0][0], /_1-2쪽\.pdf$/, got[0][0]);
     // 되돌리기: 나눈 파일은 빠지고 원래 묶음이 돌아옴
     await page.click('#btnUndo');
     await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => d.name === '스캔묶음.pdf') && !JH.app.db.docs.some((d) => d.splitFrom === '스캔묶음.pdf')), 30000, '되돌림');
@@ -1196,6 +1211,54 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
   }
   step('[새로고침]은 나라장터 계약 목록과 함께 계약 폴더도 다시 읽음(탐색기에서 직접 넣은 파일 반영)');
+
+  // 서류 줄의 종류 찾기: '면허'든 '등록증'이든 쳐서 찾고 Enter면 그 종류로
+  {
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    await page.click('nav [data-view="contracts"]');
+    await page.click('.citem:has-text("시청사 옥상 방수공사")'); await page.waitForSelector('#detail .file .cpick.mini');
+    const id = await page.$eval('#detail .file .cpick.mini select', (s) => s.dataset.doc);
+    const q = `#detail .cpick.mini:has(select[data-doc="${id}"]) .cpick-q`;
+    await page.fill(q, '면허');
+    assert.ok(await page.$$eval(`select[data-doc="${id}"] option`, (os) => os.some((o) => !o.hidden && /면허 등록증/.test(o.textContent))), "'면허'로 면허 등록증이 보임");
+    await page.fill(q, '등록증');
+    assert.ok(await page.$$eval(`select[data-doc="${id}"] option`, (os) => os.some((o) => !o.hidden && /면허 등록증/.test(o.textContent))), "'등록증'으로도 보임");
+    await page.fill(q, '면허등록증'); await page.press(q, 'Enter');
+    await waitFor(() => page.evaluate((i) => /-license$/.test(JH.app.db.docs.find((d) => d.id === i).itemId || ''), id), 10000, 'Enter로 옮김');
+    await page.click('#btnUndo');
+    await waitFor(() => page.evaluate((i) => !/-license$/.test(JH.app.db.docs.find((d) => d.id === i).itemId || ''), id), 10000, '되돌림');
+  }
+  step('서류 줄의 종류 찾기 칸: 면허·등록증 등 아무 말로 찾고 Enter면 그 종류로(되돌리기 가능)');
+
+  // 묶음 파일(착공계·현장대리인계·가입자명부·가입증명서를 한 파일로): 한 칸의 ✕는 그 칸에서만 빼고 파일·다른 칸은 그대로
+  {
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    const mk = await page.context().newPage();
+    const pg = (t) => `<section style="page-break-after:always;font-family:'Noto Sans CJK KR';padding:40px"><h1 style="font-size:36px;text-align:center">${t}</h1><p>공사명 : 시청사 옥상 방수공사</p></section>`;
+    await mk.setContent('<body style="margin:0">' + ['4대 사회보험 가입자명부', '착공계', '현장대리인계', '사업장 가입내역 확인서'].map(pg).join('') + '</body>');
+    const pdf = await mk.pdf({ format: 'A4' }); await mk.close();
+    await page.click('nav [data-view="contracts"]'); await page.click('.citem:has-text("시청사 옥상 방수공사")');
+    const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('[data-act="addhere"]')]);
+    await fc.setFiles([{ name: '착공계묶음.pdf', mimeType: 'application/pdf', buffer: pdf }]);
+    await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => d.name === '착공계묶음.pdf')), 60000, '묶음 올림');
+    await waitFor(async () => !(await page.isVisible('#progress')), 60000, '정리 끝'); await page.waitForTimeout(1000);
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    const d0 = await page.evaluate(() => { const d = JH.app.db.docs.find((x) => x.name === '착공계묶음.pdf'); return { id: d.id, item: d.itemId, also: d.also || [] }; });
+    assert.ok(d0.also.length >= 2, '함께 든 서류 표시: ' + JSON.stringify(d0));
+    // 대표 칸 줄의 ✕ → 이 칸에서만 빼기
+    page.once('dialog', (dlg) => dlg.accept());
+    await page.click(`.row[data-drop-item="${d0.item}"] .file [data-act="del"][data-doc="${d0.id}"]`);
+    await waitFor(() => page.evaluate((o) => { const d = JH.app.db.docs.find((x) => x.id === o.id); return d && d.itemId !== o.item; }, d0), 15000, '대표 칸만 바뀜');
+    const d1 = await page.evaluate((id) => { const d = JH.app.db.docs.find((x) => x.id === id); return { item: d.itemId, also: d.also || [] }; }, d0.id);
+    assert.ok(d1.item && d0.also.includes(d1.item), '남은 서류 중 하나가 대표');
+    assert.equal(d1.also.length, d0.also.length - 1, '다른 칸은 그대로');
+    // 함께 든 서류 줄의 ✕ → 그 표시만 뺌
+    const one = d1.also[0];
+    await page.click(`.row[data-drop-item="${one}"] .file.inner [data-act="unalso"][data-doc="${d0.id}"]`);
+    await waitFor(() => page.evaluate((o) => !(JH.app.db.docs.find((x) => x.id === o.id).also || []).includes(o.one), { id: d0.id, one }), 10000, '표시만 뺌');
+    assert.ok(await page.evaluate((id) => !!JH.app.db.docs.find((x) => x.id === id), d0.id), '파일은 그대로');
+  }
+  step('묶음 파일: 한 칸 줄의 ✕는 그 칸에서만 빼고(파일·다른 칸 그대로), 함께 든 서류 줄의 ✕는 그 표시만 뺌');
 
   // 동료 규칙 받기: 받은 규칙에 맞는 '종류 못 정한/확인 필요' 서류는 그 자리에서 정해짐(사람이 고른 것은 그대로)
   {
