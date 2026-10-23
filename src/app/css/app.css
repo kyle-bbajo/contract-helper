@@ -887,3 +887,17 @@ body.only-notice .tabs { display: none; }
 .sp-pgv.on { border-color: var(--ink); }
 .sp-pgv.cut::before { content: '✂'; position: absolute; left: -9px; top: -10px; font-size: 14px; color: var(--seal); }
 @media (max-width: 760px) { .dlg-body.sp { grid-template-columns: 1fr; } }
+
+/* 뒤로 버튼(상단, 이름 옆) */
+.bar .btn.back { width: 34px; height: 34px; padding: 0; display: grid; place-items: center; margin-left: -14px; }
+.bar .btn.back svg { width: 18px; height: 18px; }
+.bar .btn.back:disabled { opacity: .35; cursor: default; }
+body.only-notice .bar .btn.back { display: none; }
+
+/* 단계 접기: 제목을 누르면 그 단계의 서류 줄을 접음 */
+.stage-head[data-fold] { cursor: pointer; user-select: none; }
+.stage-head[data-fold]:hover { background: var(--ink-soft); }
+.stage-head .fold-ic { width: 14px; color: var(--muted); font-size: 13px; transition: transform .15s; flex: none; text-align: center; }
+.stage.folded .fold-ic { transform: rotate(-90deg); }
+.stage.folded > :not(.stage-head) { display: none; }
+.stage.folded .stage-head { border-bottom: 0; }

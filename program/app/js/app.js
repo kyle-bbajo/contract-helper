@@ -34,7 +34,7 @@
   const WIN = Math.random().toString(36).slice(2, 10), ROLE = ONLY === 'notice' ? 'notice' : 'main';
   const ui = { view: 'home', sel: null, q: '', officer: '', officerTouched: false, type: '', state: '', board: '', sort: (() => { try { return localStorage.getItem('jh.sort') || 'end-desc'; } catch (_) { return 'end-desc'; } })() };
 
-  const CHECKLIST_VER = 9; // 9: 노무비 지급확인제 → 공사 노무비 구분관리 및 지급확인 적용제외 신청서(합의서도 이 칸) // (지난 것) 4: 선금 보증서 · 5: 준공검사원 지정통보 · 6: 사업장 가입내역 확인서(4대보험 가입증명서) 등 찾는 말 추가 · 7: 하도급 계약서·계약보증서는 그 밖의 계약 서류 · 8: 구매요구에 산업안전재해율 결과·안전보건관리계획서·적격수급업체 안전보건 수준 평가표(공사·용역)
+  const CHECKLIST_VER = 10; // 10: 준공계·준공검사원을 두 칸으로, 준공검사원 지정통보는 필수 아님 · 9: 노무비 지급확인제 → 공사 노무비 구분관리 및 지급확인 적용제외 신청서(합의서도 이 칸) // (지난 것) 4: 선금 보증서 · 5: 준공검사원 지정통보 · 6: 사업장 가입내역 확인서(4대보험 가입증명서) 등 찾는 말 추가 · 7: 하도급 계약서·계약보증서는 그 밖의 계약 서류 · 8: 구매요구에 산업안전재해율 결과·안전보건관리계획서·적격수급업체 안전보건 수준 평가표(공사·용역)
   const lists = (type) => (db.checklists && db.checklists[type]) || defaults[type] || defaults.공사;
   const contracts = () => Object.values(db.contracts).filter((c) => !c.archived);
   // 계약별 서류: 화면을 그리는 동안은 한 번 만든 색인(docIndex)으로 찾음(서류 수천 개여도 계약마다 다시 훑지 않음)
@@ -479,6 +479,8 @@
     const keep = !junk && !L.norm(stem).includes(L.norm(itemNm)) ? `_${L.safeName(stem, 40)}` : '';
     return `${n ? n + '_' : ''}${itemNm}${cName ? '_' + cName : ''}${keep}${ext}`;
   }
+  // 파일이 여러 개인 게 보통인 칸(수정본을 묻지 않음)
+  const MULTI_ITEM = /-(related|agent|photo|result|roster|laborlist|bizreg|license|licbook)$/;
   async function ingest(fileList, forceKey, forceItem, opt = {}) {
     const files = [...fileList].filter((f) => f && f.name && !f.name.startsWith('.') && !/^(thumbs\.db|desktop\.ini)$/i.test(f.name));
     if (!files.length) return;
@@ -571,7 +573,10 @@
         const dir = place.dir;
         const fname = tidyName(item, c, r.name, place.n);
         const saved = await S.save(dir, fname, r.bytes);
+        // 같은 칸에 이미 서류가 있으면(사진대지·자격증처럼 여러 장이 보통인 칸 빼고) 수정본인지 팝업으로 물음
+        const prev = c && item && !MULTI_ITEM.test(item.id) ? db.docs.find((x) => x.key === c.key && x.itemId === item.id && (x.pay || null) === (rnd ? rnd.id : null)) : null;
         textDirty = true; db.docs.push({
+          ...(prev ? { revOf: prev.id } : {}),
           id: r.id, key: c ? c.key : null, itemId: item ? item.id : null, path: saved.path, name: r.name, kind: r.kind,
           size: r.size, mime: r.mime, addedAt: new Date().toISOString(), ocr: r.ocr, meta: r.meta, text: r.text, title: r.title, dates: r.dates, manual: !!forced && !r.rerouted, facts: L.docFacts(r.lines),
           ...(rnd ? { pay: rnd.id } : {}), ...(!c && r.cands && r.cands.length ? { cands: r.cands } : {}), ...(r.heads && r.heads.length ? { heads: r.heads } : {}), ...(r.unsure ? { unsure: true, alts: r.alts } : {}),
@@ -625,7 +630,10 @@
       if (placed.length || again.length) { placed.forEach((d) => logAct(`올림 「${d.name}」 → ${whereOf(d)}`)); undoStack.push({ label: `서류 ${placed.length + again.length}개 올림`, s: snap0, at: Date.now() }); if (undoStack.length > 30) undoStack.shift(); paintUndo(); }
       if (R.ocrBroken) msg += ' 스캔본 글자 인식을 시작하지 못해 일부는 미분류로 갔습니다.';
       // 어느 계약인지·어떤 서류인지 못 찾은 것은 바로 팝업으로 보여 주고 고르게 함
-      const unsure = [...recs.filter((r) => !r.ignored).map((r) => r.id), ...again.map((d) => d.id)].filter((id) => db.docs.some((d) => d.id === id && (!d.key || !d.itemId || d.unsure)));
+      // 확인할 것: 계약·종류를 못 정함, 헷갈림, 같은 칸에 이미 서류가 있음(수정본?). 자동으로 읽은 폴더에서 온 것은 모두 확인(설정에서 끌 수 있음)
+      // 올린 파일은 모두 확인 팝업으로 보여 줌(설정 → 서류 목록 '올릴 때마다 확인'으로 끌 수 있음). 자동으로 읽은 폴더는 따로 '자동으로 가져온 서류 확인'
+      const confirmAll = opt.onlyMatched ? cfg.watchConfirm !== false : cfg.uploadConfirm !== false;
+      const unsure = [...recs.filter((r) => !r.ignored).map((r) => r.id), ...again.map((d) => d.id)].filter((id) => db.docs.some((d) => d.id === id && (confirmAll || !d.key || !d.itemId || d.unsure || d.revOf)));
       const nLearned = recs.filter((r) => r.learned).length;
       if (nLearned) msg += ` ${nLearned}개는 전에 배운 대로 넣었습니다.`;
       toast(msg, inbox ? '' : 'ok', unsure.length ? { label: '확인하기', run: () => openPreview(unsure, 0, true) } : recs.length || again.length ? undoAction() : null);
@@ -1148,8 +1156,9 @@
       const v = dateOfDoc(d, /-(inspect|proginsp)$/.test(d.itemId) ? 'inspect' : 'finish');
       dt = `<label class="vdate${v ? '' : ' empty'}" title="지출요청일(이 날짜 + 2주) 계산에 씁니다">날짜<input type="text" data-date inputmode="numeric" maxlength="10" placeholder="예: 20261023" autocomplete="off" data-act="docdate" data-doc="${d.id}" value="${isoOf(v)}">${d.dateOverride ? '<small>직접</small>' : ''}</label>`;
     }
+    const revTag = d.rev ? '<span class="ft" title="같은 칸에 있던 서류의 수정본">수정본</span>' : '';
     const chk = d.unsure ? `<button type="button" class="ft warn chk-btn" data-act="confirmdoc" data-doc="${d.id}" title="제목에 다른 서류 이름도 있어 헷갈립니다. 눌러서 확인하면 배웁니다">확인 필요</button>` : '';
-    return `<div class="file">${tag}${chk}<span class="fn" title="${esc(d.name)}">${esc(d.name)}</span>${conv}${dt}
+    return `<div class="file">${tag}${revTag}${chk}<span class="fn" title="${esc(d.name)}">${esc(d.name)}</span>${conv}${dt}
       <select data-act="moveitem" data-doc="${d.id}" aria-label="서류 종류">${itemOptions(list, d.itemId, true)}</select>${payOptions(d)}
       <button class="link" data-act="view" data-doc="${d.id}">보기</button>${d.kind === 'pdf' && d.key && ((d.also && d.also.length) || d.pages > 1) ? `
       <button class="link" data-act="split" data-doc="${d.id}" title="한 파일에 여러 서류를 스캔했으면 서류마다 따로 잘라 각 칸에 넣음">나누기</button>` : ''}
@@ -1389,8 +1398,9 @@
           const req = g.items.filter((x) => x.required);
           const done = req.filter((x) => L.hasItem(docs, gotMap(c), x.id) || (x.alt && L.hasItem(docs, gotMap(c), x.alt))).length;
           const where = [...new Set(g.items.map((x) => SRC_LABEL[x.source] || x.source))].join(', ');
-          return `<section class="stage${req.length && done === req.length ? ' done' : ''}">
-            <div class="stage-head"><span class="stage-no">${gi + 1}</span><h3>${esc(g.name)}</h3><span class="where">${esc(where)}</span>${(() => { const vs = L.viaStatus(c, g.items, (id) => L.hasItem(docs, gotMap(c), id) || docs.some((d) => (d.also || []).includes(id))); return vs.need ? `<span class="sum num via-sum${vs.done < vs.need ? ' bad-t' : ''}" title="${esc(vs.missing.length ? '경유 안 됨: ' + vs.missing.join(', ') : '모두 경유')}">감독관 경유 ${vs.done}/${vs.need}</span>` : ''; })()}<span class="sum num">필수 ${done}/${req.length}</span></div>
+          const folded = foldSet().has(g.name);
+          return `<section class="stage${req.length && done === req.length ? ' done' : ''}${folded ? ' folded' : ''}">
+            <div class="stage-head" data-fold="${esc(g.name)}" role="button" tabindex="0" aria-expanded="${!folded}" title="${folded ? '눌러서 펼치기' : '눌러서 접기'} (접어 둔 단계는 다른 계약에서도 접혀 있음)"><span class="fold-ic" aria-hidden="true">▾</span><span class="stage-no">${gi + 1}</span><h3>${esc(g.name)}</h3><span class="where">${esc(where)}</span>${(() => { const vs = L.viaStatus(c, g.items, (id) => L.hasItem(docs, gotMap(c), id) || docs.some((d) => (d.also || []).includes(id))); return vs.need ? `<span class="sum num via-sum${vs.done < vs.need ? ' bad-t' : ''}" title="${esc(vs.missing.length ? '경유 안 됨: ' + vs.missing.join(', ') : '모두 경유')}">감독관 경유 ${vs.done}/${vs.need}</span>` : ''; })()}<span class="sum num">필수 ${done}/${req.length}</span></div>
             ${g.items.map((x) => {
               const ds = docs.filter((d) => d.itemId === x.id);
               const inner = docs.filter((d) => d.itemId !== x.id && (d.also || []).includes(x.id));
@@ -1928,7 +1938,14 @@
     };
     fillItems(d.key || cands[0]); $('#pvContract').onchange = (e) => fillItems(e.target.value);
     const altNames = (d.alts || []).map((id) => (c && classList(c).find((x) => x.id === id) || {}).name).filter(Boolean);
+    const revPrev = d.revOf && docById(d.revOf);
+    if (pv.confirm && revPrev && !d.unsure && d.key && d.itemId === revPrev.itemId) {
+      $('#pvWhy').textContent = `이 칸(${(classList(db.contracts[d.key]).find((x) => x.id === d.itemId) || {}).name || ''})에 이미 「${revPrev.name}」이 있습니다. 새 파일이 수정본이면 [이대로 저장]을 누르세요 — 둘 다 두고 새 파일에 '수정본' 표시를 합니다. 다른 서류면 종류를 고르세요.`;
+    } else if (pv.confirm && d.key && d.itemId && !d.unsure && !d.revOf) {
+      $('#pvWhy').textContent = '이렇게 넣었습니다. 계약과 서류 종류가 맞으면 [이대로 저장], 틀리면 고르세요(고친 것은 배웁니다). 묻지 않고 바로 넣으려면 설정 → 서류 목록 → 올릴 때마다 확인을 끄세요.';
+    } else
     $('#pvWhy').textContent = pv.confirm ? (!c ? (cands.length > 1 ? `같은 업체(또는 비슷한 이름) 계약이 ${cands.length}개라 확실하지 않습니다. 가장 가까운 계약을 골라 두었으니 맞는지 확인해 주세요.` : cands.length ? '확실하지 않아 가장 가까운 계약을 골라 두었습니다.' : '어느 계약 서류인지 찾지 못했습니다.') : !d.itemId ? '어떤 서류인지 찾지 못했습니다.' : d.unsure ? `제목에 다른 서류 이름(${altNames.join(', ')})도 있어 헷갈립니다.` : '') + ' 내용을 보고 맞게 골라 주세요. 고른 답은 배워서 다음부터 같은 제목이면 바로 넣습니다.' : '';
+    if (pv.confirm && revPrev && d.unsure) $('#pvWhy').textContent += ` 이 칸에는 이미 「${revPrev.name}」이 있습니다(같은 서류의 수정본이면 그대로 저장).`;
     $('#pvAi').hidden = true;
     if (pv.confirm && (c || cands[0]) && (!d.itemId || d.unsure)) aiGuess(d, c || db.contracts[cands[0]], tok);
     $('#pvPrev').disabled = pv.i === 0; $('#pvNext').textContent = pv.i < pv.ids.length - 1 ? '다음' : '닫기';
@@ -2132,6 +2149,8 @@
   $('#pvSave').onclick = async () => {
     const d = docById(pv.ids[pv.i]); if (!d) return;
     const key = $('#pvContract').value || null, item = key ? $('#pvItem').value || null : null;
+    // 수정본 확인: 같은 칸 그대로 저장하면 '수정본' 표시
+    if (d.revOf) { const p0 = docById(d.revOf); if (p0 && key === p0.key && item === p0.itemId) d.rev = true; delete d.revOf; await saveDb(true); }
     // 사람이 고른(또는 '맞음'으로 확인한) 서류 종류를 배움
     if (key && key !== d.key) { const am = learnAlias(d, db.contracts[key]); delete d.cands; if (am) setTimeout(() => toast(am, 'ok'), 80); }
     if (key && item && (pv.confirm || item !== d.itemId)) { const was = d.unsure; delete d.unsure; delete d.alts; const msg = learnFrom(d, db.contracts[key], item); if (msg && (was || item !== d.itemId || !d.itemId)) setTimeout(() => toast(msg, 'ok'), 50); await saveDb(true); }
@@ -2231,11 +2250,47 @@
       return `<div class="tab-it${on ? ' on' : ''}" role="tab" aria-selected="${on}" tabindex="0" data-tab="${t.id}" title="${esc((k ? k + ': ' : '') + title)}">${k ? `<span class="tk">${k}</span>` : ''}<span class="tl">${esc(title)}</span>${tabs.list.length > 1 ? `<button type="button" class="tx" data-tabx="${t.id}" aria-label="${esc(title)} 탭 닫기" title="탭 닫기">×</button>` : ''}</div>`;
     }).join('') + '<button type="button" class="tab-add" id="tabAdd" title="새 탭: 지금 화면을 하나 더 열어 두기(다른 계약·공고문을 나란히)" aria-label="새 탭">+</button>';
   }
+  // 뒤로: 탭마다 지나온 화면(화면 + 계약 + 공고문)을 기억해 [←]·Alt+←·마우스 뒤로 버튼으로 돌아감
+  const hist = new Map(); let navLock = false;
+  const sameState = (a, b) => a && b && a.view === b.view && (a.sel || null) === (b.sel || null) && (a.view !== 'notice' || (a.nid || null) === (b.nid || null));
+  function noteNav() {
+    if (navLock || ONLY || !tabs.on) return;
+    const h = hist.get(tabs.on) || []; const s = curState();
+    if (!sameState(h[h.length - 1], s)) { h.push(s); if (h.length > 60) h.shift(); hist.set(tabs.on, h); }
+    const b = $('#btnBack'); if (b) b.disabled = h.length < 2;
+  }
+  function goBack() {
+    const h = hist.get(tabs.on) || []; if (h.length < 2) return;
+    h.pop(); const s = h[h.length - 1];
+    navLock = true;
+    try { if (s.sel && db.contracts[s.sel]) ui.sel = s.sel; if (s.nid && JH.notice && JH.notice.select) JH.notice.select(s.nid); setView(s.view || 'home'); }
+    finally { navLock = false; }
+    syncTab();
+  }
   // 지금 보이는 화면을 켜져 있는 탭에 기억
   function syncTab() {
     if (ONLY || !tabs.on) return;
     const t = tabs.list.find((x) => x.id === tabs.on); if (!t) return;
-    Object.assign(t, curState()); saveTabs(); paintTabs();
+    Object.assign(t, curState()); saveTabs(); paintTabs(); noteNav();
+  }
+  // 단계(구매요구·계약·착공계…) 접기: 기본은 펼침, 제목을 누르면 접힘. 접은 단계는 이 PC에 기억(모든 계약에 같이)
+  let foldCache = null;
+  function foldSet() { if (!foldCache) { foldCache = new Set(); try { for (const x of JSON.parse(localStorage.getItem('jh.fold') || '[]')) foldCache.add(x); } catch (_) { /* 처음 */ } } return foldCache; }
+  function toggleFold(name) {
+    const f = foldSet(); if (f.has(name)) f.delete(name); else f.add(name);
+    try { localStorage.setItem('jh.fold', JSON.stringify([...f])); } catch (_) { /* 기억 못 해도 됨 */ }
+    const y = $('#detail') ? $('#detail').scrollTop : 0; render(); if ($('#detail')) $('#detail').scrollTop = y;
+  }
+  document.addEventListener('click', (e) => { const h = e.target.closest && e.target.closest('[data-fold]'); if (h && !e.target.closest('button, a, input, select, label')) toggleFold(h.dataset.fold); });
+  document.addEventListener('keydown', (e) => { const h = e.target.closest && e.target.closest('[data-fold]'); if (h && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggleFold(h.dataset.fold); } });
+  // 계약을 새 탭으로(현황판·목록에서 가운데 버튼): 보던 화면은 그대로 두고 탭만 하나 더
+  function openInNewTab(key) {
+    if (ONLY || !db.contracts[key]) return;
+    syncTab();
+    const t = { id: L.uid(), view: 'contracts', sel: key, nid: null };
+    const i = tabs.list.findIndex((x) => x.id === tabs.on);
+    tabs.list.splice(i + 1, 0, t); hist.set(t.id, [{ ...t }]); saveTabs(); paintTabs();
+    toast(`「${db.contracts[key].name}」을 새 탭에 열었습니다. 위 탭을 누르면 갑니다.`, 'ok');
   }
   function openTabState(t) {
     ui.sel = t.sel && db.contracts[t.sel] ? t.sel : ui.sel;
@@ -2246,7 +2301,7 @@
     if (id === tabs.on) return;
     syncTab();
     const t = tabs.list.find((x) => x.id === id); if (!t) return;
-    tabs.on = id; openTabState(t); saveTabs(); paintTabs();
+    navLock = true; try { tabs.on = id; openTabState(t); } finally { navLock = false; } saveTabs(); paintTabs(); noteNav();
   }
   function addTab() {
     syncTab();
@@ -2278,7 +2333,17 @@
     if (e.target.closest && e.target.closest('#tabAdd')) { addTab(); return; }
     const t = e.target.closest && e.target.closest('[data-tab]'); if (t) switchTab(t.dataset.tab);
   });
-  document.addEventListener('auxclick', (e) => { const t = e.button === 1 && e.target.closest && e.target.closest('[data-tab]'); if (t) { e.preventDefault(); closeTab(t.dataset.tab); } }); // 가운데 버튼으로 닫기
+  document.addEventListener('auxclick', (e) => {
+    if (e.button !== 1 || !e.target.closest) return;
+    const t = e.target.closest('[data-tab]'); if (t) { e.preventDefault(); closeTab(t.dataset.tab); return; } // 가운데 버튼으로 탭 닫기
+    const k = e.target.closest('#view-board tr[data-key], .citem[data-key], #homeNotice [data-key]'); if (k) { e.preventDefault(); openInNewTab(k.dataset.key); } // 계약을 새 탭으로
+  });
+  // 가운데 버튼을 누를 때 생기는 자동 스크롤 표시를 막음(계약 줄 위에서만)
+  document.addEventListener('mousedown', (e) => { if (e.button === 1 && e.target.closest && e.target.closest('#view-board tr[data-key], .citem[data-key], [data-tab]')) e.preventDefault(); });
+  // 뒤로: 버튼, Alt+←, 마우스 뒤로 버튼(4번째 버튼)
+  $('#btnBack').onclick = () => goBack();
+  document.addEventListener('mouseup', (e) => { if (e.button === 3) { e.preventDefault(); goBack(); } });
+  document.addEventListener('keydown', (e) => { if (e.altKey && e.key === 'ArrowLeft' && !ONLY) { e.preventDefault(); goBack(); } });
   document.addEventListener('keydown', (e) => {
     const t = e.target.closest && e.target.closest('[data-tab]');
     if (t && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); switchTab(t.dataset.tab); return; }
@@ -2385,7 +2450,7 @@
         const d = docById(t.dataset.doc), c = db.contracts[d.key]; const r = t.value ? roundById(c, t.value) : null;
         // 기성 회차 ↔ 준공: 준공계·지정통보·조서를 기성계·기성 지정통보·기성 검사조서로 바꿔 줌
         const suf = String(d.itemId || '').replace(/^[csg]-/, ''); let item = d.itemId;
-        const toProg = { finish: 'progfin', notice: 'prognotice', inspect: 'proginsp' }, toFin = { progfin: 'finish', prognotice: 'notice', proginsp: 'inspect' };
+        const toProg = { finish: 'progfin', finishreq: 'progfin', notice: 'prognotice', inspect: 'proginsp' }, toFin = { progfin: 'finish', prognotice: 'notice', proginsp: 'inspect' };
         if (r && r.kind === 'prog' && toProg[suf]) item = d.itemId.replace(suf, toProg[suf]);
         if (!r && toFin[suf]) item = d.itemId.replace(suf, toFin[suf]);
         await moveDoc(d, c.key, item, true, r ? r.id : ''); render(); return;
@@ -2854,7 +2919,7 @@
 
   root.JH.app = {
     get cfg() { return cfg; }, set cfg(v) { cfg = v; }, get db() { return db; }, get org() { return org; },
-    get share() { return ui.share; }, pullShare, pushShare, fitWindow, syncTab, shareableRule: (r) => shareable(r, privateNames()),
+    get share() { return ui.share; }, get recording() { return recording; }, get undoLabels() { return undoStack.map((u) => u.label); }, pullShare, pushShare, fitWindow, syncTab, shareableRule: (r) => shareable(r, privateNames()),
     defaults, lists, printList, startWatch, checkAccounts, saveCfg, saveDb, fetchContracts, enrichContracts, fillFromDocs, openForms, render, toast, banner, start, ingest, setView, progress,
     setChecklists(v) { db.checklists = v; return saveDb(true); },
   };

@@ -16,7 +16,7 @@
     $$('.tab', dlg).forEach((p) => p.classList.toggle('on', p.dataset.pane === name));
   }
   function open(name) {
-    { const cf = document.getElementById('chkAutoFit'); if (cf) cf.checked = JH.app.cfg.autoFit !== false; }
+    { const cf = document.getElementById('chkAutoFit'); if (cf) cf.checked = JH.app.cfg.autoFit !== false; const wc = document.getElementById('chkWatchConfirm'); if (wc) wc.checked = JH.app.cfg.watchConfirm !== false; const uc = document.getElementById('chkUploadConfirm'); if (uc) uc.checked = JH.app.cfg.uploadConfirm !== false; }
     const cfg = JH.app.cfg;
     const org = JH.app.org || {};
     const usingOrgKey = org.apiKey && cfg.apiKey === org.apiKey;
@@ -289,6 +289,10 @@
   $('#btnQuit').onclick = async () => { if (!confirm('프로그램을 종료할까요? 다시 쓰려면 바탕화면의 계약업무 도우미를 누르세요.')) return; try { await S.quit(); } catch (_) {} window.close(); };
 
   // 설정 → 정보 [지금 업데이트 확인]
+  const chkUc = document.getElementById('chkUploadConfirm');
+  if (chkUc) chkUc.addEventListener('change', async () => { JH.app.cfg.uploadConfirm = chkUc.checked; await JH.app.saveCfg(); JH.app.toast(chkUc.checked ? '올린 서류는 팝업으로 하나씩 확인합니다.' : '확실한 서류는 바로 넣고, 헷갈리는 것만 묻습니다.', 'ok'); });
+  const chkWc = document.getElementById('chkWatchConfirm');
+  if (chkWc) chkWc.addEventListener('change', async () => { JH.app.cfg.watchConfirm = chkWc.checked; await JH.app.saveCfg(); JH.app.toast(chkWc.checked ? '자동으로 가져온 서류는 확인 팝업으로 보여 줍니다.' : '자동으로 가져온 서류는 확실하면 바로 넣습니다(헷갈리는 것만 물음).', 'ok'); });
   const chkFit = document.getElementById('chkAutoFit');
   if (chkFit) {
     const sync = () => { chkFit.checked = JH.app.cfg.autoFit !== false; };

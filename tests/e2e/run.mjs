@@ -119,6 +119,8 @@ try {
   const saved = JSON.parse(readFileSync(join(data, '설정.json'), 'utf8'));
   assert.equal(saved.officer, '박주호'); assert.ok(!('apiKey' in saved), '공용 인증키는 개인 설정에 복사하지 않음');
   step('첫 실행: 이름만 넣으면 기관 공용 인증키로 내 담당 계약 자동 불러오기(개인 파일엔 키 저장 안 함)');
+  // 아래 시험들은 '헷갈리는 것만 묻기'로 진행(올릴 때마다 확인은 따로 시험)
+  await page.evaluate(async () => { JH.app.cfg.uploadConfirm = false; JH.app.cfg.watchConfirm = false; await JH.app.saveCfg(); });
   await waitFor(async () => /박주호님/.test(await page.textContent('#homeTitle')), 10000, '처음 화면 인사');
   await page.screenshot({ path: join(SHOTS, '0-처음화면.png') });
   step('처음 화면: 지출서류 정리 / 공고문 작성 두 갈래');
@@ -219,6 +221,9 @@ try {
   assert.equal(mg.amount, 48000000); assert.match(mg.end, /2026-?10-?10/); assert.ok(mg.nums.includes('R26BK0123456701')); assert.equal(mg.period, '2026-06-01 ~ 2026-10-10(1차 변경)', '최신 차수 값');
   // 합친 뒤 변경 차수 표: 원계약(-00) 값과 1차 변경 값이 둘 다 남아 설계변경·기간연장 기본값이 매겨짐
   await page.evaluate(() => JH.app.setView('contracts'));
+  await page.waitForFunction(() => document.querySelector('#dlgPreview').open || JH.app.db.docs.some((d) => d.name === '지방세_직접넣음.pdf'), null, { timeout: 30000 }); await page.waitForTimeout(800);
+  const revWhy = await page.evaluate(() => (document.querySelector('#dlgPreview').open ? document.querySelector('#pvWhy').textContent : ''));
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
   await page.click('.citem:has-text("시청사 옥상 방수공사") >> nth=0');
   if (!(await page.$('details.audit[open]'))) await page.click('details.audit summary');
   assert.equal(await page.locator('.chgtbl tbody tr').count(), 3, '변경 차수 표 3줄(원계약·1차·2차)');
@@ -229,7 +234,15 @@ try {
   step('데이터 폴더를 통째로 옮겨도 표식으로 찾음 + 계약 폴더 이름 변경 추적 + 직접 넣은 파일 분류 + 예전 서류대장 형식 읽기 + 차수만 다른 계약 자동 합침(차수 순서대로 변경 표)');
 
   // ===== 계약 화면: 맨 위 [업로드], 서류 줄마다 [+ 추가]로 직접 넣기 =====
+  // (직접 넣은 지방세가 이미 지방세가 있는 칸으로 가서 '수정본인가요?' 팝업이 뜸 → 수정본 표시 확인 후 닫음)
+  if (revWhy) assert.match(revWhy, /이미 「.*」이 있습니다.*수정본|정해 주세요|확인/, '직접 넣은 파일 확인 팝업: ' + revWhy);
+  // 켤 때 직접 넣은 파일 정리가 끝나고, 그 확인 팝업(수정본?)까지 뜬 뒤 닫음
+  await waitFor(async () => !(await page.isVisible('#progress')), 30000, '정리 끝'); await page.waitForTimeout(1500);
+  const pw = await page.evaluate(() => (document.querySelector('#dlgPreview').open ? document.querySelector('#pvWhy').textContent : ''));
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
   await page.click('.views [data-view="contracts"]');
+  await page.waitForTimeout(2500);
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
   await page.click('.citem:has-text("시청사 옥상 방수공사")');
   const order = await page.evaluate(() => { const d = document.querySelector('#detail .dbody'); const kids = [...d.children]; return [kids.indexOf(d.querySelector('#dropin')), kids.indexOf(d.querySelector('.stages')), d.querySelector('#dropin [data-act="addhere"]').textContent.trim()]; });
   assert.ok(order[0] >= 0 && order[0] < order[1] && order[2] === '업로드', '업로드 칸이 서류 목록 위에: ' + JSON.stringify(order));
@@ -255,6 +268,7 @@ try {
   const routed = await page.evaluate(() => { const f = (n) => { const d = JH.app.db.docs.find((x) => x.name === n); return d && { c: (JH.app.db.contracts[d.key] || {}).name, item: d.itemId }; }; return { pdf: f('체육관 시설 청소 용역_착수계.pdf'), xl: f('gyeonjeok.xlsx') }; });
   assert.deepEqual(routed.pdf, { c: '체육관 시설 청소 용역', item: 's-start' }, '오른쪽 위 업로드는 전체 계약에서 찾음');
   assert.deepEqual(routed.xl, { c: '시청사 옥상 방수공사', item: 'c-estimate' }, '엑셀 견적서 글자 읽어 분류');
+  await page.waitForTimeout(800); await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close())); // 올린 뒤 확인 팝업(수정본?)은 여기선 닫음
   if (!(await page.$('.citem.on:has-text("시청사 옥상 방수공사")'))) await page.click('.citem:has-text("시청사 옥상 방수공사")');
   await waitFor(() => page.$('.row[data-drop-item="c-estimate"] .file:has-text("gyeonjeok.xlsx") .ft:has-text("엑셀")'), 10000, '엑셀 표시');
   step('계약 화면 안 [업로드]는 그 계약으로, 서류 줄 [+ 추가]는 그 서류로, 오른쪽 위 [업로드]는 전체 계약에서 찾아 정리 · 엑셀(.xlsx) 글자 읽어 분류');
@@ -396,7 +410,7 @@ print(json.dumps({'names': wb.sheetnames, 'head': rows[0], 'rows': rows[1:], 'de
   assert.ok(await page.$('.vchecks, .g2bst'), '나라장터와 서류 맞춰 보기 자리');
   // 감독관 경유: 착공계·현장대리인계·예정공정표 따로 체크, 기억
   assert.equal(await page.locator('[data-act="via"][data-item="c-start"]').count(), 3, '착공계·현장대리인계·예정공정표');
-  assert.equal(await page.locator('[data-act="via"][data-item="c-finish"]').count(), 2, '준공계·준공검사원');
+  assert.equal(await page.locator('[data-act="via"][data-item="c-finish"]').count(), 1, '준공계'); assert.equal(await page.locator('[data-act="via"][data-item="c-finishreq"]').count(), 1, '준공검사원');
   for (const id of ['c-calc', 'c-estimate', 'c-laborconfirm']) assert.equal(await page.locator(`[data-act="via"][data-item="${id}"]`).count(), 1, id);
   await page.check('[data-act="via"][data-item="c-start"][data-part="착공계"]');
   await page.waitForSelector('.via-c.on:has-text("착공계")');
@@ -1104,11 +1118,63 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     page.once('dialog', (d) => d.accept());
     await page.click('#ctDelete');
     await waitFor(() => page.evaluate((k) => !JH.app.db.contracts[k], junkKey), 15000, '계약 지움');
+    await waitFor(() => page.$('.toast:has-text("계약을 지웠습니다")'), 15000, '지우기 끝');
     await page.click('#btnUndo');
     await waitFor(() => page.evaluate((k) => !!JH.app.db.contracts[k], junkKey), 15000, '되돌림');
     await page.evaluate(async (k) => { delete JH.app.db.contracts[k]; await JH.app.saveDb(true); JH.app.render(); }, junkKey);
   }
   step('깨진 스캔 글자로 만들어진 계약은 [계약 지우기](나라장터 계약이 아닐 때) — 서류는 미분류로, 되돌리기 가능');
+
+  // 올릴 때마다 확인(기본): 확실히 찾은 서류도 팝업으로 보여 줌 — 고용·산재 가입증명원
+  {
+    await page.evaluate(async () => { JH.app.cfg.uploadConfirm = true; await JH.app.saveCfg(); document.querySelectorAll('dialog[open]').forEach((d) => d.close()); });
+    const mk = await page.context().newPage();
+    await mk.setContent(`<body style="font-family:'Noto Sans CJK KR';padding:40px"><h1 style="text-align:center">고용·산재보험 보험관계성립(가입)증명원</h1><p>공사명 : 시청사 옥상 방수공사</p><p>사업장 : (주)다해토건</p></body>`);
+    const pdf = await mk.pdf({ format: 'A4' }); await mk.close();
+    await page.evaluate(() => document.querySelector('nav [data-view="contracts"]').click());
+    await page.setInputFiles('#fileIn', [{ name: '고용산재가입증명원.pdf', mimeType: 'application/pdf', buffer: pdf }]);
+    await page.waitForSelector('#dlgPreview[open]', { timeout: 60000 });
+    assert.match(await page.$eval('#pvContract', (s) => s.selectedOptions[0].textContent), /시청사 옥상 방수공사/, '추천 계약 골라 둠');
+    assert.match(await page.$eval('#pvItem', (s) => s.selectedOptions[0].textContent), /고용·산재 가입증명원/, '서류 종류 골라 둠');
+    assert.match(await page.textContent('#pvWhy'), /이렇게 넣었습니다/);
+    await page.click('#pvSave'); await page.waitForFunction(() => !document.querySelector('#dlgPreview').open);
+    await page.evaluate(async () => { JH.app.cfg.uploadConfirm = false; await JH.app.saveCfg(); });
+    await waitFor(async () => !(await page.isVisible('#progress')), 30000, '정리 끝'); await page.waitForTimeout(1000);
+  }
+  step('올릴 때마다 확인(기본): 확실히 찾은 서류도 팝업으로 보여 주고(추천 계약·종류 골라 둠) [이대로 저장]');
+
+  // 뒤로: 현황판 → 계약을 눌러 넘어간 뒤 [←]면 다시 현황판 · 현황판에서 가운데 버튼이면 새 탭(보던 화면 그대로)
+  {
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    await page.click('nav [data-view="board"]'); await page.waitForSelector('#view-board.on tr[data-key]');
+    const nTabs = await page.$$eval('.tab-it', (x) => x.length);
+    await page.click('#view-board tr[data-key] >> nth=0', { button: 'middle' });
+    await waitFor(async () => (await page.$$eval('.tab-it', (x) => x.length)) === nTabs + 1, 5000, '가운데 버튼 → 새 탭');
+    assert.ok(await page.isVisible('#view-board.on'), '보던 현황판 그대로');
+    await page.click('#view-board tr[data-key] >> nth=0');
+    await page.waitForSelector('#view-contracts.on');
+    assert.ok(!(await page.$eval('#btnBack', (b) => b.disabled)), '뒤로 켜짐');
+    await page.click('#btnBack');
+    await page.waitForSelector('#view-board.on');
+    await page.keyboard.press('Alt+ArrowLeft').catch(() => {});
+    await page.click('.tab-it >> nth=-1 >> .tx'); // 새로 연 탭 닫기
+  }
+  step('뒤로: 현황판에서 계약을 눌러 넘어간 뒤 [←](Alt+←·마우스 뒤로 버튼)면 다시 현황판 · 가운데 버튼은 계약을 새 탭으로');
+
+  // 단계 접기: 기본은 펼침, 제목을 누르면 그 단계 서류 줄이 접힘(다른 계약에서도 접힌 채), 다시 누르면 펼침
+  {
+    await page.click('nav [data-view="contracts"]'); await page.waitForSelector('#detail .stage-head[data-fold="구매요구"]');
+    assert.ok(await page.isVisible('#detail .stage:has([data-fold="구매요구"]) .row'), '기본은 펼침');
+    await page.click('#detail .stage-head[data-fold="구매요구"] h3');
+    assert.ok(!(await page.isVisible('#detail .stage:has([data-fold="구매요구"]) .row')), '접힘');
+    assert.ok(await page.isVisible('#detail .stage:has([data-fold="계약"]) .row'), '다른 단계는 그대로');
+    const keys = await page.$$eval('.citem[data-key]', (xs) => xs.map((x) => x.dataset.key));
+    await page.click(`.citem[data-key="${keys[keys.length - 1]}"]`); await page.waitForSelector('#detail .stage-head[data-fold="구매요구"]');
+    assert.ok(!(await page.isVisible('#detail .stage:has([data-fold="구매요구"]) .row')), '다른 계약에서도 접힘');
+    await page.click('#detail .stage-head[data-fold="구매요구"] h3');
+    assert.ok(await page.isVisible('#detail .stage:has([data-fold="구매요구"]) .row'), '다시 펼침');
+  }
+  step('단계 접기: 구매요구·계약·착공계…는 기본 펼침, 제목을 누르면 그 단계가 접히고(다른 계약에서도) 다시 누르면 펼침');
 
   // 동료 규칙 받기: 받은 규칙에 맞는 '종류 못 정한/확인 필요' 서류는 그 자리에서 정해짐(사람이 고른 것은 그대로)
   {

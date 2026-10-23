@@ -15,6 +15,7 @@
       <svg class="brand-seal" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="17" fill="none" stroke="currentColor" stroke-width="2.4"/><circle cx="20" cy="20" r="12.5" fill="none" stroke="currentColor" stroke-width="1"/><text x="20" y="25" text-anchor="middle" font-size="13" font-weight="800" fill="currentColor">계약</text></svg>
       <span>계약업무 도우미</span>
     </button>
+    <button type="button" class="btn ghost icon back" id="btnBack" disabled title="뒤로: 방금 보던 화면으로 (Alt + ←, 마우스 뒤로 버튼)" aria-label="뒤로"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5 8 12l7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     <nav class="views" aria-label="화면">
       <span class="vgroup" data-mod="jichul">
         <span class="vlabel">지출서류</span>
@@ -180,6 +181,7 @@
       <h3 class="sub-h">자동으로 읽을 폴더</h3>
       <p class="help">문서함·메일에서 서류를 내려받는 폴더(예: 다운로드)를 골라 두면, 프로그램이 켜져 있는 동안 몇 초마다 새 파일을 읽어 <b>우리 계약에 맞는 서류만</b> 사본을 만들어 계약별·서류 종류별로 정리합니다(이름도 "서류명_계약명"으로). 원래 파일은 그대로 두고, 계약과 상관없는 파일(다른 공고문·개인 파일 등)은 가져오지 않습니다. 폴더는 여러 개 골라도 됩니다.</p>
       <ul class="watch-list" id="watchList"><li class="muted">꺼짐</li></ul>
+      <label class="chk"><input type="checkbox" id="chkWatchConfirm"> 자동으로 가져온 서류는 넣은 뒤 확인 팝업으로 하나씩 보여 주기(맞으면 [이대로 저장], 틀리면 고르면 배움)</label>
       <div class="watch-add">
         <span class="muted small">바로 더하기</span>
         <button type="button" class="btn sm" data-watchknown="downloads">다운로드 폴더</button>
@@ -200,6 +202,7 @@
       </div>
       <div class="ed-head"><span>단계</span><span>서류</span><span>찾을 단어</span><span>받는 곳</span><span>필수</span><span></span></div>
       <div id="edRows" class="ed-rows"></div>
+      <label class="chk"><input type="checkbox" id="chkUploadConfirm"> 올릴 때마다 확인: 올린 서류를 넣은 뒤 하나씩 팝업으로 보여 주기(맞으면 [이대로 저장], 틀리면 고르면 배움). 끄면 확실한 것은 바로 넣고 헷갈리는 것만 물음</label>
       <details class="learned" id="learnedBox"><summary>배운 규칙 <b id="learnedN">0</b>개 <span class="muted small">— 확인 팝업·서류 줄에서 고른 답(제목 → 서류). 틀린 것은 지우세요</span></summary><p class="small muted" id="learnedShare"></p><ol id="learnedList" class="log-list"></ol></details>
       <div class="dlg-actions">
         <button type="button" class="btn ghost" id="btnResetLists">구비서류 안내 기준으로 되돌리기</button>

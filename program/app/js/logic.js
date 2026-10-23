@@ -66,7 +66,7 @@
     ];
     // 대금청구: 4대보험·고용산재 완납증명서와 지역개발채권도 여기서 받음(업체가 청구 때 냄)
     const tail = (k, mid = []) => [
-      ...(k === 'g' ? [] : [it(g5, '준공검사원 지정통보', NOTICE_KW + ',준공검사원지정,준공검사자지정,준공검사공무원지정', { source: '문서함', note: '감독부서에 발송', id: k + '-notice' })]),
+      ...(k === 'g' ? [] : [it(g5, '준공검사원 지정통보', NOTICE_KW + ',준공검사원지정,준공검사자지정,준공검사공무원지정', { source: '문서함', required: false, note: '필요 없음 — 들어오면 여기에 둠(준공검사원 칸과 섞이지 않게)', id: k + '-notice' })]),
       it(g5, '준공조서', '준공조서,검사조서,검수조서,준공검사조서', { source: '문서함', id: k + '-inspect' }),
       it(g6, '대금청구서', '청구서,대금청구,대가청구,청구', { source: '메일', id: k + '-claim' }),
       it(g6, '국세 납세증명서', '국세,납세증명,세증명서', { source: '메일', id: k + '-tax' }),
@@ -89,7 +89,8 @@
       it('착공계', '고용·산재 가입증명원', '고용산재가입,가입증명원,고용보험가입,산재보험가입', { note: '공사명·공사기간·계약금액 필수', id: 'c-empjoin' }),
       it('착공계', '손해배상공제(보험) 증권', '손해배상공제,손해배상보험,손해배상책임,배상책임보험,공제증권', { id: 'c-dmgins' }),
       it('선금', '선금 보증서(선급금 이행보증증권)', '선금보증,선급금보증,선급금이행보증,선금이행보증,선급금 보증,선금 보증,선급금보증서,선급금 이행', { required: false, note: '선금 받을 때 · 보증기간이 준공일 + 60일 이상', id: 'c-advbond' }),
-      it('준공계', '준공계·준공검사원', '준공계,준공검사원,준공신고', { id: 'c-finish' }),
+      it('준공계', '준공계', '준공계,준공신고,준공보고', { id: 'c-finish' }),
+      it('준공계', '준공검사원', '준공검사원,준공검사요청,준공검사신청,준공검사요청서,준공검사신청서', { id: 'c-finishreq' }),
       it('준공계', '준공사진대지', '사진대지,준공사진', { id: 'c-photo' }),
       it('준공계', '노무비 미체불 확약서', '미체불', { required: false, note: '일용근로자 해당 시', id: 'c-nounpaid' }),
       it('준공계', '노무비 지급 내역서', '노무비지급내역,지급내역서', { required: false, note: '일용근로자 해당 시', id: 'c-laborlist' }),
@@ -112,7 +113,8 @@
       it('착수계', '노무비 개인정보 수집·이용·제공 동의서', LABOR_PRIV, { id: 's-laborpriv' }),
       it('착수계', '손해배상공제(보험) 증권', '손해배상공제,손해배상보험,손해배상책임,배상책임보험,공제증권', { required: false, note: '착공계로 낼 때', id: 's-dmgins' }),
       it('선금', '선금 보증서(선급금 이행보증증권)', '선금보증,선급금보증,선급금이행보증,선금이행보증,선급금 보증,선금 보증,선급금보증서,선급금 이행', { required: false, note: '선금 받을 때 · 보증기간이 준공일 + 60일 이상', id: 's-advbond' }),
-      it('준공계', '준공계·준공검사원', '준공계,준공검사원,준공신고,완료계', { id: 's-finish' }),
+      it('준공계', '준공계', '준공계,준공신고,완료계,준공보고', { id: 's-finish' }),
+      it('준공계', '준공검사원', '준공검사원,준공검사요청,준공검사신청,준공검사요청서,준공검사신청서,완료검사요청', { id: 's-finishreq' }),
       it('준공계', '준공사진대지', '사진대지,준공사진', { id: 's-photo' }),
       it('준공계', '작업결과물', '결과물,결과보고,최종보고', { required: false, note: '해당 시', id: 's-result' }),
       it('준공계', '하자보수보증서(하자이행보증증권)', '하자보수보증서,하자보증서,하자이행보증,하자보수보증금,하자보증증권', { note: '또는 지급각서', alt: 's-defect', id: 's-defectbond' }),
@@ -344,12 +346,20 @@
 
   // ---------- 계약 건 배정 ----------
   // 계약번호(10) > 계약명 전체(6) > 계약명 단어 2개 이상(4) > 업체명(3). 동점이면 배정하지 않음
+  // 계약명을 끝까지 확인: 서류에 '…조성공사 감리용역'처럼 이름 뒤에 다른 계약임을 뜻하는 말이 바로 이어지면 그 공사 계약이 아님
+  const OTHER_TAIL = /^(?:의)?(감리|책임감리|설계|실시설계|기본설계|건설사업관리|사업관리|감독|안전점검|안전진단|정밀안전|측량|지반조사|조사용역|타당성|용역|영향평가|모니터링)/;
+  const PART_TAIL = /^\(?\d{1,2}(차|공구|단계)/; // '…공사(2차)', '…공사 3공구' — 계약명에 차수가 없으면 다른 계약
+  function nameIn(hay, n) {
+    for (let i = hay.indexOf(n); i >= 0; i = hay.indexOf(n, i + 1)) { const tail = hay.slice(i + n.length, i + n.length + 8); if (!OTHER_TAIL.test(tail) && !PART_TAIL.test(tail)) return true; }
+    return false;
+  }
   function contractScore(c, hay) {
     let s = 0;
     for (const n of c.nums || []) { const b = baseNo(n); if (b.length >= 6 && hay.includes(b)) { s += 10; break; } }
     if (c.name) {
       const n = norm(c.name);
-      if (n.length >= 4 && hay.includes(n)) s += 6;
+      // 이름 전체가 맞으면 6점(+ 더 긴 이름이 조금 더: '…공사'와 '…공사 감리용역'이 둘 다 맞으면 긴 쪽)
+      if (n.length >= 4 && hay.includes(n)) { if (nameIn(hay, n)) s += 6 + Math.min(0.9, n.length / 100); }
       else {
         const toks = String(c.name).split(/[\s·,()\[\]]+/).map(norm).filter((t) => t.length >= 2 && !['공사', '용역', '구매', '설치', '보수', '정비'].includes(t));
         const hit = toks.filter((t) => hay.includes(t)).length;
@@ -809,9 +819,9 @@
   // 업체 보완 요청 메일(빠진 서류 + 유효기간 부족으로 재발급할 서류)
   // 감독관 경유가 필요한 서류(공사·용역): 착공(착수)계·현장대리인계·예정공정표, 산출내역서, 견적서, 노무비 지급확인제, 준공계·준공검사원
   // 한 줄에 여러 서류가 묶인 것은 서류마다 따로 체크. 저장: c.via['c-start:착공계'] = true
-  const VIA_PARTS = { start: ['착공계', '현장대리인계', '예정공정표'], calc: [''], estimate: [''], laborconfirm: [''], finish: ['준공계', '준공검사원'] };
+  const VIA_PARTS = { start: ['착공계', '현장대리인계', '예정공정표'], calc: [''], estimate: [''], laborconfirm: [''], finish: ['준공계'], finishreq: [''] };
   function viaParts(id) {
-    const m = String(id || '').match(/^([cs])-(start|calc|estimate|laborconfirm|finish)$/); if (!m) return null;
+    const m = String(id || '').match(/^([cs])-(start|calc|estimate|laborconfirm|finish|finishreq)$/); if (!m) return null;
     return m[1] === 's' && m[2] === 'start' ? ['착수계(착공계)', '현장대리인계', '예정공정표'] : VIA_PARTS[m[2]];
   }
   const viaKey = (id, part) => (part ? `${id}:${part}` : id);
@@ -868,7 +878,7 @@
     ];
   }
   const ROUND_SUF = { progfin: 'prog', prognotice: 'prog', proginsp: 'prog', laborclaim: 'labor', laborxfer: 'labor', advclaim: 'adv', advplan: 'adv' };
-  const FINAL_TO_PROG = { finish: 'progfin', notice: 'prognotice', inspect: 'proginsp' };
+  const FINAL_TO_PROG = { finish: 'progfin', finishreq: 'progfin', notice: 'prognotice', inspect: 'proginsp' };
   const SHARED_PAY = /^(claim|tax|ltax|inspaid|emppaid|bond|invoice|pay|laborlist)$/;
   // 파일 이름·제목에서 어느 지출 회차 서류인지 힌트: { kind: prog|labor|adv|final, n, month }
   //  스캔본(noname.pdf 등)은 이름에 회차가 없으니 글자 앞부분(body)에서 '제3회 기성'을 찾음 — 구분(기성·준공)은 이름·제목으로만(본문엔 준공예정일 같은 말이 흔함)

@@ -162,11 +162,12 @@ test('계약번호 차수(-00/-01)는 같은 계약으로', () => {
 test('감독관 경유: 착공계·현장대리인계·예정공정표, 산출내역서, 견적서, 노무비 지급확인제, 준공계·준공검사원', () => {
   assert.deepEqual(L.viaParts('c-start'), ['착공계', '현장대리인계', '예정공정표']);
   assert.deepEqual(L.viaParts('s-start'), ['착수계(착공계)', '현장대리인계', '예정공정표']);
-  assert.deepEqual(L.viaParts('c-finish'), ['준공계', '준공검사원']);
+  assert.deepEqual(L.viaParts('c-finish'), ['준공계']);
+  assert.deepEqual(L.viaParts('c-finishreq'), ['']);
   for (const id of ['c-calc', 'c-estimate', 'c-laborconfirm', 's-calc', 's-estimate', 's-laborconfirm']) assert.deepEqual(L.viaParts(id), [''], id);
   assert.equal(L.viaParts('g-estimate'), null, '물품은 없음'); assert.equal(L.viaParts('c-photo'), null);
   const list = L.defaultChecklists().공사;
-  const has = (id) => ['c-start', 'c-estimate', 'c-finish'].includes(id);
+  const has = (id) => ['c-start', 'c-estimate', 'c-finish', 'c-finishreq'].includes(id);
   const c = { via: { 'c-start:착공계': true, 'c-start:예정공정표': true, 'c-estimate': true } };
   const vs = L.viaStatus(c, list, has);
   assert.equal(vs.need, 6); assert.equal(vs.done, 3);
@@ -255,4 +256,28 @@ test('노무비 구분관리 및 지급확인제 합의서·적용 제외 신청
   assert.equal(name('스캔02.pdf', '노무비 구분관리 및 지급확인제 합의서'), want);
   assert.equal(name('사대보험 가입자명부.pdf'), '4대 사회보험 가입자명부');
   assert.equal(name('고용산재가입증명원.pdf'), '고용·산재 가입증명원');
+});
+
+test('계약명 끝까지 확인: …조성공사 감리용역 서류는 공사 계약이 아님, 차수·공구가 다르면 다른 계약', () => {
+  const A = { key: 'a', name: '용인 평온의숲 봉안담 신규 조성공사', vendor: '(주)대한건설' };
+  const B = { key: 'b', name: '용인 평온의숲 봉안담 신규 조성공사 감리용역', vendor: '(주)한국감리' };
+  const hay = (t) => '준공계|' + L.norm(t);
+  const sup = hay('준공계 용역명 : 용인 평온의숲 봉안담 신규 조성 공사 감리용역 계약상대자 (주)한국감리');
+  const con = hay('준공계 공사명 : 용인 평온의숲 봉안담 신규 조성공사 시공자 (주)대한건설');
+  assert.equal(L.matchContract([A, B], sup).key, 'b');
+  assert.equal(L.matchContract([A, B], con).key, 'a');
+  assert.equal(L.matchContract([A], sup), null, '목록에 감리용역이 없으면 공사로 보내지 않음(미분류)');
+  assert.equal(L.matchContract([A], hay('공사명 : 용인 평온의숲 봉안담 신규 조성공사(2차)')), null);
+  assert.equal(L.matchContract([A], hay('공사명 : 용인 평온의숲 봉안담 신규 조성공사 준공계')).key, 'a');
+});
+
+test('준공계·준공검사원 두 칸, 지정통보는 필수 아님', () => {
+  for (const t of ['공사', '용역']) {
+    const list = L.defaultChecklists()[t], name = (f) => (list.find((x) => x.id === L.classifyItem(list, f, '')) || {}).name;
+    assert.equal(name('준공계.pdf'), '준공계');
+    assert.equal(name('준공검사원.pdf'), '준공검사원');
+    assert.equal(name('준공검사 요청서.pdf'), '준공검사원');
+    assert.equal(name('준공검사원 지정통보.pdf'), '준공검사원 지정통보');
+    assert.equal(list.find((x) => /-notice$/.test(x.id)).required, false);
+  }
 });
