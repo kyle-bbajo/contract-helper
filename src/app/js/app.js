@@ -103,9 +103,20 @@
       const add = [...got.entries()].filter(([k]) => !mine.has(k)).map(([, x]) => ({ ...x, shared: true }));
       db.learned = [...add, ...keep].slice(-1500);
       ui.share = { state: 'ok', at: Date.now(), n: add.length };
-      if (add.length) await saveDb();
+      if (add.length) { await saveDb(); const n = await applyShared(); if (n) { render(); toast(`동료가 배운 규칙으로 서류 ${n}건의 종류를 정했습니다. [최근 작업]에서 되돌릴 수 있습니다.`, 'ok'); } }
       if ((db.sharePending || []).length) pushShare();
     } catch (e) { ui.share = { state: 'err', why: e.message }; }
+  }
+  // 새로 받은 동료 규칙으로, 계약은 정해졌는데 종류를 못 정했거나 [확인 필요]인 서류를 다시 봄(배운 규칙에 맞을 때만, 사람이 고른 것은 그대로)
+  async function applyShared() {
+    const ds = db.docs.filter((d) => d.key && db.contracts[d.key] && !d.manual && (!d.itemId || d.unsure));
+    const hits = ds.map((d) => [d, classifyDoc(db.contracts[d.key], d.name, d.title, d.heads)]).filter(([, r]) => r.by === 'learned' && r.id);
+    if (!hits.length) return 0;
+    await recorded('동료 규칙으로 서류 종류 정함', hits.map(([d]) => d.key), hits.map(([d]) => d.id), async () => {
+      for (const [d, r] of hits) { try { await moveDoc(d, d.key, r.id, false, undefined, true); delete d.unsure; delete d.alts; } catch (_) {} }
+      await saveDb(true);
+    });
+    return hits.length;
   }
   // 사람이 고른 답을 배움: 그 서류의 머리 줄(제목)을 그 서류 종류로. 같은 제목을 다르게 고르면 새 답으로 바꿈
   function learnFrom(d, c, itemId) {
@@ -2435,7 +2446,8 @@
     if (ONLY) return; // 공고문 전용 창: 폴더 확인·정리·자동 새로고침은 원래 창이 함
     try { await reconcile(); render(); } catch (e) { console.warn('폴더 확인 실패', e); }
     try { await relayout(); } catch (e) { console.warn('폴더 정리 실패', e); }
-    pullShare(); // 다른 PC가 배운 규칙 받기(뒤에서)
+    pullShare(); // 다른 PC가 배운 규칙 받기(뒤에서). 켜 둔 동안에도 30분마다 받고, 못 올린 것은 그때 다시 올림
+    setInterval(() => { pullShare(); }, 30 * 60000);
     if (!cfg.officer) openWelcome();
     if (cfg.officer) { checkAccounts().finally(() => autoRefresh(true)); setInterval(() => autoRefresh(false), 5 * 60000); }
   }

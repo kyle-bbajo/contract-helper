@@ -920,6 +920,28 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   assert.equal(await listW(), w0, '두 번 누르면 원래대로');
   step('계약별 목록 너비 끌어서 조절(기억, 두 번 누르면 원래대로), 넓으면 긴 계약명 두 줄');
 
+  // 동료 규칙 받기: 받은 규칙에 맞는 '종류 못 정한/확인 필요' 서류는 그 자리에서 정해짐(사람이 고른 것은 그대로)
+  {
+    const r = await page.evaluate(async () => {
+      const A = JH.app, db = A.db;
+      const d = db.docs.find((x) => x.key && x.itemId && !x.manual && x.path);
+      if (!d) return { none: true };
+      const want = d.itemId; const suf = want.replace(/^[csg]-/, '');
+      d.heads = ['동료가배운시험제목'];
+      d.itemId = null; d.unsure = true;
+      const orig = JH.server.shareGet;
+      JH.server.shareGet = async () => ({ bodies: ['```json\n' + JSON.stringify([{ head: '동료가배운시험제목', suf, item: '시험' }]) + '\n```'] });
+      try { await A.pullShare(); } finally { JH.server.shareGet = orig; }
+      return { want, got: d.itemId, unsure: !!d.unsure, shared: (db.learned || []).some((x) => x.shared && x.head === '동료가배운시험제목') };
+    });
+    assert.ok(!r.none, '시험할 서류 없음');
+    assert.ok(r.shared, '동료 규칙 받음');
+    assert.equal(r.got, r.want, '받은 규칙으로 종류 정함');
+    assert.ok(!r.unsure, '확인 필요 풀림');
+    await waitFor(() => page.$('.toast:has-text("동료가 배운 규칙")'), 10000, '알림');
+  }
+  step('동료 규칙(켤 때 + 켜 둔 동안 30분마다): 받은 규칙에 맞는 종류 못 정한·확인 필요 서류는 바로 정리');
+
   // 공고문 전용 새 창: 서류대장을 저장하지 않고(두 창이 덮어쓰지 않게), 원래 창의 공고문 화면은 잠김 → 공고문 창을 닫으면 풀림
   {
     const ledger = join(data, '서류대장.json'); const m0 = statSync(ledger).mtimeMs;
