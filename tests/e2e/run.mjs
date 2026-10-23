@@ -1003,6 +1003,23 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   }
   step('전에 올렸는데 종류를 못 정한 파일은 다시 올리면 건너뛰지 않고 다시 정리(모르면 바로 팝업)');
 
+  // 창을 반으로 줄여 나란히 써도(960·720) 가로로 밀리지 않음
+  {
+    const vp = page.viewportSize();
+    for (const w of [960, 720]) {
+      await page.setViewportSize({ width: w, height: 900 });
+      for (const v of ['home', 'contracts', 'board', 'inbox', 'notice', 'rules']) {
+        await page.evaluate((v) => { const b = document.querySelector(`[data-view="${v}"]`); if (b) b.click(); }, v); await page.waitForTimeout(400);
+        const bad = await page.evaluate(() => [...document.querySelectorAll('body *')].filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.right > innerWidth + 2 && !e.closest('dialog') && getComputedStyle(e).position !== 'fixed' && !e.closest('.views'); }).slice(0, 3).map((e) => e.tagName + '.' + e.className + '#' + e.id));
+        assert.deepEqual(bad, [], `${w}px ${v} 화면이 옆으로 넘침`);
+        assert.ok(await page.evaluate(() => { const r = document.querySelector('#btnSettings').getBoundingClientRect(); return r.right <= innerWidth; }), `${w}px 설정 버튼 보임`);
+      }
+    }
+    await page.setViewportSize(vp);
+    await page.evaluate(() => document.querySelector('[data-view="contracts"]').click()); await page.waitForTimeout(500);
+  }
+  step('창을 반으로 줄여도(960·720px) 화면이 옆으로 넘치지 않고 위 버튼이 다 보임');
+
   // 동료 규칙 받기: 받은 규칙에 맞는 '종류 못 정한/확인 필요' 서류는 그 자리에서 정해짐(사람이 고른 것은 그대로)
   {
     const r = await page.evaluate(async () => {

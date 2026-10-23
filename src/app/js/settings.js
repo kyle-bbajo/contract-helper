@@ -16,6 +16,7 @@
     $$('.tab', dlg).forEach((p) => p.classList.toggle('on', p.dataset.pane === name));
   }
   function open(name) {
+    { const cf = document.getElementById('chkAutoFit'); if (cf) cf.checked = JH.app.cfg.autoFit !== false; }
     const cfg = JH.app.cfg;
     const org = JH.app.org || {};
     const usingOrgKey = org.apiKey && cfg.apiKey === org.apiKey;
@@ -288,6 +289,12 @@
   $('#btnQuit').onclick = async () => { if (!confirm('프로그램을 종료할까요? 다시 쓰려면 바탕화면의 계약업무 도우미를 누르세요.')) return; try { await S.quit(); } catch (_) {} window.close(); };
 
   // 설정 → 정보 [지금 업데이트 확인]
+  const chkFit = document.getElementById('chkAutoFit');
+  if (chkFit) {
+    const sync = () => { chkFit.checked = JH.app.cfg.autoFit !== false; };
+    sync();
+    chkFit.addEventListener('change', async () => { JH.app.cfg.autoFit = chkFit.checked; await JH.app.saveCfg(); JH.app.fitWindow(); JH.app.toast(chkFit.checked ? '좁은 창에서는 화면을 줄여 맞춥니다.' : '화면 맞춤을 껐습니다(좁으면 위아래로 쌓여 보임).', 'ok'); });
+  }
   const btnUpd = document.getElementById('btnUpdate');
   if (btnUpd) btnUpd.onclick = async () => {
     const app = root.JH.app; btnUpd.disabled = true; btnUpd.textContent = '확인 중…';

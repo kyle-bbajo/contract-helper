@@ -2410,6 +2410,18 @@
   $('#fType').addEventListener('change', (e) => { ui.type = e.target.value; ui.sel = null; render(); });
   $('#fSort').value = ui.sort;
   // 목록 너비 조절: 경계를 끌면 목록이 넓어지고(긴 이름이 더 보임), 이 PC에 기억. 두 번 누르거나 Home 키로 원래대로
+  // 좁은 창(화면 분할 등): 1000px보다 좁으면 화면 전체를 비율대로 줄여 두 칸 그대로 보이게(아래로 쌓여 스크롤하지 않게).
+  // 설정 → 정보의 '좁은 창에서 줄여 보기'로 끌 수 있음. Ctrl + 마우스 휠 확대·축소는 따로 그대로 됨
+  const FIT_W = 1000, FIT_MIN = 0.62;
+  function fitWindow() {
+    const on = !cfg || cfg.autoFit !== false;
+    const w = window.innerWidth || FIT_W;
+    const z = on && w < FIT_W ? Math.max(FIT_MIN, Math.floor((w / FIT_W) * 100) / 100) : 1;
+    document.documentElement.style.zoom = z === 1 ? '' : String(z);
+    document.documentElement.classList.toggle('fitted', z !== 1);
+  }
+  window.addEventListener('resize', () => { clearTimeout(fitWindow.t); fitWindow.t = setTimeout(fitWindow, 80); });
+  fitWindow();
   (function splitters() {
     const DEF = { contracts: 360, notice: 300 };
     const keyOf = (k) => 'jh.listW.' + k;
@@ -2426,7 +2438,8 @@
       sp.addEventListener('pointerdown', (e) => {
         e.preventDefault(); sp.setPointerCapture(e.pointerId); sp.classList.add('drag'); document.body.classList.add('resizing');
         const left = view.getBoundingClientRect().left;
-        const move = (ev) => apply(view, k, clamp(view, ev.clientX - left));
+        const z = parseFloat(document.documentElement.style.zoom) || 1; // 좁은 창에서 줄여 보일 때
+        const move = (ev) => apply(view, k, clamp(view, (ev.clientX - left) / z));
         const up = () => { sp.releasePointerCapture(e.pointerId); sp.classList.remove('drag'); document.body.classList.remove('resizing'); sp.removeEventListener('pointermove', move); store(parseInt(view.style.getPropertyValue('--list-w'), 10) || 0); };
         sp.addEventListener('pointermove', move); sp.addEventListener('pointerup', up, { once: true }); sp.addEventListener('pointercancel', up, { once: true });
       });
@@ -2517,7 +2530,7 @@
       try { const r = await fetch('org.json', { cache: 'no-store' }); if (r.ok) org = await r.json(); } catch (_) {}
       // 설정·서류대장·서류 본문을 한꺼번에 요청(차례로 기다리지 않음)
       const [cfg0, saved0, tx0] = await Promise.all([S.readJson(CFG_PATH), S.readJson(DB_PATH).catch((e) => { console.warn('서류대장 읽기 실패', e); return null; }), S.readJson(TEXT_PATH).catch(() => null)]);
-      cfg = mergeCfg(cfg0 || {});
+      cfg = mergeCfg(cfg0 || {}); fitWindow();
       let saved = saved0, fromBackup = false;
       if (!(saved && saved.contracts)) {
         // 저장 중에 끊겨 망가졌으면 지난번 켤 때 떠 둔 백업으로
@@ -2572,7 +2585,7 @@
 
   root.JH.app = {
     get cfg() { return cfg; }, set cfg(v) { cfg = v; }, get db() { return db; }, get org() { return org; },
-    get share() { return ui.share; }, pullShare, pushShare, shareableRule: (r) => shareable(r, privateNames()),
+    get share() { return ui.share; }, pullShare, pushShare, fitWindow, shareableRule: (r) => shareable(r, privateNames()),
     defaults, lists, printList, startWatch, checkAccounts, saveCfg, saveDb, fetchContracts, enrichContracts, fillFromDocs, openForms, render, toast, banner, start, ingest, setView, progress,
     setChecklists(v) { db.checklists = v; return saveDb(true); },
   };
