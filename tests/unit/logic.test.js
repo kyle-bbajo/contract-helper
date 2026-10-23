@@ -27,7 +27,7 @@ test('파일명이 noname이면 문서 제목으로 분류(앞에 나온 단어 
 
 test('공사·용역 구비서류 목록(구비서류 안내 기준)', () => {
   const names = (t) => lists[t].map((x) => x.name);
-  for (const n of ['노무비 지급확인제', '4대 사회보험 가입증명서', '고용·산재 가입증명원', '준공사진대지', '하자보수 이행보증금 지급각서', '국세 납세증명서', '세금계산서'])
+  for (const n of ['공사 노무비 구분관리 및 지급확인 적용제외 신청서', '4대 사회보험 가입증명서', '고용·산재 가입증명원', '준공사진대지', '하자보수 이행보증금 지급각서', '국세 납세증명서', '세금계산서'])
     assert.ok(names('공사').includes(n), n);
   for (const n of ['보안각서·보안서약서', '작업결과물', '용역근로자 노무비 지급 내역서']) assert.ok(names('용역').includes(n), n);
   const ids = [...lists.공사, ...lists.용역].map((x) => x.id);
@@ -236,4 +236,23 @@ test('요청 메일: 빠진 서류마다 발급·유효 조건(3개월 이내, �
   const m = L.vendorMail({ c, org: '용인도시공사', officer: '담당', missing: [{ name: '법인등기사항증명서', cond: L.issueCond(by('c-corpreg'), c) }, '통장사본'], basis: {} });
   assert.match(m.body, /- 법인등기사항증명서 \(계약일\(2026\.09\.01\) 기준 3개월 이내 발급분/);
   assert.match(m.body, /- 통장사본\n/);
+});
+
+test('계약명으로 쓸 만한지: 스캔 글자가 깨진 이름은 새 계약을 만들지 않음', () => {
+  assert.equal(L.goodName(".,'(신갈동 40-36)석명하체 및. ㅓ리용역 _ _. ㅗ ㄱㄱ 기시,"), false);
+  assert.equal(L.goodName('석명하체 및. 리용역 _ 기시'), false);
+  assert.equal(L.goodName('noname(3)'), false);
+  for (const ok of ['시청사 옥상 방수공사', '(신갈동 40-36) 석면 해체·처리 용역', '2026년 용인시 공공시설물 LED 교체공사(2차)']) assert.equal(L.goodName(ok), true, ok);
+  assert.equal(L.isG2bNo('R26BK01234567-00'), true);
+  assert.equal(L.isG2bNo('2026-087'), false);
+});
+
+test('노무비 구분관리 및 지급확인제 합의서·적용 제외 신청서 → 한 칸', () => {
+  const list = L.defaultChecklists().공사, name = (f, t = '') => (list.find((x) => x.id === L.classifyItem(list, f, L.norm(t))) || {}).name;
+  const want = '공사 노무비 구분관리 및 지급확인 적용제외 신청서';
+  assert.equal(name('노무비 구분관리 및 지급확인제 합의서.pdf'), want);
+  assert.equal(name('스캔01.pdf', '공사 노무비 구분관리 및 지급 확인 적용 제외 신청서'), want);
+  assert.equal(name('스캔02.pdf', '노무비 구분관리 및 지급확인제 합의서'), want);
+  assert.equal(name('사대보험 가입자명부.pdf'), '4대 사회보험 가입자명부');
+  assert.equal(name('고용산재가입증명원.pdf'), '고용·산재 가입증명원');
 });

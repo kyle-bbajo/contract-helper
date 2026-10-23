@@ -150,6 +150,7 @@
       const p = unique(norm(dir), name || from.split('/').pop()); files.delete(from); files.set(p, b); return { ok: true, path: p };
     },
     async remove(path) { path = norm(path); const b = files.get(path); if (b) { files.delete(path); files.set(unique('_삭제됨', path.split('/').pop()), b); } return { ok: true }; },
+    async removeEmptyDir() { return { ok: true, removed: false }; },
     async list(dir, recursive) {
       dir = norm(dir); const pre = dir ? dir + '/' : '';
       const out = [...files.entries()].filter(([p]) => p.startsWith(pre) && (recursive || !p.slice(pre.length).includes('/')))

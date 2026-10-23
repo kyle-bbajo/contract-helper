@@ -36,6 +36,7 @@
     save: (dir, name, bytes) => call('POST', '/api/save', { dir, name }, bytes),
     move: (from, dir, name) => call('POST', '/api/move', { from, dir, name }),
     remove: (path) => call('POST', '/api/delete', { path }), // { ok, path: _삭제됨 안 새 위치 }
+    removeEmptyDir: (dir) => call('POST', '/api/delete', { dir }), // 빈 폴더만 지움
     list: (dir, recursive) => call('GET', '/api/list', { dir, recursive: recursive ? '1' : '0' }),
     async nara(url) {
       const r = await call('GET', '/api/nara', { u: url });

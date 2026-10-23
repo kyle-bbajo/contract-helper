@@ -34,7 +34,7 @@
   const WIN = Math.random().toString(36).slice(2, 10), ROLE = ONLY === 'notice' ? 'notice' : 'main';
   const ui = { view: 'home', sel: null, q: '', officer: '', officerTouched: false, type: '', state: '', board: '', sort: (() => { try { return localStorage.getItem('jh.sort') || 'end-desc'; } catch (_) { return 'end-desc'; } })() };
 
-  const CHECKLIST_VER = 8; // 4: 선금 보증서 · 5: 준공검사원 지정통보 · 6: 사업장 가입내역 확인서(4대보험 가입증명서) 등 찾는 말 추가 · 7: 하도급 계약서·계약보증서는 그 밖의 계약 서류 · 8: 구매요구에 산업안전재해율 결과·안전보건관리계획서·적격수급업체 안전보건 수준 평가표(공사·용역)
+  const CHECKLIST_VER = 9; // 9: 노무비 지급확인제 → 공사 노무비 구분관리 및 지급확인 적용제외 신청서(합의서도 이 칸) // (지난 것) 4: 선금 보증서 · 5: 준공검사원 지정통보 · 6: 사업장 가입내역 확인서(4대보험 가입증명서) 등 찾는 말 추가 · 7: 하도급 계약서·계약보증서는 그 밖의 계약 서류 · 8: 구매요구에 산업안전재해율 결과·안전보건관리계획서·적격수급업체 안전보건 수준 평가표(공사·용역)
   const lists = (type) => (db.checklists && db.checklists[type]) || defaults[type] || defaults.공사;
   const contracts = () => Object.values(db.contracts).filter((c) => !c.archived);
   // 계약별 서류: 화면을 그리는 동안은 한 번 만든 색인(docIndex)으로 찾음(서류 수천 개여도 계약마다 다시 훑지 않음)
@@ -514,9 +514,14 @@
         if (forced || r.prov !== 'c-contract') continue;
         const hay = L.norm(L.stem(r.name)) + '|' + r.text;
         let c = L.matchContract(contracts(), hay);
-        if (!c && (r.meta.no || r.meta.name)) {
-          const res = upsertContract({ source: 'doc', type: L.guessType(r.title), name: r.meta.name || L.stem(r.name), vendor: r.meta.vendor,
-            nums: r.meta.no ? [r.meta.no] : [], no: r.meta.no, officer: cfg.officer || '' });
+        // 맞는 계약이 없으면 계약서에서 새 계약을 만듦 — 단, 나라장터 계약번호(R26…)를 읽었거나 계약명이 멀쩡할 때만.
+        // 스캔본은 글자 인식이 깨지기 쉬워 계약번호가 있을 때만. 아니면 미분류로 두고 팝업에서 고르게
+        // 나라장터 인증키가 있으면 계약 목록(나라장터) 기준으로만 맞추고 서류로 새 계약은 만들지 않음 → 미분류·팝업에서 목록 중 고름
+        const okNo = L.isG2bNo(r.meta.no), okName = !r.ocr && L.goodName(r.meta.name);
+        if (!c && !cfg.apiKey && (okNo || okName)) {
+          const name = L.goodName(r.meta.name) ? r.meta.name : (L.goodName(L.stem(r.name)) ? L.stem(r.name) : `계약번호 ${r.meta.no}`);
+          const res = upsertContract({ source: 'doc', type: L.guessType(r.title), name, vendor: L.goodName(r.meta.vendor) || (r.meta.vendor && !r.ocr) ? r.meta.vendor : '',
+            nums: okNo ? [r.meta.no] : [], no: okNo ? r.meta.no : '', officer: cfg.officer || '' });
           c = res.c; if (res.created) newContracts++;
         }
         if (c) r.key = c.key;
@@ -553,7 +558,9 @@
           }
         }
         // 내려받은 폴더에서 온 파일: 우리 계약과 맞지 않으면(다른 공고문·개인 파일 등) 가져오지 않음
-        if (opt.onlyMatched && !c) { r.ignored = true; continue; }
+        // 내려받은 폴더에서 온 파일: 계약도 서류 종류도 모르면(다른 공고문·개인 파일 등) 가져오지 않음.
+        // 착공계·청구서처럼 서류 종류는 알아보겠는데 계약만 못 찾았으면 미분류에 넣고 팝업으로 물음
+        if (opt.onlyMatched && !c && !(L.classifyItem(defaults.공사, r.name, r.title) || L.classifyItem(defaults.용역, r.name, r.title) || L.classifyItem(defaults.물품, r.name, r.title))) { r.ignored = true; continue; }
         // 선금·기성·노무비 서류면 그 회차로(회차가 없으면 만듦). 회차 서류는 계약 폴더 안 회차 폴더에
         const rt = c && itemId ? routeDoc(c, itemId, r.name, r.title, forced && forced.key === c.key ? opt.pay : null, r.text) : null;
         if (rt) { itemId = rt.itemId; also = also.filter((id) => id !== itemId); }
@@ -2472,7 +2479,7 @@
     $('#ctVendor').value = c ? c.vendor || '' : ''; $('#ctAmount').value = c && c.amount ? Number(c.amount).toLocaleString('ko-KR') : '';
     const iso = (s) => { const d = L.fmtDate(s); return d ? d.replace(/\./g, '-') : ''; };
     $('#ctStart').value = c ? iso(c.startDate) : ''; $('#ctEnd').value = c ? iso(c.endDate) : '';
-    $('#ctArchive').hidden = !c;
+    $('#ctArchive').hidden = !c; $('#ctDelete').hidden = !c || c.source === 'api';
     $('#dlgContract').showModal(); $('#ctName').focus();
   }
   $('#ctSave').onclick = async () => {
@@ -2488,6 +2495,30 @@
       ui.sel = r.c.key;
     }
     await saveDb(true); $('#dlgContract').close(); render();
+  };
+  // 계약 지우기(나라장터에서 온 계약이 아닐 때): 그 안 서류는 미분류로 옮기고 계약은 지움(되돌리기 가능)
+  async function dropContracts(keys, label) {
+    keys = keys.filter((k) => db.contracts[k]); if (!keys.length) return 0;
+    const ids = db.docs.filter((d) => keys.includes(d.key)).map((d) => d.id);
+    await recorded(label, keys, ids, async () => {
+      for (const d of db.docs.filter((x) => keys.includes(x.key))) { try { await moveDoc(d, null, null, false, '', true); } catch (e) { console.warn('미분류로 옮기기 실패', d.name, e); } }
+      const dirs = keys.map((k) => folderOf(db.contracts[k]));
+      for (const k of keys) delete db.contracts[k];
+      await saveDb(true);
+      for (const dir of dirs) { try { await S.removeEmptyDir(dir); } catch (_) { /* 남아도 됨 */ } }
+    });
+    if (keys.includes(ui.sel)) ui.sel = null;
+    logAct(`${label}: ${keys.length}건, 서류 ${ids.length}개는 미분류로`);
+    render(); return ids.length;
+  }
+  const junkContracts = () => Object.values(db.contracts).filter((c) => c && c.source === 'doc' && !L.goodName(c.name) && !(c.nums || []).some((n) => L.isG2bNo(n)));
+  $('#ctDelete').onclick = async () => {
+    if (!editing || editing.source === 'api') return;
+    const n = docsOf(editing.key).length;
+    if (!confirm(`「${editing.name}」 계약을 지울까요?${n ? ` 그 안 서류 ${n}개는 미분류로 옮깁니다.` : ''} (최근 작업에서 되돌릴 수 있습니다)`)) return;
+    const k = editing.key; $('#dlgContract').close();
+    const m = await dropContracts([k], '계약 지우기');
+    toast(`계약을 지웠습니다.${m ? ` 서류 ${m}개는 미분류에 있습니다.` : ''}`, 'ok', undoAction());
   };
   $('#ctArchive').onclick = async () => {
     if (!editing || !confirm('이 계약을 목록에서 숨길까요? 저장된 서류 파일은 그대로 남습니다.')) return;
@@ -2803,6 +2834,12 @@
     if (ONLY) return; // 공고문 전용 창: 폴더 확인·정리·자동 새로고침은 원래 창이 함
     try { await reconcile(); render(); } catch (e) { console.warn('폴더 확인 실패', e); }
     try { await relayout(); } catch (e) { console.warn('폴더 정리 실패', e); }
+    // 스캔 글자가 깨져 이상한 이름으로 만들어진 계약(예전 버전): 알려 주고 [정리하기]로 서류는 미분류, 계약은 지움
+    try {
+      const junk = junkContracts();
+      if (junk.length) setTimeout(() => toast(`서류에서 잘못 읽은 이름으로 만들어진 계약이 ${junk.length}건 있습니다(예: 「${junk[0].name.slice(0, 24)}」). 정리하면 그 안 서류는 미분류로 옮기고 계약은 지웁니다.`, 'err',
+        { label: '정리하기', run: async () => { const m = await dropContracts(junkContracts().map((c) => c.key), '잘못 만들어진 계약 정리'); toast(`정리했습니다. 서류 ${m}개는 미분류에서 계약을 골라 주세요.`, 'ok', undoAction()); } }), 1500);
+    } catch (e) { console.warn(e); }
     // 계약에는 들어갔는데 종류를 못 정한 서류: 지금 규칙으로 다시 보고, 그래도 남은 것은 알림에서 [확인하기]
     try {
       const n = await applyShared(true);

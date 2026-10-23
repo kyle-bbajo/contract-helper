@@ -1089,6 +1089,27 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   }
   step('쪽별로 나누기: 한 파일에 스캔한 계약서(1~2쪽)·4대보험(3~4쪽)·지방세(5쪽)·국세(6쪽)를 서류마다 잘라 각 칸으로, 원래 파일은 _삭제됨(되돌리기)');
 
+  // 깨진 스캔 글자로 만들어진 계약: [계약 지우기]로 서류는 미분류, 계약은 지움(되돌리기 가능)
+  {
+    const junkKey = await page.evaluate(async () => {
+      const A = JH.app, db = A.db, k = 'junk-' + Date.now();
+      db.contracts[k] = { key: k, source: 'doc', type: '용역', name: ".,'(신갈동 40-36)석명하체 및. ㅓ리용역 _ _. ㅗ ㄱㄱ 기시,", nums: [], officer: A.cfg.officer || '', updatedAt: Date.now() };
+      await A.saveDb(true); A.render(); return k;
+    });
+    assert.equal(await page.evaluate(() => JH.logic.goodName(Object.values(JH.app.db.contracts).find((c) => c.key.startsWith('junk-')).name)), false);
+    await page.evaluate(() => document.querySelector('nav [data-view="contracts"]').click());
+    await page.click(`.citem[data-key="${junkKey}"]`);
+    await page.click('#detail [data-act="edit"]'); await page.waitForSelector('#dlgContract[open]');
+    assert.ok(await page.isVisible('#ctDelete'), '나라장터 계약이 아니면 지우기 버튼');
+    page.once('dialog', (d) => d.accept());
+    await page.click('#ctDelete');
+    await waitFor(() => page.evaluate((k) => !JH.app.db.contracts[k], junkKey), 15000, '계약 지움');
+    await page.click('#btnUndo');
+    await waitFor(() => page.evaluate((k) => !!JH.app.db.contracts[k], junkKey), 15000, '되돌림');
+    await page.evaluate(async (k) => { delete JH.app.db.contracts[k]; await JH.app.saveDb(true); JH.app.render(); }, junkKey);
+  }
+  step('깨진 스캔 글자로 만들어진 계약은 [계약 지우기](나라장터 계약이 아닐 때) — 서류는 미분류로, 되돌리기 가능');
+
   // 동료 규칙 받기: 받은 규칙에 맞는 '종류 못 정한/확인 필요' 서류는 그 자리에서 정해짐(사람이 고른 것은 그대로)
   {
     const r = await page.evaluate(async () => {

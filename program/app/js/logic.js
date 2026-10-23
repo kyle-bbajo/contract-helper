@@ -81,7 +81,8 @@
       ...head('c'),
       it('착공계', '착공계·현장대리인계·예정공정표', '착공,현장대리인계,예정공정', { id: 'c-start' }),
       it('착공계', '현장대리인 재직증명서·자격증', '재직증명,자격증', { required: false, note: '해당 시', id: 'c-agent' }),
-      it('착공계', '노무비 지급확인제', '노무비지급확인,지급확인제', { id: 'c-laborconfirm' }),
+      // 노무비 구분관리 및 지급확인제 합의서 또는 적용 제외 신청서(둘 중 하나가 이 칸으로)
+      it('착공계', '공사 노무비 구분관리 및 지급확인 적용제외 신청서', '노무비구분관리,지급확인제합의서,구분관리및지급확인,지급확인적용제외,적용제외신청서,노무비지급확인,지급확인제', { note: '또는 노무비 구분관리 및 지급확인제 합의서', id: 'c-laborconfirm' }),
       it('착공계', '노무비 개인정보 수집·이용·제공 동의서', LABOR_PRIV, { id: 'c-laborpriv' }),
       it('착공계', '4대 사회보험 가입자명부', '가입자명부', { id: 'c-roster' }),
       it('착공계', '4대 사회보험 가입증명서', '사회보험가입증명,보험가입증명서,가입증명서,가입내역확인서,가입내역확인,사업장가입내역,사업장가입내역확인서,4대보험가입내역', { id: 'c-insjoin' }),
@@ -107,7 +108,7 @@
       it('착수계', '4대 사회보험 가입증명서', '사회보험가입증명,보험가입증명서,가입증명서,가입내역확인서,가입내역확인,사업장가입내역,사업장가입내역확인서,4대보험가입내역', { id: 's-insjoin' }),
       it('착수계', '4대 사회보험 가입자명부', '가입자명부', { required: false, note: '착공계로 낼 때·상용근로자', id: 's-roster' }),
       it('착수계', '고용·산재 가입증명원', '고용산재가입,가입증명원,고용보험가입,산재보험가입', { required: false, note: '단순노무용역', id: 's-empjoin' }),
-      it('착수계', '노무비 지급확인제', '노무비지급확인,지급확인제', { required: false, note: '단순노무용역', id: 's-laborconfirm' }),
+      it('착수계', '노무비 구분관리 및 지급확인 적용제외 신청서', '노무비구분관리,지급확인제합의서,구분관리및지급확인,지급확인적용제외,적용제외신청서,노무비지급확인,지급확인제', { required: false, note: '단순노무용역 · 또는 노무비 구분관리 및 지급확인제 합의서', id: 's-laborconfirm' }),
       it('착수계', '노무비 개인정보 수집·이용·제공 동의서', LABOR_PRIV, { id: 's-laborpriv' }),
       it('착수계', '손해배상공제(보험) 증권', '손해배상공제,손해배상보험,손해배상책임,배상책임보험,공제증권', { required: false, note: '착공계로 낼 때', id: 's-dmgins' }),
       it('선금', '선금 보증서(선급금 이행보증증권)', '선금보증,선급금보증,선급금이행보증,선금이행보증,선급금 보증,선금 보증,선급금보증서,선급금 이행', { required: false, note: '선금 받을 때 · 보증기간이 준공일 + 60일 이상', id: 's-advbond' }),
@@ -322,6 +323,19 @@
     }
     return { no, name, vendor };
   }
+  // 계약명으로 쓸 만한 글인지(스캔 글자 인식이 깨진 '.,'(신갈동..)석명하체 ㅓ리용역 _ _. ㅗ ㄱㄱ' 같은 것은 안 됨)
+  function goodName(s) {
+    const t = String(s || '').trim();
+    if (t.length < 4 || t.length > 80) return false;
+    if (/[ㄱ-ㅎㅏ-ㅣ]/.test(t)) return false; // 낱자모(ㅓ·ㅗ·ㄱ)
+    if (/^[^가-힣A-Za-z0-9(]/.test(t)) return false; // 기호로 시작
+    if (/[_|~^`]{1,}|\s[.,'"]\s|[.,'"]{2,}/.test(t)) return false;
+    // 숫자·영문·괄호·가운뎃점·붙임표를 뺀 나머지는 거의 다 한글이어야 함(번지·차수·LED 같은 것은 괜찮음)
+    const body = t.replace(/\s+/g, ''), han = (body.match(/[가-힣]/g) || []).length, odd = (body.match(/[^가-힣A-Za-z0-9()·\-]/g) || []).length;
+    const rest = body.replace(/[0-9A-Za-z()·\-]/g, '');
+    return han >= 3 && rest.length > 0 && han / rest.length >= 0.85 && odd <= 2;
+  }
+  const isG2bNo = (n) => G2B_NO.test(String(n || '').trim().replace(/\s+/g, ''));
   const vendorCore = (v) => norm(String(v || '').replace(/주\s*식\s*회\s*사|\(\s*주\s*\)|㈜|（\s*주\s*）|유\s*한\s*회\s*사|\(\s*유\s*\)|합\s*자\s*회\s*사|\(\s*합\s*\)/g, ''));
   // 계약번호 뒤의 차수(-00 최초, -01 변경…)를 뗀 번호. 나라장터 번호는 'R26TA01914348' + 차수 2자리(대시가 없어도)
   const G2B_NO = /^([A-Za-z]\d{2}[A-Za-z]{2}\d{8})(?:-?(\d{2,3}))?$/;
@@ -925,7 +939,7 @@
     API_BASE, API_OPS, TYPES, apiUrl, keyParam, monthRanges, parseApiText, parseApiBody, parseCorpList, parseCorpRows, normalizeApiItem, detectExtFinance,
     G2B, g2bUrl, scanAuditFields, summarizeChanges, chgPlan, autoKind, CHG_KINDS, changesOf, ordSnap, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
     ordOf, viaParts, viaKey, viaStatus, itemsInName, isRecentItem, issuedTooEarly, isAdvBond, advBondCheck, ADV_DAYS, matchCandidates, checklistStatus, holds, hasItem, classifyPages, classifyTitleLines, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail, issueCond,
-    headLines, learnSigs, learnedItem, classifyInfo, suffixOf, shareSafe, splitPlan, checkSplit,
+    headLines, learnSigs, learnedItem, classifyInfo, suffixOf, shareSafe, splitPlan, checkSplit, goodName, isG2bNo,
     PAY_KINDS, typeKey, hasRounds, roundOnly, roundSteps, roundHint, roundLabel, routeRound,
   };
   root.JH = root.JH || {};

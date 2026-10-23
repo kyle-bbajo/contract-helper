@@ -13,7 +13,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '1.6.12'
+$Version = '1.6.13'
 $AppRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $WebRoot = Join-Path $AppRoot 'app'
 $LocalCfg = Join-Path $AppRoot 'local.json'
@@ -656,13 +656,23 @@ function Handle($stream, $req) {
     }
 
     '/api/delete' {
-      # 바로 지우지 않고 데이터 폴더의 "_삭제됨"으로 옮김
+      # dir=: 빈 폴더(계약을 지운 뒤 남은 계약 폴더)만 지움 — 파일이 하나라도 있으면 그대로 둠
+      if ($q['dir']) {
+        $d = Resolve-DataPath $q['dir']
+        if ((Test-Path -LiteralPath $d -PathType Container) -and -not (Get-ChildItem -LiteralPath $d -Recurse -File -Force -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+          Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue
+          Send-Json $stream 200 @{ ok = $true; removed = $true }; return
+        }
+        Send-Json $stream 200 @{ ok = $true; removed = $false }; return
+      }
+      # 바로 지우지 않고 데이터 폴더의 "_삭제됨"으로 옮김(되돌리기용). 30일 지나면 켤 때 완전히 지움
       $src = Resolve-DataPath $q['path']
       if (Test-Path -LiteralPath $src -PathType Leaf) {
         $trash = Resolve-DataPath '_삭제됨'
         if (-not (Test-Path -LiteralPath $trash)) { New-Item -ItemType Directory -Path $trash -Force | Out-Null }
         $dst = Get-UniquePath $trash ([IO.Path]::GetFileName($src))
         Move-Item -LiteralPath $src -Destination $dst
+        try { (Get-Item -LiteralPath $dst).LastWriteTime = Get-Date } catch { }  # 버린 날(30일 세는 기준)
         Send-Json $stream 200 @{ ok = $true; path = (Get-RelPath $dst) }; return
       }
       Send-Json $stream 200 @{ ok = $true }; return
@@ -954,6 +964,15 @@ $script:Wins = @{}; $script:ByeAt = $null
 if (-not $SkipAi) { Resume-AiSetup }
 Open-Browser "http://$BaseHost/"
 Write-StartLog "켜짐 $Version (포트 $Port)"
+# _삭제됨: 버린 지 30일 지난 파일은 완전히 지움(그 전에는 되돌리기·직접 꺼내기 가능)
+try {
+  $trash = Join-Path $script:DataDir '_삭제됨'
+  if (Test-Path -LiteralPath $trash) {
+    $old = @(Get-ChildItem -LiteralPath $trash -File -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-30) })
+    foreach ($f in $old) { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue }
+    if ($old.Count) { Write-StartLog "_삭제됨에서 30일 지난 파일 $($old.Count)개 지움" }
+  }
+} catch { }
 # 창을 띄운 뒤 뒤에서 새 버전 확인·내려받기(따로 실행 — 이 창구는 기다리지 않음)
 if (-not $NoUpdate -and (Test-InstalledCopy) -and (Get-UpdateCfg)) { try { Start-Detached '-StageUpdate' } catch { Write-StartLog "업데이트 확인을 시작하지 못함: $($_.Exception.Message)" } }
 try {
