@@ -920,16 +920,35 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   assert.equal(await listW(), w0, '두 번 누르면 원래대로');
   step('계약별 목록 너비 끌어서 조절(기억, 두 번 누르면 원래대로), 넓으면 긴 계약명 두 줄');
 
+  // 공고문 전용 새 창: 서류대장을 저장하지 않고(두 창이 덮어쓰지 않게), 원래 창의 공고문 화면은 잠김 → 공고문 창을 닫으면 풀림
+  {
+    const ledger = join(data, '서류대장.json'); const m0 = statSync(ledger).mtimeMs;
+    const p2 = await page.context().newPage(); await p2.goto(base + '?only=notice');
+    await p2.waitForSelector('body.only-notice #view-notice.on', { timeout: 20000 });
+    assert.ok(!(await p2.isVisible('.vgroup[data-mod="jichul"]')), '공고문 창에는 지출서류 메뉴 없음');
+    await p2.click('.vgroup[data-mod="rules"] button'); await p2.waitForSelector('#view-rules.on');
+    await page.waitForSelector('#view-notice.locked', { state: 'attached', timeout: 30000 });
+    await p2.close({ runBeforeUnload: true });
+    await page.waitForSelector('#view-notice:not(.locked)', { state: 'attached', timeout: 30000 });
+    assert.equal(statSync(ledger).mtimeMs, m0, '공고문 창은 서류대장을 저장하지 않음');
+    assert.ok((await fetch(base + 'api/ping', { headers: { 'X-JH-Token': run.token } })).ok, '원래 창이 열려 있으면 안 꺼짐');
+  }
+  step('공고문 전용 새 창: 지출서류 메뉴 없이 공고문·규정만, 서류대장은 건드리지 않음 · 원래 창의 공고문 화면은 그동안 잠김');
+
   await page.click('.brand');
   await page.waitForSelector('#homeNotice li');
   await page.screenshot({ path: join(SHOTS, '0b-처음화면-사용후.png') });
   assert.deepEqual(errors, [], '콘솔 오류');
   step('콘솔 오류 없음');
+  // 마지막: 창을 X로 닫으면(열린 창이 없으면) 몇 초 뒤 프로그램이 스스로 꺼짐
+  await page.close({ runBeforeUnload: true });
+  await waitFor(() => !existsSync(join(PROG, 'running.json')), 20000, '창을 닫으면 꺼짐');
+  step('창을 X로 닫으면 몇 초 뒤 프로그램(연결 창구)도 꺼짐');
   console.log(`\n통합 시험 통과 (${ok}단계). 화면: tests/e2e/screens/`);
 } catch (e) {
   console.error('\n실패:', e.message, '\n콘솔:', errors.join('\n'));
   try { console.error('알림:', await page.$$eval('.toast', (t) => t.map((x) => x.textContent))); } catch (_) {}
-  await page.screenshot({ path: join(SHOTS, 'fail.png') });
+  try { await page.screenshot({ path: join(SHOTS, 'fail.png') }); } catch (_) {}
   process.exitCode = 1;
 } finally {
   try { await stopServer(); } catch (_) {}

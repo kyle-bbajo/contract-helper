@@ -23,7 +23,8 @@
 
   const server = {
     online, token,
-    ping: () => call('GET', '/api/ping'),
+    ping: (p) => call('GET', '/api/ping', p),
+    openNoticeWindow: () => call('POST', '/api/openwin'),
     async readBytes(path) { const r = await call('GET', '/api/file', { path }); return new Uint8Array(await r.arrayBuffer()); },
     async readJson(path) {
       try { const r = await call('GET', '/api/file', { path }); return r instanceof Response ? JSON.parse(await r.text()) : r; }

@@ -29,6 +29,9 @@
   let db = { version: 1, contracts: {}, docs: [], checklists: null };
   // 계약 화면 위 칸(지출요청일·메모·감사 자료) 펼침 상태 — 이 PC에 기억
   const cardOpen = (() => { try { return JSON.parse(localStorage.getItem('jh.cards') || '{}') || {}; } catch (_) { return {}; } })();
+  // 창 구분: 공고문 전용 창(?only=notice)은 서류대장을 읽기만 하고 저장·폴더 읽기·자동 새로고침을 하지 않음(두 창이 서로 덮어쓰지 않게)
+  const ONLY = (() => { try { return new URLSearchParams(location.search).get('only') || ''; } catch (_) { return ''; } })();
+  const WIN = Math.random().toString(36).slice(2, 10), ROLE = ONLY === 'notice' ? 'notice' : 'main';
   const ui = { view: 'home', sel: null, q: '', officer: '', officerTouched: false, type: '', state: '', board: '', sort: (() => { try { return localStorage.getItem('jh.sort') || 'end-desc'; } catch (_) { return 'end-desc'; } })() };
 
   const CHECKLIST_VER = 7; // 4: 선금 보증서 · 5: 준공검사원 지정통보 · 6: 사업장 가입내역 확인서(4대보험 가입증명서) 등 찾는 말 추가 · 7: 하도급 계약서·계약보증서는 그 밖의 계약 서류
@@ -271,6 +274,7 @@
     await S.writeJson(DB_PATH, dbForSave(), true);
   }
   function saveDb(now) {
+    if (ONLY) return Promise.resolve(); // 공고문 전용 창은 서류대장을 저장하지 않음
     clearTimeout(saveTimer);
     const run = () => {
       if (inFlight) { again = true; return saving; }
@@ -284,7 +288,25 @@
   }
   // 창을 닫거나 숨기면 미뤄 둔 저장을 바로 보냄
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && saveTimer) { clearTimeout(saveTimer); saveTimer = null; saveDb(true); } });
-  const saveCfg = () => S.writeJson(CFG_PATH, diffFromOrg(cfg));
+  // 설정 저장. 공고문 전용 창은 다른 창이 바꾼 설정을 덮지 않게 저장된 설정을 다시 읽어 공고문·법령·AI 칸만 바꿔 씀
+  const saveCfg = async () => {
+    if (!ONLY) return S.writeJson(CFG_PATH, diffFromOrg(cfg));
+    const disk = mergeCfg((await S.readJson(CFG_PATH).catch(() => null)) || {});
+    for (const k of ['notice', 'lawOC', 'lawList', 'lawFetchedAt', 'aiKey', 'aiModel', 'aiLocalModel', 'aiMode']) if (k in cfg) disk[k] = cfg[k];
+    return S.writeJson(CFG_PATH, diffFromOrg(disk));
+  };
+  // 창 신호: 창마다 id로 '아직 열려 있음'을 알림. 다른 창에서 공고문 전용 창이 열려 있으면 이 창의 공고문 화면은 잠금
+  async function pingWin() {
+    const info = await S.ping({ w: WIN, role: ROLE });
+    if (ROLE === 'main') {
+      const other = (info.wins || []).some((x) => x.role === 'notice' && x.w !== WIN);
+      if (ui.noticeElsewhere && !other && JH.notice && JH.notice.reload) JH.notice.reload(); // 공고문 창을 닫았으면 그 창에서 쓴 내용을 다시 읽음
+      ui.noticeElsewhere = other; const v = $('#view-notice'); if (v) v.classList.toggle('locked', other);
+    }
+    return info;
+  }
+  // X로 창을 닫으면 알림 → 열린 창이 하나도 없으면 프로그램이 몇 초 뒤 스스로 꺼짐(새로고침은 바로 다시 들어오므로 안 꺼짐)
+  window.addEventListener('pagehide', () => { try { if (S.online) navigator.sendBeacon(`/api/bye?${new URLSearchParams({ t: S.token, w: WIN })}`); } catch (_) {} });
 
   // ---------- 알림·진행 ----------
   function toast(msg, kind, action) {
@@ -1976,6 +1998,7 @@
   }
   const MOD = { contracts: 'jichul', board: 'jichul', inbox: 'jichul', notice: 'notice', rules: 'rules', home: '' };
   function setView(v) {
+    if (ONLY && v !== 'notice' && v !== 'rules') v = 'notice';
     ui.view = v;
     const mod = MOD[v];
     $$('.views button').forEach((b) => b.classList.toggle('on', b.dataset.view === v));
@@ -2256,6 +2279,18 @@
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || '') && !document.querySelector('dialog[open]')) { e.preventDefault(); undo(); }
   });
   $('#btnUndo').onclick = () => undo();
+  // 종료: 프로그램(뒤의 연결 창구)까지 끔. 다른 창(공고문 창)도 같이 닫힘
+  $('#btnExit').onclick = async () => {
+    if (!confirm(ROLE === 'notice' ? '프로그램을 끌까요? 원래 창도 같이 꺼집니다. (이 창만 닫으려면 오른쪽 위 X)' : '프로그램을 끌까요? 다시 쓰려면 바탕화면의 계약업무 도우미를 누르세요.')) return;
+    try { await saveDb(true); } catch (_) {}
+    try { await S.quit(); } catch (_) {}
+    window.close(); setTimeout(() => banner('프로그램을 껐습니다. 이 창을 닫아 주세요.'), 500);
+  };
+  // 공고문을 새 창으로: 공고문 전용 창을 열고 이 창은 계약 서류 쪽으로
+  $('#btnNoticeWin').onclick = async () => {
+    try { await S.openNoticeWindow(); ui.noticeElsewhere = true; $('#view-notice').classList.add('locked'); setView('contracts'); toast('공고문 창을 따로 열었습니다. 이 창에서는 계약 서류를 계속 다루세요. 공고문 창을 닫으면 여기서도 이어서 씁니다.', 'ok'); }
+    catch (e) { toast('새 창을 열지 못했습니다: ' + e.message, 'err'); }
+  };
   $('#btnLog').onclick = () => openLog();
   $('#logUndo').onclick = async () => { $('#dlgLog').close(); await undo(); };
   document.addEventListener('click', (e) => { const b = e.target.closest('[data-view]'); if (b && !b.disabled && !b.closest('dialog')) setView(b.dataset.view); });
@@ -2354,7 +2389,8 @@
       setView(ui.view); return;
     }
     try {
-      const info = await S.ping();
+      const info = await pingWin();
+      if (ONLY) { document.body.classList.add('only-notice'); document.title = '공고문 작성 — 계약업무 도우미'; ui.view = 'notice'; }
       try { const r = await fetch('org.json', { cache: 'no-store' }); if (r.ok) org = await r.json(); } catch (_) {}
       // 설정·서류대장·서류 본문을 한꺼번에 요청(차례로 기다리지 않음)
       const [cfg0, saved0, tx0] = await Promise.all([S.readJson(CFG_PATH), S.readJson(DB_PATH).catch((e) => { console.warn('서류대장 읽기 실패', e); return null; }), S.readJson(TEXT_PATH).catch(() => null)]);
@@ -2372,7 +2408,7 @@
         if (tx) { for (const d of db.docs) if (!('text' in d) && tx[d.id]) d.text = tx[d.id]; }
         else if (db.docs.some((d) => d.text)) textDirty = true; // 예전 형식(본문이 서류대장 안에) → 다음 저장 때 본문 파일을 만듦
         // 백업은 화면을 그린 뒤에(켜기를 늦추지 않음)
-        setTimeout(() => S.writeJson(BACKUP_PATH, dbForSave(), true).catch(() => {}), 1500);
+        if (!ONLY) setTimeout(() => S.writeJson(BACKUP_PATH, dbForSave(), true).catch(() => {}), 1500);
         if (fromBackup) { toast('서류대장 파일이 망가져 있어 지난번 백업으로 열었습니다. 마지막에 한 일 몇 가지가 빠졌을 수 있습니다.', 'err'); saveDb(true); }
       }
       mergeSameContracts();
@@ -2386,7 +2422,7 @@
       } else if (!db.checklists) db.checklistsVer = CHECKLIST_VER;
       JH.settings.setInfo(info);
       // 자동으로 읽을 폴더가 정해져 있으면 보기 시작(고른 뒤에 들어온 파일만 — 고를 때 있던 파일은 설정에서 '본 것'으로 둠)
-      startWatch(info.watchDirs || []);
+      if (!ONLY) startWatch(info.watchDirs || []);
       if (info.relocated) toast(`데이터 폴더가 옮겨진 것을 찾았습니다: ${info.dataDir}`, 'ok');
       if (info.lost) banner(`예전 데이터 폴더(${esc(info.oldDir)})를 찾지 못해 임시로 새 폴더를 쓰고 있습니다. <button class="link" id="bannerFind">옮긴 폴더 고르기</button>`, true);
       const bf = $('#bannerFind'); if (bf) bf.onclick = async () => { const r = await S.pickFolder(); if (r.ok) location.reload(); };
@@ -2395,11 +2431,12 @@
     } catch (e) { banner('연결 창구와 통신하지 못했습니다: ' + esc(e.message), true); }
     try { await JH.notice.load(); } catch (_) {}
     setView(ui.view);
+    setInterval(() => { pingWin().catch(() => banner('연결 창구가 꺼졌습니다. 바탕화면의 바로가기로 다시 실행해 주세요.', true)); }, 20000);
+    if (ONLY) return; // 공고문 전용 창: 폴더 확인·정리·자동 새로고침은 원래 창이 함
     try { await reconcile(); render(); } catch (e) { console.warn('폴더 확인 실패', e); }
     try { await relayout(); } catch (e) { console.warn('폴더 정리 실패', e); }
     pullShare(); // 다른 PC가 배운 규칙 받기(뒤에서)
     if (!cfg.officer) openWelcome();
-    setInterval(() => { S.ping().catch(() => banner('연결 창구가 꺼졌습니다. 바탕화면의 바로가기로 다시 실행해 주세요.', true)); }, 60000);
     if (cfg.officer) { checkAccounts().finally(() => autoRefresh(true)); setInterval(() => autoRefresh(false), 5 * 60000); }
   }
 

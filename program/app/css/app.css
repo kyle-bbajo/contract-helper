@@ -804,3 +804,9 @@ body.resizing { cursor: col-resize; user-select: none; }
 .learned { margin-top: 10px; } .learned summary { cursor: pointer; font-size: 13.5px; }
 .rec-t { color: var(--ok); margin-top: 3px; }
 .file .chk-btn { border: 1px solid var(--amber); border-radius: 4px; background: var(--amber-soft); padding: 1px 5px; cursor: pointer; font: inherit; font-size: 11px; font-weight: 700; color: #7a5112; }
+/* 공고문 전용 창 · 다른 창에서 공고문을 쓰는 중이면 잠금 */
+body.only-notice .vgroup[data-mod="jichul"], body.only-notice #btnNoticeWin, body.only-notice .brand { pointer-events: none; }
+body.only-notice .vgroup[data-mod="jichul"], body.only-notice #btnNoticeWin { display: none; }
+#view-notice.locked { position: relative; }
+#view-notice.locked > * { opacity: .35; pointer-events: none; user-select: none; }
+#view-notice.locked::before { content: '공고문은 따로 연 「공고문 작성」 창에서 쓰는 중입니다. 그 창에서 이어서 쓰세요(그 창을 닫으면 여기서 다시 쓸 수 있음).'; display: block; position: sticky; top: 8px; z-index: 5; margin: 12px auto; max-width: 720px; padding: 12px 16px; border-radius: 10px; background: var(--amber-soft); color: #7a5112; font-weight: 650; text-align: center; }

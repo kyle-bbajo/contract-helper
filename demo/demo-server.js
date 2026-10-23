@@ -209,6 +209,7 @@
     async view(path) { await showFile(norm(path)); },
     async pickFolder() { throw new Error('시연판에서는 폴더를 바꿀 수 없습니다.'); },
     async quit() { return { ok: true }; },
+    async openNoticeWindow() { throw new Error('시연판에서는 새 창을 열 수 없습니다(실제 프로그램은 공고문 전용 창이 따로 열림)'); },
     fileUrl: (path) => '#',
     showPdf, showTable,
     _files: files,

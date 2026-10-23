@@ -13,7 +13,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '1.6.4'
+$Version = '1.6.5'
 $AppRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $WebRoot = Join-Path $AppRoot 'app'
 $LocalCfg = Join-Path $AppRoot 'local.json'
@@ -609,7 +609,17 @@ function Handle($stream, $req) {
       return
     }
     '/api/restart' { Send-Json $stream 200 @{ ok = $true }; Restart-Self; $script:Quit = $true; return }
-    '/api/ping' { Send-Json $stream 200 @{ ok = $true; version = $Version; installed = (Read-Installed); staged = (Get-Staged); check = (Read-JsonFile (Join-Path $AppRoot 'update-check.json')); canUpdate = [bool]((Test-InstalledCopy) -and (Get-UpdateCfg)); dataDir = $script:DataDir; watchDirs = @($script:WatchDirs); relocated = $script:Relocated; lost = $script:Lost; oldDir = $script:OldDir; os = [Environment]::OSVersion.VersionString }; return }
+    '/api/ping' {
+      # 열린 창 기록(창마다 id·역할): 창을 모두 닫으면(X) 몇 초 뒤 꺼짐, 공고문 전용 창이 열려 있으면 다른 창에 알림
+      if ($q['w']) { $script:Wins[[string]$q['w']] = @{ at = Get-Date; role = [string]$q['role'] }; $script:ByeAt = $null }
+      $now = Get-Date; foreach ($k in @($script:Wins.Keys)) { if (($now - $script:Wins[$k].at).TotalMinutes -gt 3) { $script:Wins.Remove($k) } }
+      $roles = @($script:Wins.GetEnumerator() | ForEach-Object { @{ w = $_.Key; role = $_.Value.role } })
+      Send-Json $stream 200 @{ ok = $true; version = $Version; wins = $roles; installed = (Read-Installed); staged = (Get-Staged); check = (Read-JsonFile (Join-Path $AppRoot 'update-check.json')); canUpdate = [bool]((Test-InstalledCopy) -and (Get-UpdateCfg)); dataDir = $script:DataDir; watchDirs = @($script:WatchDirs); relocated = $script:Relocated; lost = $script:Lost; oldDir = $script:OldDir; os = [Environment]::OSVersion.VersionString }; return
+    }
+    # 창을 닫음(X): 그 창을 지우고, 남은 창이 없으면 몇 초 기다렸다가(새로고침이면 바로 다시 들어옴) 끔
+    '/api/bye' { if ($q['w']) { $script:Wins.Remove([string]$q['w']) }; if ($script:Wins.Count -eq 0) { $script:ByeAt = Get-Date }; Send-Json $stream 200 @{ ok = $true }; return }
+    # 공고문 전용 창 열기(프로그램 창 모양으로)
+    '/api/openwin' { Open-Browser "http://$BaseHost/?only=notice"; Send-Json $stream 200 @{ ok = $true }; return }
 
     '/api/file' {
       $full = Resolve-DataPath $q['path']
@@ -937,6 +947,7 @@ function Handle($stream, $req) {
 # ---------- 실행 ----------
 $script:LastSeen = Get-Date
 $script:Quit = $false
+$script:Wins = @{}; $script:ByeAt = $null
 if (-not $SkipAi) { Resume-AiSetup }
 Open-Browser "http://$BaseHost/"
 Write-StartLog "켜짐 $Version (포트 $Port)"
@@ -947,6 +958,8 @@ try {
     if (-not $listener.Pending()) {
       Start-Sleep -Milliseconds 40
       if (((Get-Date) - $script:LastSeen).TotalMinutes -gt $IdleMinutes) { break }
+      # 마지막 창을 닫은 뒤 6초 동안 아무 창도 다시 안 들어오면 끔
+      if ($script:ByeAt -and $script:Wins.Count -eq 0 -and ((Get-Date) - $script:LastSeen).TotalSeconds -gt 6) { Write-StartLog '창을 모두 닫아 끔'; break }
       continue
     }
     $client = $listener.AcceptTcpClient()

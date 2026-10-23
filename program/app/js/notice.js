@@ -723,6 +723,7 @@
 
   root.JH.notice = Object.assign(root.JH.notice, {
     async show() { await load(); render(); },
+    async reload() { loaded = false; await load(); render(); }, // 다른 창(공고문 전용 창)에서 쓴 내용을 다시 읽음
     create, templates, TPL_DIR, slotInfo, uploadSlot, resetSlot, slotPath, KINDS,
     stats() {
       const by = { draft: 0, done: 0 }; store.notices.forEach((n) => by[N.statusOf(n)]++);
