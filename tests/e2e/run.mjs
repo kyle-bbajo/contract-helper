@@ -1138,6 +1138,15 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     assert.match(await page.$eval('#pvItem', (s) => s.selectedOptions[0].textContent), /고용·산재 가입증명원/, '서류 종류 골라 둠');
     assert.match(await page.textContent('#pvWhy'), /이렇게 넣었습니다/);
     await page.click('#pvSave'); await page.waitForFunction(() => !document.querySelector('#dlgPreview').open);
+    // 다른 창(설정)이 열려 있을 때 올리면: 설정을 닫는 즉시 확인 팝업
+    await page.click('#btnSettings'); await page.waitForSelector('#dlgSettings[open]');
+    await page.evaluate(() => JH.app.ingest([new File([new Uint8Array([37, 80, 68, 70])], '통장 사본.pdf', { type: 'application/pdf' })], null, null));
+    await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => d.name === '통장 사본.pdf')), 30000, '통장 올림');
+    await page.waitForTimeout(800);
+    assert.ok(!(await page.evaluate(() => document.querySelector('#dlgPreview').open)), '설정 창이 열려 있는 동안은 기다림');
+    await page.evaluate(() => document.querySelector('#dlgSettings').close());
+    await page.waitForSelector('#dlgPreview[open]', { timeout: 5000 });
+    await page.click('#dlgPreview button[value="close"]');
     await page.evaluate(async () => { JH.app.cfg.uploadConfirm = false; await JH.app.saveCfg(); });
     await waitFor(async () => !(await page.isVisible('#progress')), 30000, '정리 끝'); await page.waitForTimeout(1000);
   }

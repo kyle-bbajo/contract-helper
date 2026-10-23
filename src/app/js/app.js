@@ -479,6 +479,22 @@
     const keep = !junk && !L.norm(stem).includes(L.norm(itemNm)) ? `_${L.safeName(stem, 40)}` : '';
     return `${n ? n + '_' : ''}${itemNm}${cName ? '_' + cName : ''}${keep}${ext}`;
   }
+  // 확인 팝업 띄우기: 다른 창(설정·계약 수정 등)이 열려 있으면 기다렸다가 그 창을 닫는 즉시 띄움. 이미 확인 팝업이 떠 있으면 뒤에 이어 붙임
+  let askQueue = [];
+  function askLater(ids) {
+    ids = ids.filter((id) => docById(id));
+    if (!ids.length) return;
+    const pvOpen = $('#dlgPreview').open;
+    if (pvOpen && pv.confirm) { for (const id of ids) if (!pv.ids.includes(id)) pv.ids.push(id); $('#pvTitle').textContent = `맞는지 확인해 주세요 (${pv.i + 1}/${pv.ids.length})`; $('#pvNext').textContent = pv.i < pv.ids.length - 1 ? '다음' : '닫기'; return; }
+    askQueue = [...new Set([...askQueue, ...ids])];
+    setTimeout(flushAsk, 300);
+  }
+  function flushAsk() {
+    if (!askQueue.length || document.querySelector('dialog[open]')) return;
+    const ids = askQueue.filter((id) => docById(id)); askQueue = [];
+    if (ids.length) openPreview(ids, 0, true);
+  }
+  document.addEventListener('close', (e) => { if (e.target && e.target.tagName === 'DIALOG') setTimeout(flushAsk, 150); }, true);
   // 파일이 여러 개인 게 보통인 칸(수정본을 묻지 않음)
   const MULTI_ITEM = /-(related|agent|photo|result|roster|laborlist|bizreg|license|licbook)$/;
   async function ingest(fileList, forceKey, forceItem, opt = {}) {
@@ -537,6 +553,7 @@
         progress(`정리하는 중 ${i + 1}/${recs.length}`, i / recs.length);
         let c = forced || (r.key && db.contracts[r.key]) || pickContract(L.norm(L.stem(r.name)) + '|' + r.text, r);
         // 계약을 정하지 못했으면 점수가 같은 후보(같은 업체 계약 등)를 남겨 두고 팝업에서 '추천'으로 먼저 보여 줌
+        if (!c) { const g0 = L.classifyInfo(defaults.공사, r.name, r.title).id || L.classifyInfo(defaults.용역, r.name, r.title).id || L.classifyInfo(defaults.물품, r.name, r.title).id; if (g0) r.guess = L.suffixOf(g0); }
         if (!c) { const m = L.matchCandidates(contracts(), L.norm(L.stem(r.name)) + '|' + r.text); r.cands = m.top.sort((a, b) => (!!a.paidDate - !!b.paidDate) || (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 6).map((x) => x.key); }
         // 계약 화면 안에서 올린 서류는 그 계약으로(다른 계약으로 보내지 않음). 오른쪽 위 [업로드]는 전체 계약에서 찾아 정리
         const info = c && !(forced && forceItem) ? classifyDoc(c, r.name, r.title, r.heads) : null;
@@ -579,7 +596,7 @@
           ...(prev ? { revOf: prev.id } : {}),
           id: r.id, key: c ? c.key : null, itemId: item ? item.id : null, path: saved.path, name: r.name, kind: r.kind,
           size: r.size, mime: r.mime, addedAt: new Date().toISOString(), ocr: r.ocr, meta: r.meta, text: r.text, title: r.title, dates: r.dates, manual: !!forced && !r.rerouted, facts: L.docFacts(r.lines),
-          ...(rnd ? { pay: rnd.id } : {}), ...(!c && r.cands && r.cands.length ? { cands: r.cands } : {}), ...(r.heads && r.heads.length ? { heads: r.heads } : {}), ...(r.unsure ? { unsure: true, alts: r.alts } : {}),
+          ...(rnd ? { pay: rnd.id } : {}), ...(!c && r.cands && r.cands.length ? { cands: r.cands } : {}), ...(!c && r.guess ? { guess: r.guess } : {}), ...(r.heads && r.heads.length ? { heads: r.heads } : {}), ...(r.unsure ? { unsure: true, alts: r.alts } : {}),
           ...(also.length ? { also, pagesOf } : {}), ...(r.pages > 1 ? { pages: r.pages } : {}),
         });
         if (c) { byContract[c.key] = (byContract[c.key] || 0) + 1; c.updatedAt = Date.now(); } else inbox++;
@@ -637,7 +654,7 @@
       const nLearned = recs.filter((r) => r.learned).length;
       if (nLearned) msg += ` ${nLearned}개는 전에 배운 대로 넣었습니다.`;
       toast(msg, inbox ? '' : 'ok', unsure.length ? { label: '확인하기', run: () => openPreview(unsure, 0, true) } : recs.length || again.length ? undoAction() : null);
-      if (unsure.length && !$('#dlgPreview').open && !document.querySelector('dialog[open]')) setTimeout(() => openPreview(unsure, 0, true), 300);
+      if (unsure.length) askLater(unsure);
       const keys = Object.keys(byContract);
       if (!forced && !opt.onlyMatched && keys.length === 1) ui.sel = keys[0]; // 폴더에서 자동으로 읽은 것은 보던 계약 화면을 바꾸지 않음
     } catch (e) {
@@ -825,7 +842,7 @@
       // 탐색기에서 직접 넣은 파일도 '올릴 때마다 확인'이면 팝업으로 보여 줌(아니면 못 정한 것만)
       const ask = addedIds.filter((id) => { const d = docById(id); return d && (cfg.uploadConfirm !== false || !d.key || !d.itemId); });
       toast(parts.join('. ') + '.', missing ? 'err' : 'ok', ask.length ? { label: '확인하기', run: () => openPreview(ask, 0, true) } : null);
-      if (ask.length && !document.querySelector('dialog[open]')) setTimeout(() => { if (!document.querySelector('dialog[open]')) openPreview(ask, 0, true); }, 400);
+      if (ask.length) askLater(ask);
     }
   }
 
@@ -1935,7 +1952,9 @@
     const fillItems = (key) => {
       const cc = key ? db.contracts[key] : null;
       if (!cc) { $('#pvItem').innerHTML = '<option value="">계약을 먼저 고르세요</option>'; $('#pvItem').disabled = true; $('#pvItemSearch').value = ''; return; }
-      const g = classifyDoc(cc, d.name, d.title, d.heads), sel = key === d.key && d.itemId ? d.itemId : g.id || '';
+      const g = classifyDoc(cc, d.name, d.title, d.heads);
+      if (!g.id && d.guess) { const gi = classList(cc).find((x) => L.suffixOf(x.id) === d.guess); if (gi) g.id = gi.id; } // 계약을 몰라도 미리 찾아 둔 종류
+      const sel = key === d.key && d.itemId ? d.itemId : g.id || '';
       $('#pvItem').innerHTML = itemOptions(classList(cc), sel, false, [g.id, ...(g.alts || []), ...(key === d.key && d.itemId ? [d.itemId] : [])].filter(Boolean)); $('#pvItem').disabled = false;
       $('#pvItemSearch').value = ''; $('#pvItemSearch').title = '';
     };
@@ -1948,6 +1967,7 @@
       $('#pvWhy').textContent = '이렇게 넣었습니다. 계약과 서류 종류가 맞으면 [이대로 저장], 틀리면 고르세요(고친 것은 배웁니다). 묻지 않고 바로 넣으려면 설정 → 서류 목록 → 올릴 때마다 확인을 끄세요.';
     } else
     $('#pvWhy').textContent = pv.confirm ? (!c ? (cands.length > 1 ? `같은 업체(또는 비슷한 이름) 계약이 ${cands.length}개라 확실하지 않습니다. 가장 가까운 계약을 골라 두었으니 맞는지 확인해 주세요.` : cands.length ? '확실하지 않아 가장 가까운 계약을 골라 두었습니다.' : '어느 계약 서류인지 찾지 못했습니다.') : !d.itemId ? '어떤 서류인지 찾지 못했습니다.' : d.unsure ? `제목에 다른 서류 이름(${altNames.join(', ')})도 있어 헷갈립니다.` : '') + ' 내용을 보고 맞게 골라 주세요. 고른 답은 배워서 다음부터 같은 제목이면 바로 넣습니다.' : '';
+    if (pv.confirm && !d.key && d.guess) { const gn = (defaults.공사.concat(defaults.용역, defaults.물품).find((x) => L.suffixOf(x.id) === d.guess) || {}).name; if (gn) $('#pvWhy').textContent += ` 서류 종류는 '${gn}'(으)로 보입니다 — 계약만 고르면 골라집니다.`; }
     if (pv.confirm && revPrev && d.unsure) $('#pvWhy').textContent += ` 이 칸에는 이미 「${revPrev.name}」이 있습니다(같은 서류의 수정본이면 그대로 저장).`;
     $('#pvAi').hidden = true;
     if (pv.confirm && (c || cands[0]) && (!d.itemId || d.unsure)) aiGuess(d, c || db.contracts[cands[0]], tok);

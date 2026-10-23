@@ -281,3 +281,14 @@ test('준공계·준공검사원 두 칸, 지정통보는 필수 아님', () => 
     assert.equal(list.find((x) => /-notice$/.test(x.id)).required, false);
   }
 });
+
+test('면허 등록증·등록수첩·통장사본: 파일 이름·제목(통장 글자가 없는 통장 표지도)', () => {
+  const list = L.defaultChecklists().공사, name = (f, t = '') => (list.find((x) => x.id === L.classifyInfo(list, f, L.norm(t)).id) || {}).name;
+  assert.equal(name('스캔.pdf', '전기공사업 등록증'), '면허 등록증 사본');
+  assert.equal(name('스캔.pdf', '건설업 등록수첩'), '면허 등록수첩 사본');
+  assert.equal(name('통장 사본.jpg'), '통장사본');
+  assert.equal(name('스캔.pdf', '입출금이 자유로운 예금 기업은행 예금주'), '통장사본');
+  assert.equal(name('계좌사본.pdf'), '통장사본');
+  assert.equal(name('스캔.pdf', '엔지니어링사업자 신고증'), '면허 등록증 사본');
+  assert.equal(name('스캔.pdf', '사업자등록증 등록번호 123-45-67890'), '사업자등록증 사본');
+});
