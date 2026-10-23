@@ -256,7 +256,16 @@
     await app.fetchContracts(true);
     const fs = [];
     for (const n of SAMPLES) { const b = await (await fetch('samples/' + encodeURIComponent(n))).arrayBuffer(); fs.push(new File([b], n)); }
+    // 처음 넣는 예시 서류는 확인 팝업 없이(시연을 바로 볼 수 있게). 내가 올리는 파일부터는 확인 팝업
+    app.cfg.uploadConfirm = false;
     await app.ingest(fs);
+    // 착수계 묶음(6쪽): 시청사 옥상 방수공사에 넣어 두고 [나누기]로 서류마다 잘라 보기
+    try {
+      const bc = Object.values(app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사');
+      const bn = '착수계묶음_시청사방수.pdf', bb = await (await fetch('samples/' + encodeURIComponent(bn))).arrayBuffer();
+      if (bc) await app.ingest([new File([bb], bn, { type: 'application/pdf' })], bc.key, null);
+    } catch (e) { console.warn('묶음 예시', e); }
+    delete app.cfg.uploadConfirm;
     // 메모 예시
     const c = Object.values(app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사');
     if (c) { c.memo = { dept: '시설관리팀', person: '홍감독', phone: '031-000-1234', note: '준공검사 10/20 예정. 하자보증서 원본은 업체가 직접 가져오기로 함.', aChgWhy: '준공정산', aExtWhy: '우천으로 방수층 양생 지연' }; await app.saveDb(true); }
@@ -266,7 +275,14 @@
     showBar();
   }
   function showBar() {
-    JH.app.banner('<b>시연판</b> · 예시 계약 5건(공사·용역·물품)과 파일명이 noname인 샘플 서류 11개를 자동으로 넣어 두었습니다. 내 파일을 창에 끌어다 놓아도 됩니다(이 브라우저 안에서만 처리, 저장 안 됨). <button class="link" id="demoReset">처음부터 다시 보기</button>');
+    JH.app.banner('<b>시연판</b> · 예시 계약 5건(공사·용역·물품)과 파일명이 noname인 샘플 서류 11개를 자동으로 넣어 두었습니다. 내 파일을 창에 끌어다 놓아도 됩니다(이 브라우저 안에서만 처리, 저장 안 됨). <button class="link" id="demoSplit">쪽별로 나누기 해 보기</button> <button class="link" id="demoReset">처음부터 다시 보기</button>');
+    const sb = document.getElementById('demoSplit');
+    if (sb) sb.onclick = () => {
+      const app = JH.app, d = app.db.docs.find((x) => x.name === '착수계묶음_시청사방수.pdf');
+      if (!d) { app.toast('묶음 예시가 없습니다. [처음부터 다시 보기]를 눌러 주세요.', 'err'); return; }
+      app.ui.sel = d.key; app.setView('contracts');
+      setTimeout(() => { const btn = document.querySelector(`[data-act="split"][data-doc="${d.id}"]`); if (btn) { btn.scrollIntoView({ block: 'center' }); btn.click(); } }, 300);
+    };
     const b = document.getElementById('demoReset');
     if (b) b.onclick = () => location.reload();
   }

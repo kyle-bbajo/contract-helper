@@ -3038,7 +3038,7 @@
   }
 
   root.JH.app = {
-    get cfg() { return cfg; }, set cfg(v) { cfg = v; }, get db() { return db; }, get org() { return org; },
+    get cfg() { return cfg; }, get ui() { return ui; }, set cfg(v) { cfg = v; }, get db() { return db; }, get org() { return org; },
     readWatch: (all) => watchTick({ now: true, all: !!all }), get share() { return ui.share; }, get recording() { return recording; }, get undoLabels() { return undoStack.map((u) => u.label); }, pullShare, pushShare, fitWindow, syncTab, shareableRule: (r) => shareable(r, privateNames()),
     defaults, lists, printList, startWatch, checkAccounts, saveCfg, saveDb, fetchContracts, enrichContracts, fillFromDocs, openForms, render, toast, banner, start, ingest, setView, progress,
     setChecklists(v) { db.checklists = v; return saveDb(true); },

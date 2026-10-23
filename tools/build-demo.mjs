@@ -65,12 +65,14 @@ writeFileSync(join(OUT, 'css/demo.css'), `
 // 예시 서류: 시험용 noname 서류 중 PDF·스캔·사진만(한글 예시는 이번 시연판에서 뺌)
 const SAMP = join(OUT, 'samples'); mkdirSync(SAMP, { recursive: true });
 for (const f of readdirSync(join(ROOT, 'tests/fixtures/docs'))) if (!/\.hwpx?$/i.test(f)) cpSync(join(ROOT, 'tests/fixtures/docs', f), join(SAMP, f));
+// 묶음 PDF(착수계 묶음 6쪽) — 쪽별로 나누기 시연
+for (const f of readdirSync(join(ROOT, 'tests/fixtures/bundle'))) cpSync(join(ROOT, 'tests/fixtures/bundle', f), join(SAMP, f));
 {
   const p = join(OUT, 'js/demo-server.js'); let d = readFileSync(p, 'utf8');
   const rep = (a, b) => { if (!d.includes(a)) throw new Error('demo-server 바꿀 곳 없음: ' + a.slice(0, 50)); d = d.replace(a, b); };
   rep(", 'noname(9).hwp', 'noname(10).hwpx']", ']');
   rep("    const tpl = new Uint8Array(await (await fetch('samples/공고문양식.hwpx')).arrayBuffer());\n    files.set('공고문/양식/공고문양식.hwpx', tpl);\n", '');
-  rep('샘플 서류 11개', '샘플 서류 9개(PDF·스캔·사진)');
+  rep('샘플 서류 11개', '샘플 서류 9개(PDF·스캔·사진)와 착수계 묶음 PDF(6쪽)');
   rep("cMapUrl: 'vendor/pdfjs/cmaps/', cMapPacked: true,", 'CMapReaderFactory: root.JH_DemoCMapFactory, cMapPacked: true,');
   writeFileSync(p, d);
 }
