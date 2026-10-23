@@ -43,6 +43,7 @@
     </div>
   </header>
 
+  <div class="tabs" id="tabs" role="tablist" aria-label="열어 둔 화면"></div>
   <div class="banner" id="banner" hidden></div>
 
   <main>
@@ -422,7 +423,7 @@
       <p class="warn-t small" id="pvWhy"></p>
       <p class="ai-t small" id="pvAi" hidden></p>
       <label>계약<div class="cpick"><input type="search" class="cpick-q" id="pvSearch" placeholder="계약 찾기: 이름·업체·번호 입력" autocomplete="off"><select id="pvContract"></select></div></label>
-      <label>서류 종류<select id="pvItem"></select></label>
+      <label>서류 종류<div class="cpick"><input type="search" class="cpick-q" id="pvItemSearch" placeholder="서류 찾기: 이름 입력(예: 재해율, 보험)" autocomplete="off" aria-label="서류 찾기"><select id="pvItem"></select></div></label>
       <div class="pv-acts">
         <button type="button" class="btn primary" id="pvSave">이대로 저장</button>
         <button type="button" class="btn ghost danger" id="pvTrash" title="우리 계약 서류가 아니면 버림(_삭제됨으로 옮김, 되돌리기 가능)">버리기</button>

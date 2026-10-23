@@ -201,3 +201,15 @@ test('동료와 나누는 배운 말: 서류 종류 제목만, 계약·업체·�
   assert.equal(L.shareSafe('대표자 성명 확인', names), false);
   assert.equal(L.shareSafe('홍길동', names), false); // 짧은 말(사람 이름일 수 있음)
 });
+
+test('구매요구 안전보건 서류(공사·용역): 산업안전재해율 결과·안전보건관리계획서·적격수급업체 안전보건 수준 평가표', () => {
+  const d = L.defaultChecklists();
+  for (const t of ['공사', '용역']) {
+    const list = d[t], name = (f, title = '') => (list.find((x) => x.id === L.classifyItem(list, f, title)) || {}).name;
+    assert.equal(name('스캔001.pdf', L.norm('사업장 산업재해율 조회 결과')), '사업장 산업안전재해율 결과');
+    assert.equal(name('안전보건관리계획서(최종).hwp'), '안전보건관리계획서');
+    assert.equal(name('평가표.pdf', L.norm('적격 수급업체 안전보건 수준 평가표')), '적격수급업체 안전보건 수준 평가표');
+    assert.ok(list.filter((x) => x.group === '구매요구').length === 4);
+  }
+  assert.equal(d.물품.filter((x) => x.group === '구매요구').length, 1, '물품에는 없음');
+});

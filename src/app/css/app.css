@@ -34,7 +34,7 @@ button, input, select { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 [hidden] { display: none !important; }
 
-#app { height: 100vh; display: grid; grid-template-rows: var(--bar-h) auto 1fr; }
+#app { height: 100vh; display: grid; grid-template-rows: var(--bar-h) auto auto 1fr; }
 
 /* ---------- 상단 바 ---------- */
 .bar { display: flex; align-items: center; gap: 28px; padding: 0 20px; background: var(--ink); color: #fff; }
@@ -361,7 +361,7 @@ body[data-mod="home"] .views button.on::after { display: none; }
 @media (max-width: 1150px) {
   .bar { padding: 0 max(12px, env(safe-area-inset-left, 0px)); flex-wrap: wrap; row-gap: 0; }
   .bar-actions { padding: 8px 0; }
-  #app { grid-template-rows: auto auto 1fr; }
+  #app { grid-template-rows: auto auto auto 1fr; }
   .views { order: 3; flex: 1 1 100%; height: 44px; overflow-x: auto; scrollbar-width: none; border-top: 1px solid rgba(255,255,255,.14); }
   .views button { padding: 0 10px; }
   #view-contracts { --list-w: 300px; }
@@ -853,3 +853,17 @@ input[data-date] { width: 9.5em; max-width: 100%; font-variant-numeric: tabular-
   #view-inbox .grid td { overflow-wrap: anywhere; }
 }
 @media (max-width: 760px) { #view-board .grid th:nth-child(6), #view-board .grid td:nth-child(6) { display: none; } }
+
+/* ---------- 탭: 한 창 안에서 여러 화면(계약 A·계약 B·공고문…)을 열어 두고 오감 ---------- */
+.tabs { display: flex; align-items: flex-end; gap: 2px; padding: 5px max(12px, env(safe-area-inset-left, 0px)) 0; background: #dfe5ee; border-bottom: 1px solid var(--rule); overflow-x: auto; scrollbar-width: thin; min-height: 36px; }
+.tabs[hidden] { display: none; }
+.tab-it { display: flex; align-items: center; gap: 4px; max-width: 220px; min-width: 0; flex: 0 1 auto; padding: 0 4px 0 12px; height: 31px; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; background: transparent; color: var(--ink-2); cursor: pointer; font-size: 13px; font-weight: 600; }
+.tab-it:hover { background: rgba(255,255,255,.55); }
+.tab-it.on { background: var(--paper); border-color: var(--rule); color: var(--text); position: relative; top: 1px; }
+.tab-it .tl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tab-it .tk { font-size: 11px; font-weight: 600; color: var(--muted); flex: none; }
+.tab-it .tx { flex: none; width: 20px; height: 20px; display: grid; place-items: center; border: 0; border-radius: 5px; background: none; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; padding: 0; }
+.tab-it .tx:hover { background: rgba(0,0,0,.08); color: var(--text); }
+.tab-add { flex: none; height: 28px; width: 30px; margin-bottom: 2px; border: 0; border-radius: 6px; background: none; color: var(--ink-2); cursor: pointer; font-size: 18px; line-height: 1; }
+.tab-add:hover { background: rgba(255,255,255,.6); color: var(--text); }
+body.only-notice .tabs { display: none; }

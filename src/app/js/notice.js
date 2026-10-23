@@ -526,6 +526,7 @@
     return `<div class="nstatus"><div class="nsteps">${steps}</div>${st === 'done' ? '<span class="muted small">만든 한글 파일을 나라장터에 직접 첨부해 등록하세요.</span>' : ''}</div>`;
   }
   function render() {
+    if (app() && app().syncTab) setTimeout(() => app().syncTab(), 0); // 탭 이름(공고문 이름) 맞춤
     if (!$('#view-notice').classList.contains('on')) return;
     renderMain();
     if (jumpKey) jumpTo(jumpKey, true);
@@ -723,6 +724,9 @@
 
   root.JH.notice = Object.assign(root.JH.notice, {
     async show() { await load(); render(); },
+    selId: () => sel, // (Object.assign은 getter를 값으로 복사하므로 함수로)
+    selTitle(id) { const n = store.notices.find((x) => x.id === (id || sel)); return n ? (n.v.공고명 || '새 공고문') : ''; },
+    select(id) { if (id && store.notices.some((x) => x.id === id)) sel = id; if (loaded) render(); },
     async reload() { loaded = false; await load(); render(); }, // 다른 창(공고문 전용 창)에서 쓴 내용을 다시 읽음
     create, templates, TPL_DIR, slotInfo, uploadSlot, resetSlot, slotPath, KINDS,
     async uploadNotices(files) { await load(); if (!cur()) { app().toast('공고문을 먼저 열거나 새로 만든 뒤 놓아 주세요.', 'err'); return; } return uploadNotices(files); },

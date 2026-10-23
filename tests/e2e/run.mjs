@@ -1020,6 +1020,29 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   }
   step('창을 반으로 줄여도(960·720px) 화면이 옆으로 넘치지 않고 위 버튼이 다 보임');
 
+  // 탭: 한 창 안에서 계약 A·계약 B를 탭으로 열어 두고 오감(고른 계약이 탭마다 남음)
+  {
+    await page.evaluate(() => document.querySelector('nav [data-view="contracts"]').click()); await page.waitForSelector('.citem[data-key]');
+    const keys = await page.$$eval('.citem[data-key]', (xs) => xs.map((x) => x.dataset.key));
+    await page.click(`.citem[data-key="${keys[0]}"]`);
+    await page.click('#tabAdd');
+    await page.click(`.citem[data-key="${keys[1]}"]`);
+    assert.equal(await page.$$eval('.tab-it', (x) => x.length) >= 2, true, '탭 둘');
+    const n = await page.$$eval('.tab-it', (x) => x.length);
+    await page.click(`.tab-it >> nth=${n - 2}`);
+    assert.equal(await page.$eval('.citem.on', (x) => x.dataset.key), keys[0], '앞 탭은 계약 A');
+    await page.click(`.tab-it >> nth=${n - 1}`);
+    assert.equal(await page.$eval('.citem.on', (x) => x.dataset.key), keys[1], '뒤 탭은 계약 B');
+    await page.click(`.tab-it >> nth=${n - 1} >> .tx`);
+    assert.equal(await page.$$eval('.tab-it', (x) => x.length), n - 1, '탭 닫기');
+    // 확인 팝업: 서류 종류도 글자로 찾기
+    await page.click('#detail [data-act="view"] >> nth=0'); await page.waitForSelector('#dlgPreview[open]');
+    await page.fill('#pvItemSearch', '가입자명부');
+    assert.match(await page.$eval('#pvItem', (s) => s.options[s.selectedIndex].textContent), /가입자명부/, '서류 종류 검색');
+    await page.click('#dlgPreview button[value="close"]'); await page.waitForFunction(() => !document.querySelector('#dlgPreview').open);
+  }
+  step('탭: 한 창 안에서 계약·공고문을 탭으로 열어 두고 오감(탭마다 고른 것 기억, 닫기) · 확인 팝업 서류 종류도 글자로 찾기');
+
   // 동료 규칙 받기: 받은 규칙에 맞는 '종류 못 정한/확인 필요' 서류는 그 자리에서 정해짐(사람이 고른 것은 그대로)
   {
     const r = await page.evaluate(async () => {

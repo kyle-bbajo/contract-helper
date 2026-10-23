@@ -34,7 +34,7 @@
   const WIN = Math.random().toString(36).slice(2, 10), ROLE = ONLY === 'notice' ? 'notice' : 'main';
   const ui = { view: 'home', sel: null, q: '', officer: '', officerTouched: false, type: '', state: '', board: '', sort: (() => { try { return localStorage.getItem('jh.sort') || 'end-desc'; } catch (_) { return 'end-desc'; } })() };
 
-  const CHECKLIST_VER = 7; // 4: 선금 보증서 · 5: 준공검사원 지정통보 · 6: 사업장 가입내역 확인서(4대보험 가입증명서) 등 찾는 말 추가 · 7: 하도급 계약서·계약보증서는 그 밖의 계약 서류
+  const CHECKLIST_VER = 8; // 4: 선금 보증서 · 5: 준공검사원 지정통보 · 6: 사업장 가입내역 확인서(4대보험 가입증명서) 등 찾는 말 추가 · 7: 하도급 계약서·계약보증서는 그 밖의 계약 서류 · 8: 구매요구에 산업안전재해율 결과·안전보건관리계획서·적격수급업체 안전보건 수준 평가표(공사·용역)
   const lists = (type) => (db.checklists && db.checklists[type]) || defaults[type] || defaults.공사;
   const contracts = () => Object.values(db.contracts).filter((c) => !c.archived);
   // 계약별 서류: 화면을 그리는 동안은 한 번 만든 색인(docIndex)으로 찾음(서류 수천 개여도 계약마다 다시 훑지 않음)
@@ -1103,7 +1103,7 @@
       <text x="60" y="86" text-anchor="middle" font-size="${b.length > 6 ? 16 : 20}" font-weight="700" fill="currentColor">${esc(b)}</text></g></svg>`;
   }
   function itemOptions(list, sel, withInbox, rec) {
-    const o = (x) => `<option value="${esc(x.id)}"${x.id === sel ? ' selected' : ''}>${esc(x.group)} · ${esc(x.name)}</option>`;
+    const o = (x) => `<option value="${esc(x.id)}" data-q="${esc(L.norm([x.group, x.name, ...(x.keywords || [])].join(' ')))}"${x.id === sel ? ' selected' : ''}>${esc(x.group)} · ${esc(x.name)}</option>`;
     const head = (withInbox ? '<option value="__inbox">미분류로 보내기</option>' : '') + '<option value="">서류 종류 고르기</option>';
     const rs = (rec || []).map((id) => list.find((x) => x.id === id)).filter(Boolean);
     if (rs.length) return head + `<optgroup label="추천 — 제목으로 찾은 서류">${rs.map(o).join('')}</optgroup><optgroup label="전체">${list.filter((x) => !rs.includes(x)).map(o).join('')}</optgroup>`;
@@ -1912,9 +1912,10 @@
     // 서류 종류: 그 계약 목록에서 제목으로 찾은 것을 '추천'으로 맨 위에 두고 골라 둠(사람이 확인)
     const fillItems = (key) => {
       const cc = key ? db.contracts[key] : null;
-      if (!cc) { $('#pvItem').innerHTML = '<option value="">계약을 먼저 고르세요</option>'; $('#pvItem').disabled = true; return; }
+      if (!cc) { $('#pvItem').innerHTML = '<option value="">계약을 먼저 고르세요</option>'; $('#pvItem').disabled = true; $('#pvItemSearch').value = ''; return; }
       const g = classifyDoc(cc, d.name, d.title, d.heads), sel = key === d.key && d.itemId ? d.itemId : g.id || '';
       $('#pvItem').innerHTML = itemOptions(classList(cc), sel, false, [g.id, ...(g.alts || []), ...(key === d.key && d.itemId ? [d.itemId] : [])].filter(Boolean)); $('#pvItem').disabled = false;
+      $('#pvItemSearch').value = ''; $('#pvItemSearch').title = '';
     };
     fillItems(d.key || cands[0]); $('#pvContract').onchange = (e) => fillItems(e.target.value);
     const altNames = (d.alts || []).map((id) => (c && classList(c).find((x) => x.id === id) || {}).name).filter(Boolean);
@@ -2004,7 +2005,9 @@
     const sel = q.parentElement.querySelector('select'), t = L.norm(q.value);
     let first = null;
     for (const o of sel.options) { if (!o.value) continue; const hit = !t || (o.dataset.q || '').includes(t) || (/\d{3,}/.test(t) && (o.dataset.q || '').replace(/\D/g, '').includes(t.replace(/\D/g, ''))); o.hidden = !hit; if (hit && !first) first = o; }
-    if (sel.id === 'pvContract' && first && t) { sel.value = first.value; sel.dispatchEvent(new Event('change')); }
+    // 묶음(추천/전체) 안에 맞는 것이 하나도 없으면 묶음 이름도 숨김
+    for (const g of sel.querySelectorAll('optgroup')) g.hidden = ![...g.children].some((o) => !o.hidden);
+    if ((sel.id === 'pvContract' || sel.id === 'pvItem') && first && t) { sel.value = first.value; sel.dispatchEvent(new Event('change')); }
     q.title = t ? `${[...sel.options].filter((o) => o.value && !o.hidden).length}건` : '';
   });
   document.addEventListener('keydown', (e) => {
@@ -2043,7 +2046,7 @@
       : '<li class="muted">아직 작성한 공고문이 없습니다.</li>';
   }
 
-  function render() { return withIndex(render0); }
+  function render() { const r = withIndex(render0); syncTab(); return r; }
   function render0() {
     const n = inboxDocs().length;
     const ic = $('#inboxCount'); ic.hidden = !n; ic.textContent = n;
@@ -2055,6 +2058,84 @@
     if (ui.view === 'inbox') renderInbox();
   }
   const MOD = { contracts: 'jichul', board: 'jichul', inbox: 'jichul', notice: 'notice', rules: 'rules', home: '' };
+  // ---------- 탭(한 창 안에서 여러 화면) ----------
+  // 탭마다 '어느 화면 + 어느 계약(또는 공고문)'을 기억. 데이터는 하나라 덮어쓰기 걱정 없음. [+]는 지금 화면을 복사한 새 탭
+  const TAB_KEY = 'jh.tabs';
+  const tabs = { list: [], on: null };
+  const VIEW_NAME = { home: '처음 화면', contracts: '계약별', board: '현황판', inbox: '미분류', notice: '공고문', rules: '규정·질문' };
+  const curState = () => ({ view: ui.view || 'home', sel: ui.sel || null, nid: (JH.notice && JH.notice.selId && JH.notice.selId()) || null });
+  function tabTitle(t) {
+    if (t.view === 'contracts' && t.sel && db.contracts[t.sel]) return db.contracts[t.sel].name;
+    if (t.view === 'notice' && JH.notice && JH.notice.selTitle) return JH.notice.selTitle(t.nid) || '공고문';
+    return VIEW_NAME[t.view] || '화면';
+  }
+  const tabKind = (t) => (t.view === 'contracts' && t.sel ? '계약' : t.view === 'notice' && t.nid ? '공고문' : '');
+  function saveTabs() { try { localStorage.setItem(TAB_KEY, JSON.stringify(tabs)); } catch (_) { /* 기억 못 해도 됨 */ } }
+  function paintTabs() {
+    const el = $('#tabs'); if (!el) return;
+    if (ONLY) { el.hidden = true; return; }
+    el.innerHTML = tabs.list.map((t) => {
+      const on = t.id === tabs.on, k = tabKind(t), title = tabTitle(t);
+      return `<div class="tab-it${on ? ' on' : ''}" role="tab" aria-selected="${on}" tabindex="0" data-tab="${t.id}" title="${esc((k ? k + ': ' : '') + title)}">${k ? `<span class="tk">${k}</span>` : ''}<span class="tl">${esc(title)}</span>${tabs.list.length > 1 ? `<button type="button" class="tx" data-tabx="${t.id}" aria-label="${esc(title)} 탭 닫기" title="탭 닫기">×</button>` : ''}</div>`;
+    }).join('') + '<button type="button" class="tab-add" id="tabAdd" title="새 탭: 지금 화면을 하나 더 열어 두기(다른 계약·공고문을 나란히)" aria-label="새 탭">+</button>';
+  }
+  // 지금 보이는 화면을 켜져 있는 탭에 기억
+  function syncTab() {
+    if (ONLY || !tabs.on) return;
+    const t = tabs.list.find((x) => x.id === tabs.on); if (!t) return;
+    Object.assign(t, curState()); saveTabs(); paintTabs();
+  }
+  function openTabState(t) {
+    ui.sel = t.sel && db.contracts[t.sel] ? t.sel : ui.sel;
+    if (t.nid && JH.notice && JH.notice.select) JH.notice.select(t.nid);
+    setView(t.view || 'home');
+  }
+  function switchTab(id) {
+    if (id === tabs.on) return;
+    syncTab();
+    const t = tabs.list.find((x) => x.id === id); if (!t) return;
+    tabs.on = id; openTabState(t); saveTabs(); paintTabs();
+  }
+  function addTab() {
+    syncTab();
+    const t = { id: L.uid(), ...curState() };
+    const i = tabs.list.findIndex((x) => x.id === tabs.on);
+    tabs.list.splice(i + 1, 0, t); tabs.on = t.id; saveTabs(); paintTabs();
+    toast('새 탭을 열었습니다. 여기서 다른 계약이나 공고문을 고르면 이 탭에 남고, 원래 탭은 그대로입니다.', 'ok');
+  }
+  function closeTab(id) {
+    if (tabs.list.length < 2) return;
+    const i = tabs.list.findIndex((x) => x.id === id); if (i < 0) return;
+    tabs.list.splice(i, 1);
+    if (tabs.on === id) { const n = tabs.list[Math.min(i, tabs.list.length - 1)]; tabs.on = n.id; openTabState(n); }
+    saveTabs(); paintTabs();
+  }
+  function initTabs() {
+    if (ONLY) { paintTabs(); return; }
+    let saved = null; try { saved = JSON.parse(localStorage.getItem(TAB_KEY) || 'null'); } catch (_) { /* 처음 */ }
+    if (saved && Array.isArray(saved.list) && saved.list.length) {
+      tabs.list = saved.list.filter((t) => t && t.id && VIEW_NAME[t.view]).slice(0, 20);
+      tabs.on = tabs.list.some((t) => t.id === saved.on) ? saved.on : (tabs.list[0] || {}).id;
+    }
+    if (!tabs.list.length) { const t = { id: L.uid(), ...curState() }; tabs.list = [t]; tabs.on = t.id; }
+    paintTabs();
+    const t = tabs.list.find((x) => x.id === tabs.on); if (t && (t.view !== ui.view || t.sel !== ui.sel)) openTabState(t);
+  }
+  document.addEventListener('click', (e) => {
+    const x = e.target.closest && e.target.closest('[data-tabx]'); if (x) { e.stopPropagation(); closeTab(x.dataset.tabx); return; }
+    if (e.target.closest && e.target.closest('#tabAdd')) { addTab(); return; }
+    const t = e.target.closest && e.target.closest('[data-tab]'); if (t) switchTab(t.dataset.tab);
+  });
+  document.addEventListener('auxclick', (e) => { const t = e.button === 1 && e.target.closest && e.target.closest('[data-tab]'); if (t) { e.preventDefault(); closeTab(t.dataset.tab); } }); // 가운데 버튼으로 닫기
+  document.addEventListener('keydown', (e) => {
+    const t = e.target.closest && e.target.closest('[data-tab]');
+    if (t && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); switchTab(t.dataset.tab); return; }
+    // Ctrl+Tab / Ctrl+Shift+Tab: 다음·이전 탭
+    if (e.ctrlKey && e.key === 'Tab' && tabs.list.length > 1 && !ONLY) {
+      e.preventDefault(); const i = tabs.list.findIndex((x) => x.id === tabs.on);
+      switchTab(tabs.list[(i + (e.shiftKey ? -1 : 1) + tabs.list.length) % tabs.list.length].id);
+    }
+  });
   function setView(v) {
     if (ONLY && v !== 'notice' && v !== 'rules') v = 'notice';
     ui.view = v;
@@ -2567,6 +2648,7 @@
     } catch (e) { banner('연결 창구와 통신하지 못했습니다: ' + esc(e.message), true); }
     try { await JH.notice.load(); } catch (_) {}
     setView(ui.view);
+    initTabs(); // 지난번에 열어 둔 탭들(이 PC에 기억)
     setInterval(() => { pingWin().catch(() => banner('연결 창구가 꺼졌습니다. 바탕화면의 바로가기로 다시 실행해 주세요.', true)); }, 20000);
     if (ONLY) return; // 공고문 전용 창: 폴더 확인·정리·자동 새로고침은 원래 창이 함
     try { await reconcile(); render(); } catch (e) { console.warn('폴더 확인 실패', e); }
@@ -2585,7 +2667,7 @@
 
   root.JH.app = {
     get cfg() { return cfg; }, set cfg(v) { cfg = v; }, get db() { return db; }, get org() { return org; },
-    get share() { return ui.share; }, pullShare, pushShare, fitWindow, shareableRule: (r) => shareable(r, privateNames()),
+    get share() { return ui.share; }, pullShare, pushShare, fitWindow, syncTab, shareableRule: (r) => shareable(r, privateNames()),
     defaults, lists, printList, startWatch, checkAccounts, saveCfg, saveDb, fetchContracts, enrichContracts, fillFromDocs, openForms, render, toast, banner, start, ingest, setView, progress,
     setChecklists(v) { db.checklists = v; return saveDb(true); },
   };
