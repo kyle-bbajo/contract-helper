@@ -197,6 +197,9 @@
     async watchClear() { return { ok: true }; },
     async myIp() { return { ok: true, ip: '203.0.113.10' }; },
     // 시연판: 실제로는 연결하지 않고, IP 미등록일 때 국가법령정보센터가 주는 응답을 그대로 보여 줌(등록 안내 화면 확인용)
+    async shareGet() { return { ok: true, skipped: '시연판에서는 동료와 나누지 않습니다(실제 프로그램은 GitHub 이슈로 나눔)' }; },
+    async sharePost() { return { ok: true, skipped: '시연판에서는 동료와 나누지 않습니다' }; },
+    async update() { return { ok: true, skipped: '시연판에서는 업데이트하지 않습니다' }; },
     async lawFile() { throw new Error('시연판에서는 내려받지 않습니다'); },
     async law() { return JSON.stringify({ result: '사용자 정보 검증에 실패하였습니다.', msg: 'OPEN API 호출 시 사용자 검증을 위하여 정확한 서버장비의 IP주소 및 도메인주소를 등록해 주세요.' }); },
     async hwpSec() { return { ok: true, state: 'nodll', dll: '', folder: '한글보안모듈' }; },
