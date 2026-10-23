@@ -797,7 +797,7 @@
     // 직접 넣은 파일(기록에 없는 것)
     const known = new Set(db.docs.flatMap((d) => [d.path, d.pdfPath].filter(Boolean)));
     const unknown = all.filter((f) => !known.has(f.path));
-    let added = 0;
+    let added = 0; const addedIds = [];
     for (let i = 0; i < unknown.length; i++) {
       const f = unknown[i];
       progress(`폴더에 새로 넣은 파일 읽는 중 ${i + 1}/${unknown.length}`, i / unknown.length);
@@ -811,7 +811,7 @@
         let c = contracts().find((x) => x.folder && (dir === x.folder || dir.startsWith(x.folder + '/'))) || L.matchContract(contracts(), L.norm(L.stem(name)) + '|' + text);
         const doc = { id: L.uid(), key: c ? c.key : null, itemId: c ? classifyDoc(c, name, title, L.headLines(lines)).id : null, heads: L.headLines(lines), path: f.path, name, kind, size: f.size,
           addedAt: new Date().toISOString(), ocr, meta: L.findMeta(lines), text, title, dates: L.extractDates(lines), manual: false };
-        db.docs.push(doc); textDirty = true; added++;
+        db.docs.push(doc); textDirty = true; added++; addedIds.push(doc.id);
         if (c && /^미분류\//.test(f.path)) await moveDoc(doc, c.key, doc.itemId, false);
       } catch (e) { console.warn('새 파일 읽기 실패', f.path, e); }
     }
@@ -822,7 +822,10 @@
       if (relinked) parts.push(`옮겨진 서류 ${relinked}개를 다시 찾았습니다`);
       if (added) parts.push(`폴더에 직접 넣은 파일 ${added}개를 읽어 정리했습니다`);
       if (missing) parts.push(`찾을 수 없는 서류 ${missing}개가 있습니다(계약 화면에 "파일 없음"으로 표시)`);
-      toast(parts.join('. ') + '.', missing ? 'err' : 'ok');
+      // 탐색기에서 직접 넣은 파일도 '올릴 때마다 확인'이면 팝업으로 보여 줌(아니면 못 정한 것만)
+      const ask = addedIds.filter((id) => { const d = docById(id); return d && (cfg.uploadConfirm !== false || !d.key || !d.itemId); });
+      toast(parts.join('. ') + '.', missing ? 'err' : 'ok', ask.length ? { label: '확인하기', run: () => openPreview(ask, 0, true) } : null);
+      if (ask.length && !document.querySelector('dialog[open]')) setTimeout(() => { if (!document.querySelector('dialog[open]')) openPreview(ask, 0, true); }, 400);
     }
   }
 
@@ -2781,7 +2784,11 @@
   $('#fSort').addEventListener('change', (e) => { ui.sort = e.target.value; try { localStorage.setItem('jh.sort', ui.sort); } catch (_) { /* 저장 못 해도 이번엔 적용 */ } renderList(); });
   $('#fState').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { ui.state = b.dataset.state; ui.sel = null; render(); } });
   $('#btnAdd').onclick = () => { pickTarget = null; $('#fileIn').click(); };
-  $('#btnFetch').onclick = () => fetchContracts();
+  // 새로고침: 나라장터 계약 목록 + 계약 폴더 다시 읽기(탐색기에서 직접 넣은·옮긴·지운 파일 반영)
+  $('#btnFetch').onclick = async () => {
+    try { await fetchContracts(); } catch (e) { console.warn(e); }
+    try { progress('계약 폴더 다시 읽는 중', .5); await reconcile(); } catch (e) { console.warn('폴더 확인 실패', e); } finally { progress(null); render(); }
+  };
   $('#btnNewContract').onclick = () => openContract(null);
   let pickTarget = null;
   $('#fileIn').onchange = (e) => { const fs = [...e.target.files]; e.target.value = ''; const p = pickTarget || {}; pickTarget = null; ingest(fs, p.key || null, p.item || null, p.pay ? { pay: p.pay } : {}); };

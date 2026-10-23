@@ -1176,6 +1176,18 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   }
   step('단계 접기: 구매요구·계약·착공계…는 기본 펼침, 제목을 누르면 그 단계가 접히고(다른 계약에서도) 다시 누르면 펼침');
 
+  // [새로고침]: 나라장터 목록 + 계약 폴더 다시 읽기 — 탐색기에서 계약 폴더에 직접 넣은 파일이 바로 들어옴
+  {
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    const folder = await page.evaluate(() => Object.values(JH.app.db.contracts).find((c) => c.name === '시청사 옥상 방수공사').folder);
+    copyFileSync(join(DOCS, 'noname(3).pdf'), join(data, folder, '탐색기로넣음.pdf'));
+    await page.click('#btnFetch');
+    await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => d.name === '탐색기로넣음.pdf')), 60000, '새로고침으로 폴더 다시 읽기');
+    await waitFor(async () => !(await page.isVisible('#progress')), 30000, '정리 끝'); await page.waitForTimeout(1200);
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+  }
+  step('[새로고침]은 나라장터 계약 목록과 함께 계약 폴더도 다시 읽음(탐색기에서 직접 넣은 파일 반영)');
+
   // 동료 규칙 받기: 받은 규칙에 맞는 '종류 못 정한/확인 필요' 서류는 그 자리에서 정해짐(사람이 고른 것은 그대로)
   {
     const r = await page.evaluate(async () => {
