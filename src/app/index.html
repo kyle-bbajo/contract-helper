@@ -288,8 +288,8 @@
         <label>계약금액(원)<input type="text" id="ctAmount" inputmode="numeric"></label>
       </div>
       <div class="form-row">
-        <label>착공(착수)일<input type="date" id="ctStart"></label>
-        <label>준공일<input type="date" id="ctEnd"></label>
+        <label>착공(착수)일<input type="text" data-date inputmode="numeric" maxlength="10" placeholder="예: 20261023" autocomplete="off" id="ctStart"></label>
+        <label>준공일<input type="text" data-date inputmode="numeric" maxlength="10" placeholder="예: 20261023" autocomplete="off" id="ctEnd"></label>
       </div>
     </div>
     <div class="dlg-actions">
@@ -364,8 +364,8 @@
     </div>
     <div class="form fm-form">
       <div class="form-row">
-        <label>계약일 시작<input type="date" id="fmFrom"></label>
-        <label>계약일 끝<input type="date" id="fmTo"></label>
+        <label>계약일 시작<input type="text" data-date inputmode="numeric" maxlength="10" placeholder="예: 20261023" autocomplete="off" id="fmFrom"></label>
+        <label>계약일 끝<input type="text" data-date inputmode="numeric" maxlength="10" placeholder="예: 20261023" autocomplete="off" id="fmTo"></label>
         <fieldset class="fm-types" id="fmTypes"><legend>구분</legend><label><input type="checkbox" value="공사" checked>공사</label><label><input type="checkbox" value="용역" checked>용역</label><label><input type="checkbox" value="물품" checked>물품</label></fieldset>
       </div>
       <div class="form-row audit-only" hidden>
@@ -402,7 +402,7 @@
     <button class="btn icon" value="close" aria-label="닫기">✕</button>
   </form>
   <div class="dlg-body">
-    <div class="form"><label>지출일<input type="date" id="payDate"></label><label>메모<input type="text" id="payMemo" placeholder="지출결의 번호 등"></label></div>
+    <div class="form"><label>지출일<input type="text" data-date inputmode="numeric" maxlength="10" placeholder="예: 20261023" autocomplete="off" id="payDate"></label><label>메모<input type="text" id="payMemo" placeholder="지출결의 번호 등"></label></div>
     <div class="dlg-actions">
       <button type="button" class="btn ghost danger" id="payUndo">지출 처리 취소</button>
       <button type="button" class="btn primary" id="paySave">지출 완료로 표시</button>

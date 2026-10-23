@@ -13,7 +13,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '1.6.8'
+$Version = '1.6.9'
 $AppRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $WebRoot = Join-Path $AppRoot 'app'
 $LocalCfg = Join-Path $AppRoot 'local.json'
@@ -682,7 +682,7 @@ function Handle($stream, $req) {
           if (($fi.Attributes -band [IO.FileAttributes]::Hidden) -ne 0) { continue }
           $rel = $fi.FullName.Substring($rootLen).TrimStart('\', '/').Replace('\', '/').Replace('"', '\"')
           if (-not $first) { [void]$sb.Append(',') }; $first = $false
-          [void]$sb.Append('{"path":"').Append($rel).Append('","size":').Append($fi.Length).Append(',"mtime":"').Append($fi.LastWriteTime.ToString('s')).Append('"}')
+          [void]$sb.Append('{"path":"').Append($rel).Append('","size":').Append($fi.Length).Append(',"mtime":"').Append($fi.LastWriteTime.ToString('s')).Append('","ctime":"').Append($fi.CreationTime.ToString('s')).Append('"}')
         }
       }
       [void]$sb.Append(']}')

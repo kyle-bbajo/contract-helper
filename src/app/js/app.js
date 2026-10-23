@@ -121,11 +121,12 @@
     } catch (e) { ui.share = { state: 'err', why: e.message }; }
   }
   // 새로 받은 동료 규칙으로, 계약은 정해졌는데 종류를 못 정했거나 [확인 필요]인 서류를 다시 봄(배운 규칙에 맞을 때만, 사람이 고른 것은 그대로)
-  async function applyShared() {
+  // any=true: 켤 때 — 배운 규칙뿐 아니라 새로 늘어난 찾는 말로도(확실할 때만) 다시 봄
+  async function applyShared(any = false) {
     const ds = db.docs.filter((d) => d.key && db.contracts[d.key] && !d.manual && (!d.itemId || d.unsure));
-    const hits = ds.map((d) => [d, classifyDoc(db.contracts[d.key], d.name, d.title, d.heads)]).filter(([, r]) => r.by === 'learned' && r.id);
+    const hits = ds.map((d) => [d, classifyDoc(db.contracts[d.key], d.name, d.title, d.heads)]).filter(([, r]) => r.id && (r.by === 'learned' || (any && !(r.alts && r.alts.length))));
     if (!hits.length) return 0;
-    await recorded('동료 규칙으로 서류 종류 정함', hits.map(([d]) => d.key), hits.map(([d]) => d.id), async () => {
+    await recorded(any ? '켤 때 서류 종류 다시 정함' : '동료 규칙으로 서류 종류 정함', hits.map(([d]) => d.key), hits.map(([d]) => d.id), async () => {
       for (const [d, r] of hits) { try { await moveDoc(d, d.key, r.id, false, undefined, true); delete d.unsure; delete d.alts; } catch (_) {} }
       await saveDb(true);
     });
@@ -482,7 +483,7 @@
     const files = [...fileList].filter((f) => f && f.name && !f.name.startsWith('.') && !/^(thumbs\.db|desktop\.ini)$/i.test(f.name));
     if (!files.length) return;
     if (!S.online) { toast('바탕화면의 "계약업무 도우미" 아이콘으로 실행해야 서류를 저장할 수 있습니다.', 'err'); return; }
-    const recs = []; let skipped = 0; const dupWhere = [];
+    const recs = []; let skipped = 0; const dupWhere = []; const again = [];
     const snap0 = snapshot([], [], true);
     try {
       // 1) 읽기
@@ -490,7 +491,12 @@
         const f = files[i];
         progress(`내용 읽는 중 ${i + 1}/${files.length}`, i / files.length);
         const dup = db.docs.find((d) => d.name === f.name && d.size === f.size);
-        if (dup) { skipped++; dupWhere.push(`「${f.name}」은 이미 ${whereOf(dup)}에 있음`); continue; }
+        // 이미 올린 파일: 다 정리된 것만 건너뜀. 종류를 못 정했거나 확인 필요·미분류이면 다시 보고, 다른 계약에 놓았으면 그 계약으로 옮김
+        if (dup) {
+          const fk = forceKey && db.contracts[forceKey];
+          if ((fk && dup.key !== fk.key) || !dup.key || !dup.itemId || dup.unsure) { if (!again.includes(dup)) again.push(dup); continue; }
+          skipped++; dupWhere.push(`「${f.name}」은 이미 ${whereOf(dup)}에 있음`); continue;
+        }
         const bytes = new Uint8Array(await f.arrayBuffer());
         const kind = L.kindOf(f.name);
         const { lines, ocr } = await R.read(bytes, kind, f.type);
@@ -568,6 +574,22 @@
         if (c && item && (AUDIT_DOC.test(item.id) || also.some((id) => AUDIT_DOC.test(id)))) (auditLines[c.key] = auditLines[c.key] || []).push(r.lines);
         if (also.length) multiForm++;
       }
+      // 3-0) 다시 올린(이미 있던) 서류: 놓은 계약으로 옮기거나, 지금 규칙(배운 것 포함)으로 다시 분류. 그래도 모르면 팝업으로
+      let againDone = 0;
+      for (const d of again) {
+        try {
+          const c = forced || (d.key && db.contracts[d.key]) || null;
+          if (!c) continue; // 계약을 모르면 팝업에서 추천과 함께 고르게
+          const info = forced && forceItem ? { id: forceItem, alts: [] } : classifyDoc(c, d.name, d.title, d.heads);
+          const sure = info.id && !(info.alts && info.alts.length);
+          if (c.key !== d.key || (sure && info.id !== d.itemId)) {
+            await moveDoc(d, c.key, info.id || null, !!forced, undefined, true);
+            if (forced) delete d.cands;
+          }
+          if (sure) { delete d.unsure; delete d.alts; againDone++; } else if (info.id) { d.unsure = true; d.alts = info.alts; }
+          byContract[c.key] = (byContract[c.key] || 0) + 1; c.updatedAt = Date.now();
+        } catch (e) { console.warn('다시 정리 실패', d.name, e); }
+      }
       // 3-1) 견적서·설계내역서·사업자등록증 등에서 감사·검사 칸(예정가격·설계금액·주소·대표자)을 바로 채움(비어 있을 때만)
       let auditFilled = 0;
       for (const [k, ls] of Object.entries(auditLines)) auditFilled += fillAuditFrom(db.contracts[k], ls);
@@ -577,7 +599,10 @@
       if (inbox) parts.push(`미분류 ${inbox}`);
       const ignored = recs.filter((r) => r.ignored).length;
       if (opt.onlyMatched && ignored === recs.length) { if (ignored) console.info(`${opt.from}: 계약과 상관없는 파일 ${ignored}개 건너뜀`); return; }
-      let msg = (opt.from ? `${opt.from}에서 ` : '') + `${recs.length - ignored}개 정리했습니다` + (parts.length ? ` — ${parts.join(', ')}` : '') + '.';
+      const nDone = recs.length - ignored + again.length;
+      if (!nDone && skipped) { toast((opt.from ? `${opt.from}의 ` : '') + `같은 파일이 이미 있어 넣지 않았습니다: ${dupWhere.slice(0, 2).join(', ')}${dupWhere.length > 2 ? ` 외 ${dupWhere.length - 2}개` : ''}.`); dupWhere.forEach((x) => logAct('올림 건너뜀: ' + x)); return; }
+      let msg = (opt.from ? `${opt.from}에서 ` : '') + `${nDone}개 정리했습니다` + (parts.length ? ` — ${parts.join(', ')}` : '') + '.';
+      if (again.length) msg += ` 전에 올렸던 파일 ${again.length}개는 다시 정리했습니다${againDone < again.length ? `(${again.length - againDone}개는 확인 필요)` : ''}.`;
       if (ignored) msg += ` 우리 계약과 상관없는 파일 ${ignored}개는 가져오지 않았습니다.`;
       if (newContracts) msg += ` 계약서에서 새 계약 ${newContracts}건을 만들었습니다.`;
       if (auditFilled) msg += ` 서류에서 감사·검사 칸 ${auditFilled}개를 채웠습니다.`;
@@ -589,13 +614,14 @@
       // 최근 작업: 파일마다 어디로 갔는지 + 이번 올림 전체를 한 번에 되돌릴 수 있게
       const placed = recs.filter((r) => !r.ignored).map((r) => db.docs.find((d) => d.id === r.id)).filter(Boolean);
       dupWhere.forEach((x) => logAct('올림 건너뜀: ' + x));
-      if (placed.length) { placed.forEach((d) => logAct(`올림 「${d.name}」 → ${whereOf(d)}`)); undoStack.push({ label: `서류 ${placed.length}개 올림`, s: snap0, at: Date.now() }); if (undoStack.length > 30) undoStack.shift(); paintUndo(); }
+      again.forEach((d) => logAct(`다시 정리 「${d.name}」 → ${whereOf(d)}`));
+      if (placed.length || again.length) { placed.forEach((d) => logAct(`올림 「${d.name}」 → ${whereOf(d)}`)); undoStack.push({ label: `서류 ${placed.length + again.length}개 올림`, s: snap0, at: Date.now() }); if (undoStack.length > 30) undoStack.shift(); paintUndo(); }
       if (R.ocrBroken) msg += ' 스캔본 글자 인식을 시작하지 못해 일부는 미분류로 갔습니다.';
       // 어느 계약인지·어떤 서류인지 못 찾은 것은 바로 팝업으로 보여 주고 고르게 함
-      const unsure = recs.filter((r) => !r.ignored && db.docs.some((d) => d.id === r.id && (!d.key || !d.itemId || d.unsure))).map((r) => r.id);
+      const unsure = [...recs.filter((r) => !r.ignored).map((r) => r.id), ...again.map((d) => d.id)].filter((id) => db.docs.some((d) => d.id === id && (!d.key || !d.itemId || d.unsure)));
       const nLearned = recs.filter((r) => r.learned).length;
       if (nLearned) msg += ` ${nLearned}개는 전에 배운 대로 넣었습니다.`;
-      toast(msg, inbox ? '' : 'ok', unsure.length ? { label: '확인하기', run: () => openPreview(unsure, 0, true) } : recs.length ? undoAction() : null);
+      toast(msg, inbox ? '' : 'ok', unsure.length ? { label: '확인하기', run: () => openPreview(unsure, 0, true) } : recs.length || again.length ? undoAction() : null);
       if (unsure.length && !$('#dlgPreview').open && !document.querySelector('dialog[open]')) setTimeout(() => openPreview(unsure, 0, true), 300);
       const keys = Object.keys(byContract);
       if (!forced && !opt.onlyMatched && keys.length === 1) ui.sel = keys[0]; // 폴더에서 자동으로 읽은 것은 보던 계약 화면을 바꾸지 않음
@@ -797,8 +823,16 @@
       const r = await S.watch();
       const lost = (r.dirs || []).filter((d) => d.missing).map((d) => d.dir);
       if (lost.length) banner(`자동으로 읽을 폴더를 찾지 못했습니다: ${esc(lost.join(', '))}. 설정 → 데이터 폴더에서 확인하세요.`, true);
+      // 폴더마다 '읽기 시작한 때'를 기억하고, 그 뒤에 새로 생기거나 고친 파일만 읽음(원래 있던 파일·한 번 읽은 파일은 안 읽음)
+      db.watchSince = db.watchSince || {};
+      const nowIso = new Date().toISOString().slice(0, 19);
+      let sinceNew = false;
+      (r.dirs || []).forEach((d) => { if (!d.missing && !db.watchSince[d.dir]) { db.watchSince[d.dir] = nowIso; sinceNew = true; } });
+      const dirOfIdx = (name) => { const i = +String(name).split('|')[0]; return ((r.dirs || [])[i] || {}).dir; };
+      const newer = (f) => { const since = db.watchSince[dirOfIdx(f.name)]; const t = [f.mtime, f.ctime].filter(Boolean).sort().pop() || ''; return !!since && t > since; };
       const seen = new Set(db.watchSeen || []);
-      const fresh = (r.files || []).filter((f) => DOC_EXT.test(f.name) && !seen.has(watchSig(f)));
+      const fresh = (r.files || []).filter((f) => DOC_EXT.test(f.name) && newer(f) && !seen.has(watchSig(f)));
+      if (sinceNew) await saveDb();
       const ready = fresh.filter((f) => watch.last.get(f.name) === f.size); // 받는 중인 파일은 다음 번에
       watch.last = new Map(fresh.map((f) => [f.name, f.size]));
       if (!ready.length) return;
@@ -807,7 +841,7 @@
         try { const b = await S.watchFile(f.name); files.push(new File([b], f.name.split('|').pop().split('/').pop(), { type: '' })); seen.add(watchSig(f)); }
         catch (e) { console.warn('자동 읽기 실패', f.name, e); }
       }
-      db.watchSeen = [...seen].slice(-8000);
+      db.watchSeen = [...seen].slice(-3000); // 시작한 때 뒤의 것만 담으니 작음
       if (files.length) await ingest(files, null, null, { onlyMatched: true, from: '내려받은 폴더' });
       else await saveDb();
     } catch (e) { console.warn('자동 읽기', e); }
@@ -1098,14 +1132,14 @@
     let dt = '';
     if (L.isAdvBond(d.itemId)) {
       const v = d.validOverride || (d.dates && d.dates.bondEnd) || '';
-      dt = `<label class="vdate${v ? '' : ' empty'}" title="보증서에 적힌 보증기간 마지막 날. 준공일 + ${L.ADV_DAYS}일 이상이어야 합니다.">보증기간 끝<input type="date" data-act="validset" data-doc="${d.id}" value="${isoOf(v)}">${d.validOverride ? '<small>직접</small>' : v ? '<small>읽음</small>' : ''}</label>`;
+      dt = `<label class="vdate${v ? '' : ' empty'}" title="보증서에 적힌 보증기간 마지막 날. 준공일 + ${L.ADV_DAYS}일 이상이어야 합니다.">보증기간 끝<input type="text" data-date inputmode="numeric" maxlength="10" placeholder="예: 20261023" autocomplete="off" data-act="validset" data-doc="${d.id}" value="${isoOf(v)}">${d.validOverride ? '<small>직접</small>' : v ? '<small>읽음</small>' : ''}</label>`;
     } else if (L.isCertItem(d.itemId)) {
       const v = d.validOverride || (d.dates && d.dates.valid) || '';
       const how = d.validOverride ? '직접' : d.dates && d.dates.validHow === 'calc' ? '계산' : v ? '읽음' : '';
-      dt = `<label class="vdate${v ? '' : ' empty'}" title="증명서에 적힌 유효기간 마지막 날. 잘못 읽었으면 고치세요.">유효기간<input type="date" data-act="validset" data-doc="${d.id}" value="${isoOf(v)}">${how ? `<small>${how}</small>` : ''}</label>`;
+      dt = `<label class="vdate${v ? '' : ' empty'}" title="증명서에 적힌 유효기간 마지막 날. 잘못 읽었으면 고치세요.">유효기간<input type="text" data-date inputmode="numeric" maxlength="10" placeholder="예: 20261023" autocomplete="off" data-act="validset" data-doc="${d.id}" value="${isoOf(v)}">${how ? `<small>${how}</small>` : ''}</label>`;
     } else if (/-(finish|inspect|progfin|proginsp)$/.test(d.itemId || '')) {
       const v = dateOfDoc(d, /-(inspect|proginsp)$/.test(d.itemId) ? 'inspect' : 'finish');
-      dt = `<label class="vdate${v ? '' : ' empty'}" title="지출요청일(이 날짜 + 2주) 계산에 씁니다">날짜<input type="date" data-act="docdate" data-doc="${d.id}" value="${isoOf(v)}">${d.dateOverride ? '<small>직접</small>' : ''}</label>`;
+      dt = `<label class="vdate${v ? '' : ' empty'}" title="지출요청일(이 날짜 + 2주) 계산에 씁니다">날짜<input type="text" data-date inputmode="numeric" maxlength="10" placeholder="예: 20261023" autocomplete="off" data-act="docdate" data-doc="${d.id}" value="${isoOf(v)}">${d.dateOverride ? '<small>직접</small>' : ''}</label>`;
     }
     const chk = d.unsure ? `<button type="button" class="ft warn chk-btn" data-act="confirmdoc" data-doc="${d.id}" title="제목에 다른 서류 이름도 있어 헷갈립니다. 눌러서 확인하면 배웁니다">확인 필요</button>` : '';
     return `<div class="file">${tag}${chk}<span class="fn" title="${esc(d.name)}">${esc(d.name)}</span>${conv}${dt}
@@ -1167,7 +1201,7 @@
       <summary><h3>지출요청일</h3><b class="date">${b && b.date ? esc(L.fmtDate(b.date)) : '모름'}</b><span class="csum">${sum}</span></summary>
       <div class="cbody">
       <div class="memo-head"><span class="muted">${c.payPlan ? '직접 넣은 날짜' : '자동'}</span>${c.payPlan ? '<button type="button" class="link sm" data-act="payauto">자동으로</button>' : ''}</div>
-      <input type="date" data-act="payplan" value="${isoOf(b && b.date)}" aria-label="지출요청일(증명서 유효기간을 이 날짜로 따짐)">
+      <input type="text" data-date inputmode="numeric" maxlength="10" placeholder="예: 20261023" autocomplete="off" data-act="payplan" value="${isoOf(b && b.date)}" aria-label="지출요청일(증명서 유효기간을 이 날짜로 따짐)">
       <p class="req-how">${b ? esc(b.how) : '준공일을 알 수 없어 직접 넣어 주세요'}<br>증명서 유효기간은 이 날짜까지 남아 있어야 합니다.</p>
       ${items ? `<ul class="req-list">${items}</ul>` : '<p class="req-ok">업체에 다시 받을 서류가 없습니다.</p>'}
       ${st.missing.length ? `<button type="button" class="link sm recvall" data-act="recvall" title="이미 처리한 지난 계약처럼 서류를 따로 넣지 않을 때">빠진 서류 ${st.missing.length}개 모두 '받음'으로 표시</button>` : ''}
@@ -1269,7 +1303,7 @@
         ${s.steps.map((g, i) => `<section class="rstage${g.complete ? ' done' : ''}"><div class="stage-head"><span class="stage-no">${i + 1}</span><h4>${esc(g.name)}</h4>${g.req ? `<span class="sum num">필수 ${g.done}/${g.req}</span>` : ''}</div>
           ${g.items.map((it) => roundRow(c, r, it, s, list)).join('')}</section>`).join('')}
         <div class="rfoot">
-          <label class="rplan">지출요청일 <input type="date" data-act="rpayplan" data-round="${esc(r.id)}" value="${isoOf(s.basis.date)}"><small class="muted">${esc(s.basis.how)} — 증명서 유효기간을 이 날짜로 따짐</small>${r.payPlan ? ` <button type="button" class="link sm" data-act="rpayauto" data-round="${esc(r.id)}">자동으로</button>` : ''}</label>
+          <label class="rplan">지출요청일 <input type="text" data-date inputmode="numeric" maxlength="10" placeholder="예: 20261023" autocomplete="off" data-act="rpayplan" data-round="${esc(r.id)}" value="${isoOf(s.basis.date)}"><small class="muted">${esc(s.basis.how)} — 증명서 유효기간을 이 날짜로 따짐</small>${r.payPlan ? ` <button type="button" class="link sm" data-act="rpayauto" data-round="${esc(r.id)}">자동으로</button>` : ''}</label>
           <span class="spacer"></span>
           <button type="button" class="btn${askNow ? ' primary' : ''}" data-act="rmail" data-round="${esc(r.id)}"${vendorNeed ? '' : ' disabled'}>${r.kind === 'prog' ? '청구 서류 요청 메일' : '보완 요청 메일'}${vendorNeed ? ` <small>(${vendorNeed})</small>` : ''}</button>
           <button type="button" class="btn" data-act="rprint" data-round="${esc(r.id)}"${s.docs.length ? '' : ' disabled'}>이 회차 인쇄</button>
@@ -2315,6 +2349,48 @@
     try { await S.openNoticeWindow(); ui.noticeElsewhere = true; $('#view-notice').classList.add('locked'); setView('contracts'); toast('공고문 창을 따로 열었습니다. 이 창에서는 계약 서류를 계속 다루세요. 공고문 창을 닫으면 여기서도 이어서 씁니다.', 'ok'); }
     catch (e) { toast('새 창을 열지 못했습니다: ' + e.message, 'err'); }
   };
+  // 금액 칸(숫자 입력 칸)은 치는 대로 세 자리마다 쉼표(커서 자리는 그대로). 다른 처리보다 먼저 하도록 capture
+  document.addEventListener('input', (e) => {
+    const t = e.target;
+    if (!t || t.tagName !== 'INPUT' || t.getAttribute('inputmode') !== 'numeric' || e.isComposing) return;
+    if (t.hasAttribute('data-date')) return dateInput(t);
+    const v = t.value, pos = t.selectionStart == null ? v.length : t.selectionStart;
+    const digitsBefore = v.slice(0, pos).replace(/[^\d]/g, '').length;
+    const d = v.replace(/[^\d]/g, '').replace(/^0+(?=\d)/, '');
+    const f = d ? d.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : '';
+    if (f === v) return;
+    t.value = f;
+    let i = 0, n = 0; while (i < f.length && n < digitsBefore) { if (/\d/.test(f[i])) n++; i++; }
+    try { t.setSelectionRange(i, i); } catch (_) {}
+  }, true);
+  // 날짜 칸: 숫자만 쳐도 2026-10-23 꼴로(달력에서 고르지 않아도 됨). 다 치고 나가면(바뀜) 맞는 날짜인지 확인
+  function dateInput(t) {
+    const v = t.value, pos = t.selectionStart == null ? v.length : t.selectionStart;
+    const digitsBefore = v.slice(0, pos).replace(/[^\d]/g, '').length;
+    const d = v.replace(/[^\d]/g, '').slice(0, 8);
+    const f = d.slice(0, 4) + (d.length > 4 ? '-' + d.slice(4, 6) : '') + (d.length > 6 ? '-' + d.slice(6, 8) : '');
+    if (f === v) return;
+    t.value = f;
+    let i = 0, n = 0; while (i < f.length && n < digitsBefore) { if (/\d/.test(f[i])) n++; i++; }
+    try { t.setSelectionRange(i, i); } catch (_) {}
+  }
+  function dateFix(raw) {
+    let d = String(raw || '').replace(/[^\d]/g, '');
+    if (!d) return '';
+    if (d.length === 6) d = '20' + d; // 261023
+    else if (d.length === 4) d = String(new Date().getFullYear()) + d; // 1023 → 올해
+    if (d.length !== 8) return null;
+    const y = +d.slice(0, 4), m = +d.slice(4, 6), dd = +d.slice(6, 8);
+    const dt = new Date(y, m - 1, dd);
+    if (y < 1990 || y > 2100 || dt.getMonth() !== m - 1 || dt.getDate() !== dd) return null;
+    return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
+  }
+  document.addEventListener('change', (e) => {
+    const t = e.target; if (!t || !t.hasAttribute || !t.hasAttribute('data-date')) return;
+    const f = dateFix(t.value);
+    if (f === null) { toast(`날짜를 알아보지 못했습니다: ${t.value} — 20261023처럼 8자리로 넣어 주세요.`, 'err'); t.value = ''; }
+    else t.value = f;
+  }, true);
   $('#btnLog').onclick = () => openLog();
   $('#logUndo').onclick = async () => { $('#dlgLog').close(); await undo(); };
   document.addEventListener('click', (e) => { const b = e.target.closest('[data-view]'); if (b && !b.disabled && !b.closest('dialog')) setView(b.dataset.view); });
@@ -2371,27 +2447,50 @@
   $('#fileIn').onchange = (e) => { const fs = [...e.target.files]; e.target.value = ''; const p = pickTarget || {}; pickTarget = null; ingest(fs, p.key || null, p.item || null, p.pay ? { pay: p.pay } : {}); };
 
   // 끌어다 놓기: 서류 줄이면 그 계약·그 서류로, 업로드 칸이면 그 계약으로, 아니면 자동 분류
+  // 놓는 곳: 왼쪽 목록의 계약 → 그 계약, 계약 화면의 서류 줄·놓는 칸 → 그 계약(그 서류), 규정·질문 화면 → 규정 파일, 공고문 화면 → 공고문 파일, 그 밖 → 전체 계약에서 찾아 정리
   const dropTarget = (e) => {
-    if (ui.view !== 'contracts' || !ui.sel || !e.target.closest) return null;
-    const row = e.target.closest('#detail [data-drop-item]'); if (row) return { el: row, key: ui.sel, item: row.dataset.dropItem, pay: row.dataset.dropPay || null };
-    const di = e.target.closest('#dropin'); if (di) return { el: di, key: ui.sel };
-    return null;
+    if (!e.target || !e.target.closest) return { kind: 'all' };
+    if (!ONLY) {
+      const ci = e.target.closest('.citem[data-key]');
+      if (ci && db.contracts[ci.dataset.key]) return { el: ci, key: ci.dataset.key, kind: 'contract' };
+      if (ui.view === 'contracts' && ui.sel) {
+        const row = e.target.closest('#detail [data-drop-item]'); if (row) return { el: row, key: ui.sel, item: row.dataset.dropItem, pay: row.dataset.dropPay || null, kind: 'contract' };
+        const di = e.target.closest('#dropin'); if (di) return { el: di, key: ui.sel, kind: 'contract' };
+      }
+    }
+    if (ui.view === 'rules') return { kind: 'rules' };
+    if (ui.view === 'notice' && !$('#view-notice').classList.contains('locked')) return { kind: 'notice' };
+    return ONLY ? { kind: 'none' } : { kind: 'all' };
   };
-  const clearOver = () => $$('#detail .over').forEach((x) => x.classList.remove('over'));
+  const DROP_TEXT = {
+    all: ['놓으면 자동으로 정리합니다', '내용을 읽어 계약 건과 서류 종류를 찾습니다 (특정 계약에 넣으려면 왼쪽 목록의 그 계약 위에 놓으세요)'],
+    rules: ['놓으면 규정 자료로 올립니다', '한글·PDF·워드·텍스트 규정 파일 — 조 단위로 나눠 찾을 수 있게 합니다'],
+    notice: ['놓으면 공고문으로 배웁니다', '나라장터에서 내려받은 공고문(한글·PDF) — 지금 쓰는 공고문의 참고로 씁니다'],
+    none: ['이 창에서는 받을 수 없습니다', '계약 서류는 원래 창에 놓아 주세요'],
+  };
+  const showDrop = (tg) => {
+    const box = !tg.el; $('#dropOverlay').hidden = !box;
+    if (box) { const [a, b] = DROP_TEXT[tg.kind] || DROP_TEXT.all; $('#dropTitle').textContent = a; $('#dropSub').textContent = b; }
+  };
+  const clearOver = () => $$('.over').forEach((x) => x.classList.remove('over'));
   let dragDepth = 0;
   const hasFiles = (e) => e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
   window.addEventListener('dragenter', (e) => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth++; $('#dropOverlay').hidden = false; });
   window.addEventListener('dragleave', (e) => { if (!hasFiles(e)) return; if (--dragDepth <= 0) { dragDepth = 0; $('#dropOverlay').hidden = true; clearOver(); } });
   window.addEventListener('dragover', (e) => {
     if (!hasFiles(e)) return; e.preventDefault();
-    const tg = dropTarget(e); clearOver(); if (tg) tg.el.classList.add('over');
-    $('#dropOverlay').hidden = !!tg;
+    const tg = dropTarget(e); clearOver(); if (tg.el) tg.el.classList.add('over');
+    showDrop(tg);
   });
   window.addEventListener('drop', async (e) => {
     if (!hasFiles(e)) return; e.preventDefault(); dragDepth = 0; $('#dropOverlay').hidden = true;
     const tg = dropTarget(e); clearOver();
     const files = await collectDropped(e.dataTransfer);
-    ingest(files, tg ? tg.key : null, tg ? tg.item || null : null, tg && tg.pay ? { pay: tg.pay } : {});
+    if (tg.kind === 'none') { toast('공고문 창에서는 계약 서류를 받지 않습니다. 원래 창에 놓아 주세요.', 'err'); return; }
+    if (tg.kind === 'rules') { const fs = files.filter((f) => /\.(hwpx?|pdf|docx|txt)$/i.test(f.name)); if (fs.length) JH.rules.uploadRules(fs); if (fs.length < files.length) toast('규정 자료는 한글·PDF·워드·텍스트 파일만 받습니다.', 'err'); return; }
+    if (tg.kind === 'notice') { const fs = files.filter((f) => /\.(hwpx?|pdf)$/i.test(f.name)); if (fs.length) JH.notice.uploadNotices(fs); if (fs.length < files.length) toast('공고문은 한글·PDF 파일만 받습니다.', 'err'); return; }
+    if (tg.kind === 'contract') { const c = db.contracts[tg.key]; if (c && !tg.item) toast(`「${c.name}」 계약에 넣습니다.`); }
+    ingest(files, tg.key || null, tg.item || null, tg.pay ? { pay: tg.pay } : {});
   });
   async function collectDropped(dt) {
     const entries = dt.items ? [...dt.items].map((i) => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean) : [];
@@ -2459,6 +2558,12 @@
     if (ONLY) return; // 공고문 전용 창: 폴더 확인·정리·자동 새로고침은 원래 창이 함
     try { await reconcile(); render(); } catch (e) { console.warn('폴더 확인 실패', e); }
     try { await relayout(); } catch (e) { console.warn('폴더 정리 실패', e); }
+    // 계약에는 들어갔는데 종류를 못 정한 서류: 지금 규칙으로 다시 보고, 그래도 남은 것은 알림에서 [확인하기]
+    try {
+      const n = await applyShared(true);
+      const left = db.docs.filter((d) => d.key && db.contracts[d.key] && (!d.itemId || d.unsure)).map((d) => d.id);
+      if (n || left.length) { render(); toast((n ? `종류를 못 정했던 서류 ${n}개를 지금 규칙으로 정리했습니다. ` : '') + (left.length ? `종류를 정해야 할 서류가 ${left.length}개 있습니다.` : ''), n ? 'ok' : '', left.length ? { label: '확인하기', run: () => openPreview(left, 0, true) } : undoAction()); }
+    } catch (e) { console.warn('다시 정리 실패', e); }
     pullShare(); // 다른 PC가 배운 규칙 받기(뒤에서). 켜 둔 동안에도 30분마다 받고, 못 올린 것은 그때 다시 올림
     setInterval(() => { pullShare(); }, 30 * 60000);
     if (!cfg.officer) openWelcome();

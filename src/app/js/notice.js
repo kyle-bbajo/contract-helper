@@ -445,7 +445,7 @@
       const sep = N.separateIn(n.v);
       if (on.length && sep.length) input += `<div class="learn-hint warn">${esc(sep.join('·'))}는 법에 따라 따로 발주(분리발주)하는 것이 원칙입니다(전기공사업법 제11조, 정보통신공사업법 제25조, 소방시설공사업법 제21조). 함께 발주해도 되는 예외인지 확인하세요.</div>`;
       else if (on.length) input += `<div class="learn-hint">업종제한을 "${esc(N.worksOf(n.v).map((w) => w.license).join(' + '))} 모두 등록 또는 분담이행 공동도급"으로, 공동도급을 분담이행으로 자동으로 바꿨습니다.</div>`;
-    } else if (f.type === 'date') input = `<input type="date" ${attrs} value="${esc(v)}">`;
+    } else if (f.type === 'date') input = `<input type="text" data-date inputmode="numeric" maxlength="10" placeholder="예: 20261023" autocomplete="off" ${attrs} value="${esc(v)}">`;
     else if (f.type === 'datetime') input = `<input type="datetime-local" ${attrs} value="${esc(v)}">`;
     else if (f.type === 'textarea') input = `<textarea ${attrs} rows="2" placeholder="${esc(f.ph || '')}">${esc(v)}</textarea>`;
     else input = `<input type="text" ${attrs} value="${esc(v)}"${f.type === 'money' ? ' inputmode="numeric" class="num"' : f.key === '공고명' && !v ? ' class="need"' : ''} placeholder="${esc(f.ph || '')}">`;
@@ -725,6 +725,7 @@
     async show() { await load(); render(); },
     async reload() { loaded = false; await load(); render(); }, // 다른 창(공고문 전용 창)에서 쓴 내용을 다시 읽음
     create, templates, TPL_DIR, slotInfo, uploadSlot, resetSlot, slotPath, KINDS,
+    async uploadNotices(files) { await load(); if (!cur()) { app().toast('공고문을 먼저 열거나 새로 만든 뒤 놓아 주세요.', 'err'); return; } return uploadNotices(files); },
     stats() {
       const by = { draft: 0, done: 0 }; store.notices.forEach((n) => by[N.statusOf(n)]++);
       return { count: store.notices.length, recent: store.notices[0] ? store.notices[0].v.공고명 : '', ...by };

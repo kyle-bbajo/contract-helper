@@ -360,7 +360,7 @@ try {
   await waitFor(() => page.evaluate(() => { const k = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사').key; return JH.app.db.docs.filter((d) => d.key === k && /-(tax|finish)$/.test(d.itemId || '')).every((d) => d.dates && (d.dates.valid || d.dates.finish)); }), 30000, '예전 서류 날짜 다시 읽기');
   await page.waitForSelector('.row[data-drop-item="c-tax"] .valid.ok:has-text("10.31까지 유효")', { timeout: 10000 });
   // 잘못 읽었으면 날짜를 고침 → 다시 판정
-  await page.fill('.row[data-drop-item="c-inspaid"] input[data-act="validset"]', '2026-10-30');
+  await page.fill('.row[data-drop-item="c-inspaid"] input[data-act="validset"]', '2026-10-30'); await page.press('.row[data-drop-item="c-inspaid"] input[data-act="validset"]', 'Tab');
   await page.waitForSelector('.row[data-drop-item="c-inspaid"] .valid.ok', { timeout: 5000 });
   step('증명서 유효기간 읽기 → 지출요청일(준공계+2주)과 비교해 재발급 표시, 업체 보완 요청 메일 작성, 날짜 직접 고침');
 
@@ -946,6 +946,62 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   await page.mouse.dblclick(sp2.x + 1, sp2.y + 200);
   assert.equal(await listW(), w0, '두 번 누르면 원래대로');
   step('계약별 목록 너비 끌어서 조절(기억, 두 번 누르면 원래대로), 넓으면 긴 계약명 두 줄');
+
+  // 금액 칸: 치는 대로 쉼표(계약 직접 추가 창의 계약금액)
+  {
+    await page.click('#btnNewContract'); await page.waitForSelector('#dlgContract[open]');
+    await page.fill('#ctAmount', ''); await page.type('#ctAmount', '123456789');
+    assert.equal(await page.inputValue('#ctAmount'), '123,456,789', '쉼표 자동');
+    await page.keyboard.press('Backspace'); assert.equal(await page.inputValue('#ctAmount'), '12,345,678', '지워도 쉼표 다시');
+    await page.keyboard.press('Escape'); await page.waitForSelector('#dlgContract[open]', { state: 'detached' }).catch(() => {});
+  }
+  step('금액 칸: 치는 대로 세 자리마다 쉼표');
+
+  // 날짜 칸: 달력에서 고르지 않고 숫자로(20261023 → 2026-10-23), 틀린 날짜는 비우고 알림
+  {
+    await page.click('#btnNewContract'); await page.waitForSelector('#dlgContract[open]');
+    await page.click('#ctStart'); await page.keyboard.type('20261023');
+    assert.equal(await page.inputValue('#ctStart'), '2026-10-23', '날짜 자동 꼴');
+    await page.click('#ctEnd'); await page.keyboard.type('271231'); await page.keyboard.press('Tab');
+    assert.equal(await page.inputValue('#ctEnd'), '2027-12-31', '6자리 → 20xx');
+    await page.fill('#ctEnd', ''); await page.click('#ctEnd'); await page.keyboard.type('20261341'); await page.keyboard.press('Tab');
+    assert.equal(await page.inputValue('#ctEnd'), '', '없는 날짜는 비움');
+    await page.keyboard.press('Escape'); await page.waitForSelector('#dlgContract[open]', { state: 'detached' }).catch(() => {});
+  }
+  step('날짜 칸: 숫자만 쳐도 2026-10-23(6자리·4자리도), 없는 날짜는 비우고 알림');
+
+  // 왼쪽 목록의 계약 위에 끌어 놓으면 그 계약으로(내용상 다른 계약 서류여도)
+  {
+    await page.click('.vgroup [data-view="contracts"], nav [data-view="contracts"]').catch(() => page.evaluate(() => document.querySelector('[data-view="contracts"]').click()));
+    await page.waitForSelector('.citem[data-key]');
+    const bytes = [...readFileSync(join(DOCS, 'noname(2).pdf')), ...Buffer.from('\n%drop-test\n')];
+    const key = await page.evaluate(() => { const els = [...document.querySelectorAll('.citem[data-key]')]; return els[els.length - 1].dataset.key; });
+    await page.evaluate(({ key, bytes }) => {
+      const el = document.querySelector(`.citem[data-key="${CSS.escape(key)}"]`);
+      const dt = new DataTransfer(); dt.items.add(new File([new Uint8Array(bytes)], '목록에놓기.pdf', { type: 'application/pdf' }));
+      for (const t of ['dragenter', 'dragover', 'drop']) el.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt }));
+    }, { key, bytes });
+    await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => d.name.startsWith('목록에놓기') || (d.from || '').startsWith('목록에놓기'))), 60000, '목록에 놓은 서류 들어감');
+    const got = await page.evaluate(() => { const d = JH.app.db.docs.find((x) => x.name.startsWith('목록에놓기') || (x.from || '').startsWith('목록에놓기')); return d && d.key; });
+    assert.equal(got, key, '놓은 계약으로');
+    await waitFor(async () => !(await page.isVisible('#progress')), 60000, '정리 끝');
+    await page.waitForTimeout(1500);
+  }
+  step('왼쪽 목록의 계약 위에 끌어 놓으면 그 계약으로 들어감');
+
+  // 이미 올린 파일인데 종류를 못 정한 채 있으면: 다시 올렸을 때 건너뛰지 않고 다시 정리(모르면 팝업)
+  {
+    const pick = await page.evaluate((names) => { const d = JH.app.db.docs.find((x) => names.includes(x.name) && x.key && x.itemId && !x.pay); if (!d) return null; d.itemId = null; return { id: d.id, name: d.name }; }, readdirSync(DOCS));
+    assert.ok(pick, '시험할 서류');
+    await page.setInputFiles('#fileIn', join(DOCS, pick.name));
+    await waitFor(() => page.$('.toast:has-text("다시 정리")'), 60000, '다시 정리 알림');
+    assert.ok(!(await page.$('.toast:has-text("건너뛰었습니다")')), '건너뛰지 않음');
+    const st = await page.evaluate((id) => { const d = JH.app.db.docs.find((x) => x.id === id); return { item: d.itemId, popup: document.querySelector('#dlgPreview').open }; }, pick.id);
+    assert.ok(st.item || st.popup, '다시 분류되거나 팝업');
+    if (st.popup) { await page.keyboard.press('Escape'); }
+    await waitFor(async () => !(await page.isVisible('#progress')), 60000, '정리 끝'); await page.waitForTimeout(1000);
+  }
+  step('전에 올렸는데 종류를 못 정한 파일은 다시 올리면 건너뛰지 않고 다시 정리(모르면 바로 팝업)');
 
   // 동료 규칙 받기: 받은 규칙에 맞는 '종류 못 정한/확인 필요' 서류는 그 자리에서 정해짐(사람이 고른 것은 그대로)
   {
