@@ -879,6 +879,7 @@ body.only-notice .tabs { display: none; }
 .sp-row .sp-pg .x { margin-left: auto; }
 .sp-row select { width: 100%; padding: 5px 6px; }
 .sp-row .cpick-q { padding: 5px 8px; }
+.sp-row .sp-nm { width: 100%; padding: 5px 8px; }
 .sp-view { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; max-height: 70vh; overflow: auto; padding: 4px; }
 .sp-pgv { position: relative; border: 2px solid transparent; border-radius: 8px; background: #fff; padding: 2px; }
 .sp-pgv canvas { width: 100%; height: auto; display: block; border: 1px solid var(--rule-soft); }

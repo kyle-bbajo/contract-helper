@@ -424,7 +424,8 @@
   <div class="dlg-body sp">
     <div class="sp-side">
       <div class="pv-name" id="spName"></div>
-      <p class="small muted" id="spWhy">특정 쪽만 잘라 넣으려면: [+ 새 서류] → 서류 종류 고르기(찾기 칸에 '보험' 등) → 오른쪽에서 그 서류의 쪽만 누르기 → [나누어 저장]. 고르지 않은 쪽은 원래 파일 칸에 남습니다. 쪽마다 제목을 읽어 만든 안도 같은 방식으로 고칩니다(Shift+누르기 = 범위, 두 번 누르기 = 그 쪽부터 새 서류). 원래 파일은 _삭제됨으로(되돌리기 가능).</p>
+      <datalist id="spNames"></datalist>
+      <p class="small muted" id="spWhy">특정 쪽만 잘라 넣으려면: [+ 새 서류] → 서류 종류 고르기(찾기 칸에 '보험' 등) → 오른쪽에서 그 서류의 쪽만 누르기 → (원하면 서류 이름 직접 쓰기 — 다음부터 자동완성) → [나누어 저장]. 고르지 않은 쪽은 원래 파일 칸에 남습니다. 쪽마다 제목을 읽어 만든 안도 같은 방식으로 고칩니다(Shift+누르기 = 범위, 두 번 누르기 = 그 쪽부터 새 서류). 원래 파일은 _삭제됨으로(되돌리기 가능).</p>
       <p class="small muted" id="spErr" hidden></p>
       <div class="sp-rows" id="spRows"></div>
       <div class="sp-tools"><button type="button" class="btn sm" id="spAddRow">+ 새 서류</button><button type="button" class="btn sm ghost" id="spClear" title="자동으로 만든 안을 비우고, 고른 쪽만 잘라 냄(나머지 쪽은 원래 파일로 남음)">처음부터 직접 고르기</button></div>

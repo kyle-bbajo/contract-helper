@@ -1322,6 +1322,8 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     // [처음부터 직접 고르기] → 새 서류 줄이 생김 → 가입자명부로 찾아 고르고 4쪽만 누름
     await page.click('#spClear'); await page.fill('#spRows .sp-row.on .cpick-q', '가입자명부');
     await page.click('#spView .sp-pgv[data-p="4"]'); await page.waitForTimeout(400);
+    // 서류 이름 직접 쓰기
+    await page.fill('#spRows .sp-row.on .sp-nm', '가입자명부 업체제출본'); await page.press('#spRows .sp-row.on .sp-nm', 'Tab');
     assert.ok(!(await page.$eval('#spSave', (b) => b.disabled)), '한 서류만 골라도 저장 가능');
     assert.match(await page.textContent('#spErr'), /고르지 않은 쪽 1~3쪽은 원래 파일 칸/);
     await page.click('#spSave');
@@ -1329,6 +1331,9 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     const parts = await page.evaluate(() => JH.app.db.docs.filter((d) => d.splitFrom === '착수계묶음2.pdf').map((d) => [d.name, d.itemId]));
     assert.equal(parts.length, 2, '잘라 낸 것 + 남은 쪽 ' + JSON.stringify(parts));
     assert.ok(parts.some(([n]) => /_1-3쪽\.pdf$/.test(n)), '남은 1~3쪽 묶음');
+    const own = await page.evaluate(() => JH.app.db.docs.find((d) => d.splitFrom === '착수계묶음2.pdf' && /-roster$/.test(d.itemId)));
+    assert.equal(own.name, '가입자명부 업체제출본.pdf', '직접 쓴 이름으로 저장'); assert.match(own.path, /가입자명부 업체제출본_/);
+    assert.ok(await page.evaluate(() => (JH.app.db.splitNames || []).some((x) => x.name === '가입자명부 업체제출본' && x.item === 'roster')), '쓴 이름 기억(다음에 자동완성)');
     assert.ok(await page.isVisible('#view-contracts.on'), '그 계약 화면');
   }
   step('특정 쪽만 잘라 넣기: 서류 종류를 고르고 그 쪽만 누르면 잘려 그 칸으로, 고르지 않은 쪽은 원래 칸에 남음 · 마치면 그 계약 화면');

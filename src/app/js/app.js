@@ -2080,13 +2080,38 @@
   const firstPage = (r) => (r.pages.length ? Math.min(...r.pages) : 1e9);
   // 나누기 화면: 왼쪽은 서류 줄(쪽 묶음 + 서류 종류), 오른쪽은 쪽 그림.
   // 서류 줄을 고르고 쪽 그림을 누르면 그 쪽이 그 서류로(Shift+누르기 = 범위). 떨어진 쪽도 한 서류로 묶을 수 있음
+  // 나눌 때 직접 쓴 서류 이름: 이 PC에 기억(동료와 나누지 않음) → 다음에 치면 자동완성, 고르면 그때 고른 서류 종류도 같이
+  const pageHead = (p) => L.norm((L.headLines(sp.lines[p - 1] || [])[0]) || '').slice(0, 60);
+  const splitNames = () => (db.splitNames = db.splitNames || []);
+  function rememberName(name, itemId, head) {
+    const nm = String(name || '').trim(); if (!nm) return;
+    const list = splitNames().filter((x) => !(x.name === nm && (!head || x.head === head || !x.head)));
+    list.unshift({ name: nm, item: itemId ? L.suffixOf(itemId) : '', head: head || '', at: Date.now() });
+    db.splitNames = list.slice(0, 200);
+  }
+  function fillSpNames() {
+    const seen = new Set(), o = [];
+    for (const x of splitNames()) if (!seen.has(x.name)) { seen.add(x.name); o.push(`<option value="${esc(x.name)}"></option>`); }
+    $('#spNames').innerHTML = o.join('');
+  }
+  // 이름으로 서류 종류 찾기: 전에 이 이름으로 고른 종류 → 서류 목록 이름과 같으면 그것
+  function itemForName(list, name) {
+    const nm = L.norm(name); if (!nm) return null;
+    const m = splitNames().find((x) => L.norm(x.name) === nm && x.item);
+    const bySuf = m && list.find((x) => L.suffixOf(x.id) === m.item); if (bySuf) return bySuf.id;
+    const eq = list.find((x) => L.norm(x.name) === nm); return eq ? eq.id : null;
+  }
   function paintSplit() {
     const list = classList(db.contracts[sp.doc.key]);
     sp.rows.sort((x, y) => firstPage(x) - firstPage(y));
     if (!sp.rows.includes(sp.act)) sp.act = sp.rows[0] || null;
+    // 전에 같은 제목 쪽에 직접 쓴 이름이 있으면 미리 채움(지울 수 있음)
+    for (const r of sp.rows) if (r.name == null && r.pages.length) { const h = pageHead(Math.min(...r.pages)); const m = h && splitNames().find((x) => x.head === h && (!r.item || !x.item || x.item === L.suffixOf(r.item))); if (m) { r.name = m.name; r.nameAuto = true; if (!r.item) r.item = itemForName(list, m.name); } }
+    fillSpNames();
     $('#spRows').innerHTML = (sp.rows.length ? '' : '<p class="muted small">잘라 낼 서류가 없습니다. [+ 새 서류]를 누르고 종류를 고른 뒤 쪽을 누르세요.</p>') + sp.rows.map((r, i) => `<div class="sp-row${r === sp.act ? ' on' : ''}" data-spi="${i}">
       <div class="sp-pg"><span class="sp-no">${i + 1}</span><b class="sp-pages">${pagesText(r.pages)}</b>${r.item && r.item === r.sugg ? ' <small class="muted">제목으로 찾음</small>' : ''}<button type="button" class="x" data-spdel="${i}" title="이 서류 빼기(쪽은 앞 서류에 붙고, 앞 서류가 없으면 원래 파일에 남음)" aria-label="이 서류 빼기">✕</button></div>
       <div class="cpick"><input type="search" class="cpick-q" placeholder="서류 찾기(예: 재해율, 보험)" autocomplete="off" aria-label="서류 찾기"><select data-spf="item" data-autopick aria-label="서류 종류">${itemOptions(list, r.item, false)}</select></div>
+      <input type="text" class="sp-nm" data-spf="name" list="spNames" autocomplete="off" value="${esc(r.name || '')}" placeholder="서류 이름 직접 쓰기(비우면 서류 종류 이름)" aria-label="서류 이름" title="저장할 파일 이름. 쓴 이름은 기억해 다음에 치면 자동완성되고, 같은 제목 쪽에는 미리 채웁니다">${r.nameAuto ? '<small class="muted">전에 쓴 이름</small>' : ''}
     </div>`).join('');
     checkSplitUi(); markPages();
   }
@@ -2109,7 +2134,7 @@
       el.classList.toggle('on', !!sp.act && sp.act.pages.includes(p));
       el.classList.toggle('cut', !!r && p > 1 && firstPage(r) === p);
       const it = r && r.item && list.find((x) => x.id === r.item);
-      el.querySelector('small').textContent = r ? `${i + 1}. ${it ? it.name : '종류 모름'}` : '아직 안 넣음';
+      el.querySelector('small').textContent = r ? `${i + 1}. ${r.name || (it ? it.name : '종류 모름')}` : '아직 안 넣음';
     });
     if (scroll && sp.act && sp.act.pages.length) { const el = $(`#spView .sp-pgv[data-p="${firstPage(sp.act)}"]`); if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
   }
@@ -2149,7 +2174,14 @@
     const row = e.target.closest('[data-spi]'); if (!row) return;
     const r = sp.rows[+row.dataset.spi]; if (!r) return;
     if (e.target.dataset.spf === 'item') { r.item = e.target.value || null; markPages(); }
+    if (e.target.dataset.spf === 'name') {
+      r.name = e.target.value.trim(); r.nameAuto = false;
+      const it = itemForName(classList(db.contracts[sp.doc.key]), r.name);
+      if (it && it !== r.item) { r.item = it; const sel = row.querySelector('select[data-spf="item"]'); if (sel) sel.value = it; }
+      markPages();
+    }
   });
+  $('#spRows').addEventListener('input', (e) => { if (e.target.dataset.spf !== 'name') return; const r = sp.rows[+e.target.closest('[data-spi]').dataset.spi]; if (r) { r.name = e.target.value.trim(); r.nameAuto = false; } });
   $('#spRows').addEventListener('click', (e) => {
     const x = e.target.closest('[data-spdel]');
     if (x) { const i = +x.dataset.spdel, r = sp.rows[i], to = sp.rows[i - 1] || sp.rows[i + 1]; if (to && !e.shiftKey) to.pages = [...to.pages, ...r.pages].sort((a, b) => a - b); sp.rows.splice(i, 1); sp.act = to || sp.rows[0] || null; paintSplit(); return; }
@@ -2204,8 +2236,11 @@
           const bytes = await out.save();
           const item = r.item ? list.find((x) => x.id === r.item) : null;
           const place = docPlace(c, item ? item.id : null, rnd ? rnd.id : null);
-          const nm = `${stem}_${pagesText(ps).replace(/~/g, '-').replace(/,\s*/g, ',')}.pdf`;
-          const saved = await S.save(place.dir, tidyName(item, c, nm, place.n), bytes);
+          const own = !r.rest && r.name ? L.safeName(r.name, 60) : '';
+          const nm = own ? `${own}.pdf` : `${stem}_${pagesText(ps).replace(/~/g, '-').replace(/,\s*/g, ',')}.pdf`;
+          const fname = own ? `${place.n ? place.n + '_' : ''}${own}_${L.safeName(c.name || '', 40)}.pdf` : tidyName(item, c, nm, place.n);
+          const saved = await S.save(place.dir, fname, bytes);
+          if (own) rememberName(r.name, item && item.id, pageHead(ps[0]));
           const top = sp.lines[ps[0] - 1] || [], heads = L.headLines(top);
           const nd = { id: L.uid(), key: c.key, itemId: item ? item.id : null, path: saved.path, name: nm, kind: 'pdf', size: bytes.length, mime: 'application/pdf',
             addedAt: new Date().toISOString(), ocr: d.ocr, text: L.maskPrivate(L.norm(ps.flatMap((p) => sp.lines[p - 1] || []).join(' ')).slice(0, 6000)), title: L.maskPrivate(L.norm(top.join(' ')).slice(0, 300)),
