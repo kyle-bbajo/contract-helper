@@ -341,7 +341,7 @@
     if (action) { const b = document.createElement('button'); b.className = 'link'; b.textContent = action.label; b.onclick = () => { action.run(); t.remove(); }; t.append(b); }
     const box = $('#toasts'); box.append(t);
     while (box.children.length > 3) box.firstElementChild.remove();
-    setTimeout(() => t.remove(), kind === 'err' ? 9000 : 5000);
+    setTimeout(() => t.remove(), (action && action.ms) || (kind === 'err' ? 9000 : 5000));
   }
   function progress(text, frac) {
     const p = $('#progress');
@@ -627,12 +627,22 @@
       const parts = Object.entries(byContract).map(([k, n]) => `${db.contracts[k].name} ${n}`);
       if (inbox) parts.push(`미분류 ${inbox}`);
       const ignored = recs.filter((r) => r.ignored).length;
-      if (opt.onlyMatched && ignored === recs.length) { if (ignored) console.info(`${opt.from}: 계약과 상관없는 파일 ${ignored}개 건너뜀`); return; }
+      // 자동 읽기에서 계약도 서류 종류도 못 찾아 가져오지 않은 파일: 말없이 버리지 않고 알림 + [그래도 가져오기](미분류로 넣고 팝업)
+      const ign = recs.filter((r) => r.ignored);
+      const tellIgnored = () => {
+        if (!ign.length) return;
+        ign.forEach((r) => logAct(`자동 읽기 건너뜀(계약·서류 종류 모름): 「${r.name}」`)); saveDb(true);
+        const files = ign.map((r) => new File([r.bytes], r.name, { type: r.mime || '' }));
+        const names = ign.slice(0, 2).map((r) => `「${r.name}」`).join(', ') + (ign.length > 2 ? ` 외 ${ign.length - 2}개` : '');
+        setTimeout(() => toast(`${opt.from || '자동 읽기'}: ${names}은(는) 계약·서류 종류를 찾지 못해 가져오지 않았습니다(스캔 글자를 못 읽었거나 계약과 상관없는 파일). 계약 서류면 [그래도 가져오기]를 누르세요.`, 'err',
+          { label: '그래도 가져오기', ms: 30000, run: () => ingest(files, null, null, {}) }), 600);
+      };
+      if (opt.onlyMatched && ignored === recs.length) { tellIgnored(); return; }
       const nDone = recs.length - ignored + again.length;
       if (!nDone && skipped) { toast((opt.from ? `${opt.from}의 ` : '') + `같은 파일이 이미 있어 넣지 않았습니다: ${dupWhere.slice(0, 2).join(', ')}${dupWhere.length > 2 ? ` 외 ${dupWhere.length - 2}개` : ''}.`); dupWhere.forEach((x) => logAct('올림 건너뜀: ' + x)); return; }
       let msg = (opt.from ? `${opt.from}에서 ` : '') + `${nDone}개 정리했습니다` + (parts.length ? ` — ${parts.join(', ')}` : '') + '.';
       if (again.length) msg += ` 전에 올렸던 파일 ${again.length}개는 다시 정리했습니다${againDone < again.length ? `(${again.length - againDone}개는 확인 필요)` : ''}.`;
-      if (ignored) msg += ` 우리 계약과 상관없는 파일 ${ignored}개는 가져오지 않았습니다.`;
+      if (ignored) { msg += ` 계약·서류 종류를 못 찾은 파일 ${ignored}개는 가져오지 않았습니다.`; tellIgnored(); }
       if (newContracts) msg += ` 계약서에서 새 계약 ${newContracts}건을 만들었습니다.`;
       if (auditFilled) msg += ` 서류에서 감사·검사 칸 ${auditFilled}개를 채웠습니다.`;
       if (multiForm) msg += ` 여러 양식이 든 파일 ${multiForm}개는 안에 든 서류마다 표시했습니다(파일 줄의 [나누기]로 서류마다 따로 자를 수 있음).`;

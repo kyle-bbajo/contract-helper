@@ -314,6 +314,10 @@ try {
     await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => d.name === '체육관 시설 청소 용역_준공계.pdf')), 30000, '두 번째 폴더');
     await new Promise((r) => setTimeout(r, 1500));
     assert.ok(!(await page.evaluate(() => JH.app.db.docs.some((d) => /익산시/.test(d.name)))), '상관없는 공고문은 가져오지 않음(미분류에도 안 쌓임)');
+    // 말없이 버리지 않음: 알림([그래도 가져오기])과 최근 작업에 남김
+    await waitFor(() => page.evaluate(() => [...document.querySelectorAll('#toasts .toast')].some((t) => /익산시/.test(t.textContent) && /그래도 가져오기/.test(t.textContent))), 5000, '건너뜀 알림');
+    assert.ok(await page.evaluate(() => (JH.app.db.log || []).some((l) => /자동 읽기 건너뜀.*익산시/.test(l.text))), '최근 작업에 건너뜀 기록');
+    await page.evaluate(() => document.querySelectorAll('#toasts .toast').forEach((t) => t.remove()));
     const lt = await page.textContent('#watchList'); assert.match(lt, /계약서류/); assert.match(lt, /메일첨부/);
     await page.keyboard.press('Escape');
   }
