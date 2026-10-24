@@ -268,7 +268,9 @@ try {
   const routed = await page.evaluate(() => { const f = (n) => { const d = JH.app.db.docs.find((x) => x.name === n); return d && { c: (JH.app.db.contracts[d.key] || {}).name, item: d.itemId }; }; return { pdf: f('체육관 시설 청소 용역_착수계.pdf'), xl: f('gyeonjeok.xlsx') }; });
   assert.deepEqual(routed.pdf, { c: '체육관 시설 청소 용역', item: 's-start' }, '오른쪽 위 업로드는 전체 계약에서 찾음');
   assert.deepEqual(routed.xl, { c: '시청사 옥상 방수공사', item: 'c-estimate' }, '엑셀 견적서 글자 읽어 분류');
-  await page.waitForTimeout(800); await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close())); // 올린 뒤 확인 팝업(수정본?)은 여기선 닫음
+  await page.waitForTimeout(800); // 올린 뒤 확인 팝업(수정본?)은 그대로 저장(닫으면 미분류로 가므로)
+  for (let k = 0; k < 5 && (await page.evaluate(() => document.querySelector('#dlgPreview').open)); k++) { await page.click('#pvSave'); await page.waitForTimeout(400); }
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
   if (!(await page.$('.citem.on:has-text("시청사 옥상 방수공사")'))) await page.click('.citem:has-text("시청사 옥상 방수공사")');
   await waitFor(() => page.$('.row[data-drop-item="c-estimate"] .file:has-text("gyeonjeok.xlsx") .ft:has-text("엑셀")'), 10000, '엑셀 표시');
   step('계약 화면 안 [업로드]는 그 계약으로, 서류 줄 [+ 추가]는 그 서류로, 오른쪽 위 [업로드]는 전체 계약에서 찾아 정리 · 엑셀(.xlsx) 글자 읽어 분류');
@@ -1299,11 +1301,17 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     await page.click('#spCancel');
     await page.waitForSelector('#dlgPreview[open]', { timeout: 10000 });
     assert.match(await page.textContent('#pvName'), /통장사본2/, '닫으면 다음 파일 확인으로');
+    const had = await page.evaluate(() => { const d = JH.app.db.docs.find((x) => x.name === '통장사본2.pdf'); return d.key; });
     await page.click('#dlgPreview button[value="close"]');
+    // 저장하지 않고 닫으면 미분류로(고른 계약은 추천으로 남김)
+    await waitFor(() => page.evaluate(() => { const d = JH.app.db.docs.find((x) => x.name === '통장사본2.pdf'); return d && !d.key && /^미분류\//.test(d.path); }), 10000, '닫으면 미분류');
+    if (had) assert.ok(await page.evaluate((k) => (JH.app.db.docs.find((x) => x.name === '통장사본2.pdf').cands || [])[0] === k, had), '고른 계약은 추천으로');
+    // 묶음 파일(나누기 화면을 닫은 것)은 계약에 그대로
+    assert.ok(await page.evaluate(() => !!JH.app.db.docs.find((x) => x.name === '착수계묶음2.pdf').key), '나누기 화면 거친 묶음은 그대로');
     await page.evaluate(async () => { JH.app.cfg.uploadConfirm = false; await JH.app.saveCfg(); });
     await waitFor(async () => !(await page.isVisible('#progress')), 30000, '정리 끝'); await page.waitForTimeout(800);
   }
-  step('올릴 때 확인: 여러 서류가 든 묶음 파일 차례가 오면 바로 쪽별로 나누기 화면, 닫으면 다음 파일 확인으로');
+  step('올릴 때 확인: 여러 서류가 든 묶음 파일 차례가 오면 바로 쪽별로 나누기 화면, 닫으면 다음 파일 확인으로 · 저장 안 하고 닫은 파일은 미분류로');
 
   // 특정 쪽만 잘라 넣기: [+ 새 서류] → 종류 고르고 → 그 쪽만 누르기 → 저장(고르지 않은 쪽은 원래 칸에 남음) · 확인을 마치면 그 계약 화면으로
   {

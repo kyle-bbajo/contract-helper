@@ -1948,12 +1948,28 @@
 
   // ---------- 미리 보기(팝업) · 헷갈리는 서류 확인 ----------
   // 파일을 따로 열지 않고 창 안에서 보고, 그 자리에서 계약·서류 종류를 맞게 고름. 여러 개면 [이전]·[다음]
-  const pv = { ids: [], i: 0, confirm: false, tok: 0 };
+  const pv = { ids: [], i: 0, confirm: false, tok: 0, done: new Set(), split: false };
   function openPreview(ids, i = 0, confirmMode = false) {
-    if (!$('#dlgPreview').open) pv.lastKey = null;
+    if (!$('#dlgPreview').open) { pv.lastKey = null; pv.done = new Set(); }
     pv.ids = ids.filter((id) => docById(id)); pv.i = Math.min(i, pv.ids.length - 1); pv.confirm = confirmMode;
     if (!pv.ids.length) return;
     $('#dlgPreview').showModal(); showPreview();
+  }
+  // 확인 팝업에서 [이대로 저장] 없이 [다음]·[닫기]·✕로 넘긴 파일은 미분류로 — 고른 계약·종류는 추천으로 남겨 미분류 화면·다음 팝업에서 맨 위에
+  async function skipToInbox(ids) {
+    const ds = ids.map(docById).filter((d) => d && d.key && !pv.done.has(d.id));
+    if (!ds.length) return 0;
+    await recorded(`확인 안 한 파일 ${ds.length}개 미분류로`, ds.map((d) => d.key), ds.map((d) => d.id), async () => {
+      for (const d of ds) {
+        const was = whereOf(d);
+        d.cands = [d.key, ...(d.cands || []).filter((k) => k !== d.key)].slice(0, 6);
+        if (d.itemId) d.guess = L.suffixOf(d.itemId);
+        delete d.unsure; delete d.alts; delete d.revOf; delete d.pay;
+        try { await moveDoc(d, null, null, false, undefined, true); logAct(`확인 안 함 「${d.name}」 ${was} → 미분류`); } catch (e) { console.warn('미분류로 못 옮김', d.name, e); }
+      }
+      await saveDb(true);
+    });
+    return ds.length;
   }
   async function showPreview() {
     const d = docById(pv.ids[pv.i]); if (!d) return;
@@ -1961,7 +1977,7 @@
     if (pv.confirm && d.kind === 'pdf' && d.key && db.contracts[d.key] && d.also && d.also.length && !d.splitAsked) {
       d.splitAsked = true; saveDb();
       sp.resume = pv.ids.slice(pv.i + 1);
-      if ($('#dlgPreview').open) $('#dlgPreview').close();
+      pv.split = true; if ($('#dlgPreview').open) $('#dlgPreview').close();
       openSplit(d); return;
     }
     const tok = ++pv.tok, c = d.key ? db.contracts[d.key] : null;
@@ -2033,7 +2049,7 @@
     Object.assign(sp, { doc: d, rows: [], lines: [], n: 0, act: null, lastP: null, bytes: null });
     $('#spName').textContent = d.name + (sp.resume ? ` — 여러 서류가 든 파일이라 나누기 화면을 열었습니다. 나누지 않으려면 [닫기](묶음 그대로 두고 다음으로)` : ''); $('#spErr').hidden = true; $('#spSave').disabled = true;
     $('#spRows').innerHTML = '<p class="muted small">쪽을 읽는 중…</p>'; $('#spView').innerHTML = '';
-    if ($('#dlgPreview').open) $('#dlgPreview').close();
+    if ($('#dlgPreview').open) { if (pv.confirm && !sp.resume) sp.resume = pv.ids.slice(pv.i + 1); pv.split = true; $('#dlgPreview').close(); }
     $('#dlgSplit').showModal();
     try {
       sp.bytes = await S.readBytes(d.path);
@@ -2211,13 +2227,23 @@
   $('#pvSplit') && ($('#pvSplit').onclick = () => { const d = docById(pv.ids[pv.i]); if (d) openSplit(d); });
   $('#pvPrev').onclick = () => { if (pv.i > 0) { pv.i--; showPreview(); } };
   // 확인 팝업을 다 마치면(닫으면) 마지막으로 저장한 서류의 계약 화면으로 이동
-  $('#dlgPreview').addEventListener('close', () => {
+  $('#dlgPreview').addEventListener('close', async () => {
+    // 저장하지 않고 닫으면 지금 파일과 아직 못 본 파일은 미분류로(나누기 화면으로 넘어갈 때는 빼고 — 그건 나누기 뒤에 이어서 확인)
+    const splitting = pv.split; pv.split = false;
+    if (pv.confirm && !splitting) {
+      const n = await skipToInbox(pv.ids.slice(pv.i));
+      if (n) { render(); toast(`확인하지 않은 파일 ${n}개는 미분류로 옮겼습니다. 왼쪽 [미분류]에서 계약·종류를 고르면 됩니다(고른 계약은 추천으로 맨 위).`, '', undoAction()); }
+    }
     const k = pv.lastKey; pv.lastKey = null;
     if (!k || !db.contracts[k] || ONLY || sp.resume || askQueue.length) return;
     ui.sel = k; setView('contracts');
     setTimeout(() => { const el = $(`.citem[data-key="${CSS.escape(k)}"]`); if (el) el.scrollIntoView({ block: 'nearest' }); }, 50);
   });
-  $('#pvNext').onclick = () => { if (pv.i < pv.ids.length - 1) { pv.i++; showPreview(); } else { $('#dlgPreview').close(); render(); } };
+  $('#pvNext').onclick = async () => {
+    if (pv.i >= pv.ids.length - 1) { $('#dlgPreview').close(); render(); return; } // 마지막: 닫기와 같음(아래 close에서 미분류로)
+    if (pv.confirm) { const n = await skipToInbox([pv.ids[pv.i]]); if (n) toast('확인하지 않고 넘긴 파일은 미분류로 옮겼습니다(고른 계약은 추천으로 남김).', '', undoAction()); }
+    pv.i++; showPreview(); render();
+  };
   // PC 안 AI가 준비돼 있으면 헷갈리는 서류의 종류를 추정해 보여 줌(서류 내용은 이 PC 안 AI에만, 사람이 고르기 전까지 미리 골라만 둠)
   async function aiGuess(d, c, tok) {
     try {
@@ -2249,6 +2275,7 @@
     const d = docById(pv.ids[pv.i]); if (!d) return;
     const key = $('#pvContract').value || null, item = key ? $('#pvItem').value || null : null;
     if (pv.confirm && key) pv.lastKey = key; // 확인을 마치면 이 계약 화면으로
+    pv.done.add(d.id); // 확인함 — 닫거나 넘겨도 미분류로 옮기지 않음
     // 수정본 확인: 같은 칸 그대로 저장하면 '수정본' 표시
     if (d.revOf) { const p0 = docById(d.revOf); if (p0 && key === p0.key && item === p0.itemId) d.rev = true; delete d.revOf; await saveDb(true); }
     // 사람이 고른(또는 '맞음'으로 확인한) 서류 종류를 배움
