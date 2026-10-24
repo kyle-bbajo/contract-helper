@@ -2101,6 +2101,36 @@
     const bySuf = m && list.find((x) => L.suffixOf(x.id) === m.item); if (bySuf) return bySuf.id;
     const eq = list.find((x) => L.norm(x.name) === nm); return eq ? eq.id : null;
   }
+  // 목록에 없는 이름(서류 종류 없이 쓴 이름)을 자주 쓰면(3번) 서류 목록에 넣을지 물음 — 넣으면 그 이름의 '종류 미정' 파일도 그 칸으로
+  const NAME_ASK = 3;
+  function countName(nm, c, group) {
+    const k = L.norm(nm); if (!k) return;
+    const u = (db.nameUses = db.nameUses || {}); const e = (u[k] = u[k] || { name: nm, n: 0, types: {} });
+    e.n++; e.name = nm; e.types[c.type] = group || e.types[c.type] || '';
+    saveDb();
+    if (e.n < NAME_ASK || e.asked || lists(c.type).some((x) => L.norm(x.name) === k)) return;
+    e.asked = Date.now(); saveDb();
+    setTimeout(() => toast(`「${nm}」을 ${e.n}번 직접 썼습니다. ${c.type} 서류 목록에 추가할까요? 추가하면 체크리스트 칸이 생기고 다음부터 이 종류로 자동 분류합니다.`, '',
+      { label: '서류 목록에 추가', ms: 30000, run: () => addNamedItem(nm, c.type, e.types[c.type]) }), 900);
+  }
+  async function addNamedItem(nm, type, group) {
+    const all = db.checklists ? JSON.parse(JSON.stringify(db.checklists)) : { 공사: JSON.parse(JSON.stringify(lists('공사'))), 용역: JSON.parse(JSON.stringify(lists('용역'))), 물품: JSON.parse(JSON.stringify(lists('물품'))) };
+    const arr = all[type] || (all[type] = JSON.parse(JSON.stringify(lists(type))));
+    if (arr.some((x) => L.norm(x.name) === L.norm(nm))) { toast(`「${nm}」은 이미 서류 목록에 있습니다.`); return; }
+    const g = group && arr.some((x) => x.group === group) ? group : ((arr[arr.length - 1] || {}).group || '기타');
+    const it = { id: (type === '공사' ? 'c-' : 's-') + L.uid(), group: g, name: nm, keywords: [L.norm(nm)], required: false, source: '업체', note: '나누기에서 직접 쓴 이름으로 추가' };
+    let at = -1; arr.forEach((x, i) => { if (x.group === g) at = i; }); arr.splice(at + 1, 0, it);
+    db.checklists = all;
+    // 그 이름으로 저장해 둔 '종류 미정' 파일을 새 칸으로
+    const k = L.norm(nm); let moved = 0;
+    for (const d of db.docs.filter((x) => x.key && !x.itemId && db.contracts[x.key] && db.contracts[x.key].type === type && L.norm(L.stem(x.name)) === k)) {
+      try { await moveDoc(d, d.key, it.id, true, d.pay, true); moved++; } catch (_) {}
+    }
+    for (const x of splitNames()) if (L.norm(x.name) === k && !x.item) x.item = L.suffixOf(it.id);
+    logAct(`서류 목록에 추가(${type}): 「${nm}」 — ${g}`);
+    await saveDb(true); render();
+    toast(`${type} 서류 목록의 '${g}' 단계에 「${nm}」을 추가했습니다(꼭 필요한 서류는 아님 — 설정 → 서류 목록에서 바꿀 수 있음).${moved ? ` 그 이름의 파일 ${moved}개를 이 칸으로 옮겼습니다.` : ''}`, 'ok');
+  }
   function paintSplit() {
     const list = classList(db.contracts[sp.doc.key]);
     sp.rows.sort((x, y) => firstPage(x) - firstPage(y));
@@ -2226,7 +2256,8 @@
       const PDFLib = await JH.lib('pdflib');
       const src = await PDFLib.PDFDocument.load(sp.bytes, { ignoreEncryption: true });
       const stem = L.stem(d.name).replace(/^\d{1,2}_/, '');
-      const list = classList(c), rnd = d.pay ? roundById(c, d.pay) : null; let learned = 0;
+      const list = classList(c), rnd = d.pay ? roundById(c, d.pay) : null; let learned = 0; const noType = [];
+      const baseGroup = ((list.find((x) => x.id === d.itemId) || {}).group) || '';
       await recorded(`「${d.name}」 쪽별로 나눔`, [c.key], [d.id], async () => {
         for (const r of rows) {
           const ps = [...r.pages].sort((x, y) => x - y);
@@ -2241,6 +2272,7 @@
           const fname = own ? `${place.n ? place.n + '_' : ''}${own}_${L.safeName(c.name || '', 40)}.pdf` : tidyName(item, c, nm, place.n);
           const saved = await S.save(place.dir, fname, bytes);
           if (own) rememberName(r.name, item && item.id, pageHead(ps[0]));
+          if (own && !item) noType.push(r.name.trim());
           const top = sp.lines[ps[0] - 1] || [], heads = L.headLines(top);
           const nd = { id: L.uid(), key: c.key, itemId: item ? item.id : null, path: saved.path, name: nm, kind: 'pdf', size: bytes.length, mime: 'application/pdf',
             addedAt: new Date().toISOString(), ocr: d.ocr, text: L.maskPrivate(L.norm(ps.flatMap((p) => sp.lines[p - 1] || []).join(' ')).slice(0, 6000)), title: L.maskPrivate(L.norm(top.join(' ')).slice(0, 300)),
@@ -2256,6 +2288,7 @@
       $('#dlgSplit').close(); render();
       logAct(`나눔 「${d.name}」 → ${rows.length}개 파일`);
       toast(`「${d.name}」을 ${rows.length}개 파일로 나눠 서류마다 넣었습니다.${learned ? ` 직접 정한 종류 ${learned}개는 배웠습니다.` : ''} 원래 파일은 _삭제됨에 있습니다.`, 'ok', undoAction());
+      for (const nm of new Set(noType)) countName(nm, c, baseGroup);
     } catch (e) { console.error(e); toast('나누지 못했습니다: ' + e.message, 'err'); }
     finally { progress(null); checkSplitUi(); }
   };
@@ -3111,7 +3144,7 @@
 
   root.JH.app = {
     get cfg() { return cfg; }, get ui() { return ui; }, set cfg(v) { cfg = v; }, get db() { return db; }, get org() { return org; },
-    readWatch: (all) => watchTick({ now: true, all: !!all }), get share() { return ui.share; }, get recording() { return recording; }, get undoLabels() { return undoStack.map((u) => u.label); }, pullShare, pushShare, fitWindow, syncTab, shareableRule: (r) => shareable(r, privateNames()),
+    readWatch: (all) => watchTick({ now: true, all: !!all }), countName, get share() { return ui.share; }, get recording() { return recording; }, get undoLabels() { return undoStack.map((u) => u.label); }, pullShare, pushShare, fitWindow, syncTab, shareableRule: (r) => shareable(r, privateNames()),
     defaults, lists, printList, startWatch, checkAccounts, saveCfg, saveDb, fetchContracts, enrichContracts, fillFromDocs, openForms, render, toast, banner, start, ingest, setView, progress,
     setChecklists(v) { db.checklists = v; return saveDb(true); },
   };

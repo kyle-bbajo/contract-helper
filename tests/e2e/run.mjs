@@ -1336,7 +1336,24 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     assert.ok(await page.evaluate(() => (JH.app.db.splitNames || []).some((x) => x.name === '가입자명부 업체제출본' && x.item === 'roster')), '쓴 이름 기억(다음에 자동완성)');
     assert.ok(await page.isVisible('#view-contracts.on'), '그 계약 화면');
   }
-  step('특정 쪽만 잘라 넣기: 서류 종류를 고르고 그 쪽만 누르면 잘려 그 칸으로, 고르지 않은 쪽은 원래 칸에 남음 · 마치면 그 계약 화면');
+  // 목록에 없는 이름을 3번 쓰면 서류 목록에 추가할지 물음 → 추가하면 그 이름의 '종류 미정' 파일이 새 칸으로
+  {
+    await page.evaluate(() => document.querySelectorAll('#toasts .toast').forEach((t) => t.remove()));
+    const r0 = await page.evaluate(() => {
+      const A = JH.app, c = Object.values(A.db.contracts).find((x) => x.name === '시청사 옥상 방수공사');
+      const d = A.db.docs.find((x) => x.splitFrom === '착수계묶음2.pdf' && /_1-3쪽\.pdf$/.test(x.name));
+      d.itemId = null; d.name = '업체 자체점검표.pdf';
+      A.countName('업체 자체점검표', c, '착공계'); A.countName('업체 자체점검표', c, '착공계');
+      const asked = [...document.querySelectorAll('#toasts .toast')].some((t) => /서류 목록에 추가/.test(t.textContent));
+      A.countName('업체 자체점검표', c, '착공계');
+      return { asked, id: d.id };
+    });
+    assert.ok(!r0.asked, '두 번까지는 묻지 않음');
+    await page.waitForSelector('#toasts .toast button:has-text("서류 목록에 추가")', { timeout: 5000 });
+    await page.click('#toasts .toast button:has-text("서류 목록에 추가")');
+    await waitFor(() => page.evaluate((id) => { const d = JH.app.db.docs.find((x) => x.id === id); const it = JH.app.lists('공사').find((x) => x.name === '업체 자체점검표'); return it && d.itemId === it.id; }, r0.id), 15000, '목록에 추가 + 파일 옮김');
+  }
+  step('특정 쪽만 잘라 넣기: 서류 종류를 고르고 그 쪽만 누르면 잘려 그 칸으로, 고르지 않은 쪽은 원래 칸에 남음 · 마치면 그 계약 화면 · 직접 쓴 이름 기억 · 3번 쓰면 서류 목록에 추가할지 물음');
 
   // 동료 규칙 받기: 받은 규칙에 맞는 '종류 못 정한/확인 필요' 서류는 그 자리에서 정해짐(사람이 고른 것은 그대로)
   {
