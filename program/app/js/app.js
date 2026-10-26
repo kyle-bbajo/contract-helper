@@ -684,6 +684,8 @@
       if (nLearned) msg += ` ${nLearned}개는 전에 배운 대로 넣었습니다.`;
       if (!opt.one) toast(msg, inbox ? '' : 'ok', unsure.length ? { label: '확인하기', run: () => openPreview(unsure, 0, true) } : recs.length || again.length ? undoAction() : null);
       if (unsure.length || askDup.length) askLater([...unsure, ...askDup]);
+      // 한글·엑셀은 뒤에서 미리 PDF로 바꿔 둠(미리 보기·인쇄가 바로 뜨게) — 한 번에 하나씩, 앞 5개까지
+      { const conv = placed.filter(needsPdf).slice(0, 5); let ch = Promise.resolve(); conv.forEach((d) => { ch = ch.then(() => toPdf(d)); }); }
       const keys = Object.keys(byContract);
       if (!forced && !opt.onlyMatched && keys.length === 1) ui.sel = keys[0]; // 폴더에서 자동으로 읽은 것은 보던 계약 화면을 바꾸지 않음
     } catch (e) {
@@ -1018,15 +1020,13 @@
   // ---------- 인쇄·저장 ----------
   async function getFile(d) {
     if (d.kind === 'hwp') {
-      if (!d.pdfPath) {
-        try { const r = await S.hwp2pdf(d.path); d.pdfPath = r.path; saveDb(); } catch (e) { console.warn(e); }
-      }
+      if (!d.pdfPath) await toPdf(d);
       if (d.pdfPath) return { kind: 'pdf', name: d.name, bytes: await S.readBytes(d.pdfPath) };
       return { kind: 'hwp', name: d.name };
     }
     // 엑셀·워드: 설치된 오피스로 PDF로 바꿔 같이 인쇄(오피스가 없으면 '별도 인쇄' 자리)
     if (d.kind === 'other' && /\.(xlsx?|docx?)$/i.test(d.name)) {
-      if (!d.pdfPath) { try { const r = await S.office2pdf(d.path); d.pdfPath = r.path; saveDb(); } catch (e) { console.warn(e); } }
+      if (!d.pdfPath) await toPdf(d);
       if (d.pdfPath) return { kind: 'pdf', name: d.name, bytes: await S.readBytes(d.pdfPath) };
     }
     return { kind: d.kind, name: d.name, bytes: d.kind === 'other' ? null : await S.readBytes(d.path) };
@@ -1990,7 +1990,17 @@
     });
     return ds.length;
   }
+  // 한글·엑셀·워드 → PDF(미리 보기·인쇄용). 한 번 바꾸면 옆에 PDF로 두고 다시 씀. 같은 파일을 두 번 바꾸지 않게 진행 중인 것은 공유
+  const needsPdf = (d) => d && !d.pdfPath && (d.kind === 'hwp' || (d.kind === 'other' && /\.(xlsx?|docx?)$/i.test(d.name)));
+  const pdfJobs = new Map();
+  function toPdf(d) {
+    if (!needsPdf(d)) return Promise.resolve(d && d.pdfPath);
+    if (!pdfJobs.has(d.id)) pdfJobs.set(d.id, (d.kind === 'hwp' ? S.hwp2pdf(d.path) : S.office2pdf(d.path)).then((r) => { d.pdfPath = r.path; saveDb(); return r.path; }).catch(() => null).finally(() => pdfJobs.delete(d.id)));
+    return pdfJobs.get(d.id);
+  }
+  function prefetchPdf(id) { const d = id && docById(id); if (needsPdf(d)) setTimeout(() => toPdf(d), 300); }
   async function showPreview() {
+    if (pv.closeDoc) { try { pv.closeDoc(); } catch (_) {} pv.closeDoc = null; }
     const d = docById(pv.ids[pv.i]); if (!d) return;
     // 확인 중에 여러 서류가 든 묶음 파일(착수계 묶음 등)이 오면 바로 '쪽별로 나누기' 화면으로 — 나누거나 닫으면 다음 파일로 이어짐
     if (pv.confirm && d.kind === 'pdf' && d.key && db.contracts[d.key] && d.also && d.also.length && !d.splitAsked) {
@@ -2035,23 +2045,28 @@
     const box = $('#pvBody'); box.innerHTML = '<p class="muted">불러오는 중…</p>';
     try {
       let path = d.pdfPath || d.path, kind = d.pdfPath ? 'pdf' : d.kind;
-      if (kind === 'hwp' || (kind === 'other' && /\.(xlsx?|docx?)$/i.test(d.name))) {
-        try { const r = await (kind === 'hwp' ? S.hwp2pdf(d.path) : S.office2pdf(d.path)); d.pdfPath = r.path; saveDb(); path = r.path; kind = 'pdf'; } catch (_) { /* 변환 못 하면 글자로 */ }
+      if (needsPdf(d)) {
+        // 한글·엑셀은 PDF로 바꾸는 데 몇 초 걸림(처음 한 번만) — 그동안 읽은 글자를 먼저 보여 줌
+        box.innerHTML = `<p class="muted small">원래 모양으로 불러오는 중… (${kind === 'hwp' ? '한글' : '엑셀·워드'}로 바꾸는 중, 파일마다 처음 한 번만)</p><pre class="pv-text">${esc((d.text || '').slice(0, 3000) || '')}</pre>`;
+        const pp = await toPdf(d); if (pp) { path = pp; kind = 'pdf'; }
       }
       if (tok !== pv.tok) return;
+      prefetchPdf(pv.ids[pv.i + 1]); // 다음 파일도 미리 바꿔 둠
       if (kind === 'pdf') {
         const bytes = await S.readBytes(path); const lib = await JH.lib('pdfjs');
         const doc = await lib.getDocument({ data: bytes, isEvalSupported: false, cMapUrl: 'vendor/pdfjs/cmaps/', cMapPacked: true }).promise;
         if (tok !== pv.tok) return; box.innerHTML = '';
         const n = Math.min(doc.numPages, 12);
+        // 앞 두 쪽만 바로 그리고 나머지는 내려서 보일 때 그림(쪽이 많은 스캔본도 빨리 뜸)
+        const draw = async (p, cv) => { const page = await doc.getPage(p); const v1 = page.getViewport({ scale: 1 }); const vp = page.getViewport({ scale: Math.min(1.4, 860 / v1.width) }); cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height); cv.style.aspectRatio = ''; await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise; };
+        const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting && !e.target.dataset.done) { e.target.dataset.done = '1'; io.unobserve(e.target); if (tok === pv.tok) draw(+e.target.dataset.p, e.target).catch(() => {}); } }), { root: box, rootMargin: '600px' });
         for (let p = 1; p <= n; p++) {
-          const page = await doc.getPage(p); const v1 = page.getViewport({ scale: 1 }); const vp = page.getViewport({ scale: Math.min(1.6, 900 / v1.width) });
-          const cv = document.createElement('canvas'); cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height);
-          await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise; if (tok !== pv.tok) return; box.append(cv);
+          const cv = document.createElement('canvas'); cv.dataset.p = p; cv.width = 860; cv.height = 1216; box.append(cv);
+          if (p <= 2) { cv.dataset.done = '1'; await draw(p, cv); if (tok !== pv.tok) return; } else io.observe(cv);
         }
         if (doc.numPages > n) box.insertAdjacentHTML('beforeend', `<p class="muted">… 모두 ${doc.numPages}쪽 중 ${n}쪽까지 보여 줍니다.</p>`);
         const spb = $('#pvSplit'); if (spb) { spb.hidden = !(doc.numPages > 1 && d.key && db.contracts[d.key]); const multi = !!(d.also && d.also.length); spb.className = multi ? 'btn sm split-hot' : 'link sm'; spb.textContent = multi ? `쪽별로 나누기 — 이 파일에 서류 ${d.also.length + 1}개(권장)` : '쪽별로 나누기'; }
-        doc.destroy();
+        pv.closeDoc = () => { io.disconnect(); doc.destroy(); };
       } else if (kind === 'image') {
         const url = URL.createObjectURL(new Blob([await S.readBytes(path)])); box.innerHTML = `<img alt="${esc(d.name)}" src="${url}">`;
       } else box.innerHTML = `<pre class="pv-text">${esc((d.text || '읽을 수 있는 글자가 없습니다.').slice(0, 4000))}</pre>`;
@@ -3141,7 +3156,7 @@
     try { await JH.notice.load(); } catch (_) {}
     setView(ui.view);
     initTabs(); // 지난번에 열어 둔 탭들(이 PC에 기억)
-    setInterval(() => { pingWin().catch(() => banner('연결 창구가 꺼졌습니다. 바탕화면의 바로가기로 다시 실행해 주세요.', true)); }, 20000);
+    setInterval(() => { pingWin().catch(() => banner(ui.restarting ? '새 버전으로 다시 켰습니다. 새로 열린 창을 쓰시고 이 창은 닫아 주세요(새 창이 안 보이면 바탕화면의 바로가기로 실행).' : '연결 창구가 꺼졌습니다. 바탕화면의 바로가기로 다시 실행하면 새 창이 열립니다 — 이 창은 닫아 주세요(작업한 내용은 저장돼 있음).', true)); }, 20000);
     if (ONLY) return; // 공고문 전용 창: 폴더 확인·정리·자동 새로고침은 원래 창이 함
     try { await reconcile(); render(); } catch (e) { console.warn('폴더 확인 실패', e); }
     try { await relayout(); } catch (e) { console.warn('폴더 정리 실패', e); }

@@ -9,11 +9,11 @@ param(
   [switch]$NoUpdate,
   [int]$WaitPid = 0,
   [switch]$StageUpdate,
-  [int]$IdleMinutes = 20
+  [int]$IdleMinutes = 720 # 창이 오래 잠들어(최소화·절전 탭) 신호가 끊겨도 바로 끄지 않음 — 창을 닫으면(bye) 몇 초 뒤 끔
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '1.6.27'
+$Version = '1.6.28'
 $AppRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $WebRoot = Join-Path $AppRoot 'app'
 $LocalCfg = Join-Path $AppRoot 'local.json'
@@ -419,20 +419,19 @@ function Convert-Hwp([string]$src, [string]$dst, [string]$fmt) {
 # 엑셀·워드 → PDF(설치된 MS 오피스 사용, 창은 띄우지 않음)
 function Convert-OfficeToPdf([string]$src, [string]$dst) {
   $ext = [IO.Path]::GetExtension($src).ToLowerInvariant()
+  # 엑셀·워드는 한 번 띄운 것을 켜 둔 채 다시 씀(파일마다 띄우고 끄면 몇 초씩 걸림) — 이 창구가 꺼질 때 같이 끔
   if ($ext -eq '.xlsx' -or $ext -eq '.xls') {
-    try { $xl = New-Object -ComObject 'Excel.Application' } catch { throw '이 PC에서 엑셀 프로그램을 찾지 못했습니다.' }
-    try {
-      $xl.Visible = $false; $xl.DisplayAlerts = $false
-      $wb = $xl.Workbooks.Open($src, 0, $true)
-      try { $wb.ExportAsFixedFormat(0, $dst) } finally { $wb.Close($false) }
-    } finally { $xl.Quit(); [void][Runtime.InteropServices.Marshal]::ReleaseComObject($xl) }
+    $xl = $script:Xl
+    try { if ($xl) { $null = $xl.Workbooks.Count } } catch { $xl = $null }
+    if (-not $xl) { try { $xl = New-Object -ComObject 'Excel.Application' } catch { throw '이 PC에서 엑셀 프로그램을 찾지 못했습니다.' }; $xl.Visible = $false; $xl.DisplayAlerts = $false; $script:Xl = $xl }
+    $wb = $xl.Workbooks.Open($src, 0, $true)
+    try { $wb.ExportAsFixedFormat(0, $dst) } finally { $wb.Close($false) }
   } elseif ($ext -eq '.docx' -or $ext -eq '.doc') {
-    try { $wd = New-Object -ComObject 'Word.Application' } catch { throw '이 PC에서 워드 프로그램을 찾지 못했습니다.' }
-    try {
-      $wd.Visible = $false; $wd.DisplayAlerts = 0
-      $doc = $wd.Documents.Open($src, $false, $true)
-      try { $doc.SaveAs2($dst, 17) } finally { $doc.Close($false) }
-    } finally { $wd.Quit(); [void][Runtime.InteropServices.Marshal]::ReleaseComObject($wd) }
+    $wd = $script:Wd
+    try { if ($wd) { $null = $wd.Documents.Count } } catch { $wd = $null }
+    if (-not $wd) { try { $wd = New-Object -ComObject 'Word.Application' } catch { throw '이 PC에서 워드 프로그램을 찾지 못했습니다.' }; $wd.Visible = $false; $wd.DisplayAlerts = 0; $script:Wd = $wd }
+    $doc = $wd.Documents.Open($src, $false, $true)
+    try { $doc.SaveAs2($dst, 17) } finally { $doc.Close($false) }
   } else { throw 'PDF로 바꿀 수 없는 파일입니다.' }
   if (-not (Test-Path -LiteralPath $dst)) { throw 'PDF로 저장하지 못했습니다.' }
 }
@@ -1000,5 +999,7 @@ try {
 } finally {
   $listener.Stop()
   if ($script:Hwp) { try { $script:Hwp.Quit() } catch {} }
+  if ($script:Xl) { try { $script:Xl.Quit(); [void][Runtime.InteropServices.Marshal]::ReleaseComObject($script:Xl) } catch {} }
+  if ($script:Wd) { try { $script:Wd.Quit(); [void][Runtime.InteropServices.Marshal]::ReleaseComObject($script:Wd) } catch {} }
   Remove-Item -LiteralPath $RunFile -Force -ErrorAction SilentlyContinue
 }

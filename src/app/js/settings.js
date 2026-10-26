@@ -308,7 +308,7 @@
     try {
       const r = await root.JH.server.update();
       if (r.skipped) app.toast(r.skipped, 'err');
-      else if (r.updated) { app.toast(`새 버전을 받았습니다(${(r.info && r.info.message) || ''}). 잠시 뒤 새 창이 열리면 이 창은 닫으세요.`, 'ok'); setTimeout(() => { try { window.close(); } catch (_) {} }, 6000); }
+      else if (r.updated) { app.ui.restarting = true; app.toast(`새 버전을 받았습니다(${(r.info && r.info.message) || ''}). 잠시 뒤 새 창이 열리면 이 창은 닫으세요.`, 'ok'); setTimeout(() => { try { window.close(); } catch (_) {} }, 6000); }
       else app.toast('이미 최신입니다.', 'ok');
     } catch (e) { app.toast(e.message, 'err'); }
     finally { btnUpd.disabled = false; btnUpd.textContent = '지금 업데이트 확인'; }
