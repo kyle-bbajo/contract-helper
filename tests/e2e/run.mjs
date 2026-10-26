@@ -1075,7 +1075,7 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     const id = await page.evaluate(() => JH.app.db.docs.find((d) => d.name === '스캔묶음.pdf').id);
     await page.click(`[data-act="split"][data-doc="${id}"]`);
     await page.waitForSelector('#spRows .sp-row', { timeout: 60000 });
-    const rowsTxt = () => page.$$eval('#spRows .sp-row', (rs) => rs.map((r) => `${r.querySelector('.sp-pages').textContent} ${r.querySelector('select').selectedOptions[0].textContent}`));
+    const rowsTxt = () => page.$$eval('#spRows .sp-row', (rs) => rs.map((r) => `${r.querySelector('.sp-pin').value}쪽 ${r.querySelector('select').selectedOptions[0].textContent}`));
     const plan = await rowsTxt();
     assert.deepEqual(plan, ['1~2쪽 계약 · 계약서', '3~4쪽 착공계 · 4대 사회보험 가입증명서', '5쪽 대금청구 · 지방세 납세증명서', '6쪽 대금청구 · 국세 납세증명서'], '나눌 안: ' + plan.join(' / '));
     await page.waitForSelector('#spView .sp-pgv[data-p="6"]', { timeout: 30000 });
@@ -1416,7 +1416,14 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     await page.waitForSelector('#spView .sp-pgv[data-p="4"]', { timeout: 60000 });
     // [처음부터 직접 고르기] → 새 서류 줄이 생김 → 가입자명부로 찾아 고르고 4쪽만 누름
     await page.click('#spClear'); await page.fill('#spRows .sp-row.on .cpick-q', '가입자명부');
-    await page.click('#spView .sp-pgv[data-p="4"]'); await page.waitForTimeout(400);
+    // 쪽 번호를 직접 씀(쪽 그림을 누르는 대신) · '+ 아래에'로 중간에 새 줄
+    await page.fill('#spRows .sp-row.on .sp-pin', '4'); await page.press('#spRows .sp-row.on .sp-pin', 'Enter'); await page.waitForTimeout(400);
+    assert.match(await page.inputValue('#spRows .sp-row.on .sp-pin'), /^4$/, '쪽 번호 직접 쓰기');
+    const nRows = await page.$$eval('#spRows .sp-row', (x) => x.length);
+    await page.click('#spRows .sp-row.on [data-spadd]'); await page.waitForTimeout(300);
+    assert.equal(await page.$$eval('#spRows .sp-row', (x) => x.length), nRows + 1, '+ 아래에 새 줄');
+    await page.click('#spRows .sp-row.on [data-spdel]'); await page.waitForTimeout(300);
+    await page.click('#spRows .sp-row'); await page.waitForTimeout(300);
     // 서류 이름 직접 쓰기
     await page.fill('#spRows .sp-row.on .sp-nm', '가입자명부 업체제출본'); await page.press('#spRows .sp-row.on .sp-nm', 'Tab');
     assert.ok(!(await page.$eval('#spSave', (b) => b.disabled)), '한 서류만 골라도 저장 가능');

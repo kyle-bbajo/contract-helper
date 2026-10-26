@@ -34,7 +34,7 @@
   const WIN = Math.random().toString(36).slice(2, 10), ROLE = ONLY === 'notice' ? 'notice' : 'main';
   const ui = { view: 'home', sel: null, q: '', officer: '', officerTouched: false, type: '', state: '', board: '', sort: (() => { try { return localStorage.getItem('jh.sort') || 'end-desc'; } catch (_) { return 'end-desc'; } })() };
 
-  const CHECKLIST_VER = 11; // 11: 노무비 미체불 확약서·지급 명세서 찾는 말 · 10: 준공계·준공검사원을 두 칸으로, 준공검사원 지정통보는 필수 아님 · 9: 노무비 지급확인제 → 공사 노무비 구분관리 및 지급확인 적용제외 신청서(합의서도 이 칸) // (지난 것) 4: 선금 보증서 · 5: 준공검사원 지정통보 · 6: 사업장 가입내역 확인서(4대보험 가입증명서) 등 찾는 말 추가 · 7: 하도급 계약서·계약보증서는 그 밖의 계약 서류 · 8: 구매요구에 산업안전재해율 결과·안전보건관리계획서·적격수급업체 안전보건 수준 평가표(공사·용역)
+  const CHECKLIST_VER = 12; // 12: 준공계에 정산서류 · 11: 노무비 미체불 확약서·지급 명세서 찾는 말 · 10: 준공계·준공검사원을 두 칸으로, 준공검사원 지정통보는 필수 아님 · 9: 노무비 지급확인제 → 공사 노무비 구분관리 및 지급확인 적용제외 신청서(합의서도 이 칸) // (지난 것) 4: 선금 보증서 · 5: 준공검사원 지정통보 · 6: 사업장 가입내역 확인서(4대보험 가입증명서) 등 찾는 말 추가 · 7: 하도급 계약서·계약보증서는 그 밖의 계약 서류 · 8: 구매요구에 산업안전재해율 결과·안전보건관리계획서·적격수급업체 안전보건 수준 평가표(공사·용역)
   const lists = (type) => (db.checklists && db.checklists[type]) || defaults[type] || defaults.공사;
   const contracts = () => Object.values(db.contracts).filter((c) => !c.archived);
   // 계약별 서류: 화면을 그리는 동안은 한 번 만든 색인(docIndex)으로 찾음(서류 수천 개여도 계약마다 다시 훑지 않음)
@@ -335,7 +335,11 @@
     return info;
   }
   // X로 창을 닫으면 알림 → 열린 창이 하나도 없으면 프로그램이 몇 초 뒤 스스로 꺼짐(새로고침은 바로 다시 들어오므로 안 꺼짐)
-  window.addEventListener('pagehide', () => { try { if (S.online) navigator.sendBeacon(`/api/bye?${new URLSearchParams({ t: S.token, w: WIN })}`); } catch (_) {} });
+  window.addEventListener('pagehide', () => {
+    if (!S.online) return; const u = `/api/bye?${new URLSearchParams({ t: S.token, w: WIN })}`;
+    let sent = false; try { sent = navigator.sendBeacon(u); } catch (_) {}
+    if (!sent) { try { fetch(u, { method: 'POST', keepalive: true }); } catch (_) {} } // 비콘이 거절되면 한 번 더
+  });
 
   // ---------- 알림·진행 ----------
   function toast(msg, kind, action) {
@@ -617,7 +621,7 @@
         if (c && !(forced && forceItem)) { // 칸에 직접 넣은 것은 쪽마다 읽지 않음(빠르게)
           try {
             progress(`여러 양식이 든 파일인지 보는 중 ${i + 1}/${recs.length}`, i / recs.length);
-            const heads = await R.pageHeads(r.bytes, r.kind, { ocrMax: 12, onPage: (p, n) => { if (n > 2) progress(`여러 양식이 든 파일인지 보는 중 — ${p}/${n}쪽 (스캔본은 쪽마다 몇 초)`, p / n); } }); r.pages = heads ? heads.total : null;
+            const heads = await R.pageHeads(r.bytes, r.kind, { ocrMax: 12, onPage: (p, n) => { if (n > 2) progress(`여러 양식이 든 파일인지 보는 중 — ${p}/${n}쪽 (스캔본은 쪽마다 몇 초)`, p / n); } }); r.pages = heads ? heads.total : null; if (heads && heads.length > 1) r.pgHeads = heads.map((h) => L.maskPrivate(String(h || '').slice(0, 160)));
             pagesOf = heads ? L.classifyPages(classList(c), heads) : r.kind === 'hwp' ? L.classifyTitleLines(classList(c), r.lines) : null;
           } catch (e) { console.warn('쪽별 서류 찾기 실패', e); }
           // 파일 이름에 서류가 여럿이면(견적서_산출내역.pdf) 그것도 함께 든 서류로
@@ -650,7 +654,7 @@
           id: r.id, key: c ? c.key : null, itemId: item ? item.id : null, path: saved.path, name: r.name, kind: r.kind,
           size: r.size, mime: r.mime, addedAt: new Date().toISOString(), ocr: r.ocr, meta: r.meta, text: r.text, title: r.title, dates: r.dates, manual: !!forced && !r.rerouted, facts: L.docFacts(r.lines),
           ...(rnd ? { pay: rnd.id } : {}), ...(!c && r.cands && r.cands.length ? { cands: r.cands } : {}), ...(!c && r.guess ? { guess: r.guess } : {}), ...(r.heads && r.heads.length ? { heads: r.heads } : {}), ...(r.unsure ? { unsure: true, alts: r.alts } : {}),
-          ...(also.length ? { also, pagesOf } : {}), ...(r.pages > 1 ? { pages: r.pages } : {}),
+          ...(also.length ? { also, pagesOf } : {}), ...(r.pages > 1 ? { pages: r.pages } : {}), ...(r.pgHeads ? { pgHeads: r.pgHeads } : {}),
         });
         if (c) { byContract[c.key] = (byContract[c.key] || 0) + 1; c.updatedAt = Date.now(); } else inbox++;
         if (c && item && (AUDIT_DOC.test(item.id) || also.some((id) => AUDIT_DOC.test(id)))) (auditLines[c.key] = auditLines[c.key] || []).push(r.lines);
@@ -1288,7 +1292,7 @@
     const chk = d.unsure ? `<button type="button" class="ft warn chk-btn" data-act="confirmdoc" data-doc="${d.id}" title="제목에 다른 서류 이름도 있어 헷갈립니다. 눌러서 확인하면 배웁니다">확인 필요</button>` : '';
     return `<div class="file">${tag}${revTag}${chk}<span class="fn" title="${esc(d.name)}">${esc(d.name)}</span>${conv}${dt}
       <span class="cpick mini"><input type="search" class="cpick-q" placeholder="종류 찾기" autocomplete="off" aria-label="서류 종류 찾기" title="면허·등록증·통장처럼 치면 맞는 종류만 남고, Enter를 누르면 첫 번째로 옮깁니다"><select data-act="moveitem" data-doc="${d.id}" aria-label="서류 종류">${itemOptions(list, d.itemId, true)}</select></span>${payOptions(d)}
-      <button class="link" data-act="view" data-doc="${d.id}">보기</button>${d.kind === 'pdf' && d.key && !(d.pages === 1) ? `
+      <button class="link" data-act="view" data-doc="${d.id}">보기</button>${splittable(d) && d.key ? `
       <button class="link" data-act="split" data-doc="${d.id}" title="한 파일에 여러 서류를 스캔했으면 서류마다 따로 잘라 각 칸에 넣음">나누기</button>` : ''}
       <button class="x" data-act="del" data-doc="${d.id}" title="빼기" aria-label="빼기">✕</button></div>`;
   }
@@ -2135,6 +2139,7 @@
     $('#pvPrev').disabled = pv.i === 0; $('#pvNext').textContent = pv.i < pv.ids.length - 1 ? '다음' : '닫기';
     $('#pvSave').textContent = pv.confirm ? '맞음 · 다음' : '이대로 저장';
     const box = $('#pvBody'); box.innerHTML = '<p class="muted">불러오는 중…</p>';
+    { const spb = $('#pvSplit'); if (spb) { spb.hidden = !splittable(d); spb.className = 'link sm'; spb.textContent = '쪽별로 나누기'; } }
     try {
       let path = d.pdfPath || d.path, kind = d.pdfPath ? 'pdf' : d.kind;
       if (needsPdf(d)) {
@@ -2161,8 +2166,8 @@
           if (p <= 2) { cv.dataset.done = '1'; await draw(p, cv); if (tok !== pv.tok) return; } else io.observe(cv);
         }
         if (doc.numPages > n) box.insertAdjacentHTML('beforeend', `<p class="muted">… 모두 ${doc.numPages}쪽 중 ${n}쪽까지 보여 줍니다.</p>`);
-        const spb = $('#pvSplit'); if (spb) { spb.hidden = !(doc.numPages > 1 && d.key && db.contracts[d.key]); const multi = !!(d.also && d.also.length); spb.className = multi ? 'btn sm split-hot' : 'link sm'; spb.textContent = multi ? `쪽별로 나누기 — 이 파일에 서류 ${d.also.length + 1}개(권장)` : '쪽별로 나누기'; }
-        pv.closeDoc = () => { io.disconnect(); doc.destroy(); };
+        const spb = $('#pvSplit'); if (spb) { spb.hidden = !splittable(d); /* 모든 문서에서(한 쪽짜리도). 계약을 아직 안 정했으면 누를 때 팝업에서 고른 계약으로 정하고 나눔 */ const multi = !!(d.also && d.also.length); spb.className = multi ? 'btn sm split-hot' : 'link sm'; spb.textContent = multi ? `쪽별로 나누기 — 이 파일에 서류 ${d.also.length + 1}개(권장)` : '쪽별로 나누기'; }
+        pv.closeDoc = () => { io.disconnect(); setTimeout(() => doc.destroy().catch(() => {}), 3000); }; // 그리던 쪽이 끝난 뒤 닫음(바로 닫으면 그리기 취소 오류)
       } else if (kind === 'image') {
         const url = URL.createObjectURL(new Blob([await S.readBytes(path)])); box.innerHTML = `<img alt="${esc(d.name)}" src="${url}">`;
       } else box.innerHTML = `<pre class="pv-text">${esc((d.text || '읽을 수 있는 글자가 없습니다.').slice(0, 4000))}</pre>`;
@@ -2172,10 +2177,13 @@
   // 쪽마다 위쪽 제목을 읽어 '제목 쪽부터 다음 제목 앞 쪽까지'를 한 서류로 보는 안을 만들고, 사람이 확인·고친 뒤 저장.
   // 원래 파일은 _삭제됨으로(되돌리기 가능). 사람이 종류를 고친 줄은 배움
   const sp = { doc: null, bytes: null, n: 0, lines: [], rows: [], on: 0, tok: 0 };
+  const splittable = (d) => d && (d.kind === 'pdf' || d.kind === 'hwp' || (d.kind === 'other' && /\.(xlsx?|docx?|hwx)$/i.test(d.name)));
   async function openSplit(d) {
     const c = d && d.key && db.contracts[d.key];
-    if (!d || d.kind !== 'pdf') { toast('PDF 파일만 쪽별로 나눌 수 있습니다(한글 파일은 PDF로 바꾼 뒤).', 'err'); return; }
-    if (!c) { toast('먼저 어느 계약 서류인지 정해 주세요. 계약을 고른 뒤 나눌 수 있습니다.', 'err'); return; }
+    if (!d || !splittable(d)) { toast('그림·텍스트 파일은 나눌 쪽이 없습니다(PDF·한글·엑셀·워드·전자결재 문서만).', 'err'); return; }
+    if (!c) { toast('먼저 어느 계약 서류인지 정해 주세요(줄의 계약 고르기). 계약을 고르면 바로 나눌 수 있습니다.', 'err'); return; }
+    // 한글·엑셀·워드·.hwx: 먼저 PDF로 바꿔서 그 PDF를 나눔(나눈 서류는 PDF로 저장)
+    if (d.kind !== 'pdf' && !d.pdfPath) { progress(`나누려고 PDF로 바꾸는 중: ${d.name}`, .3); const pp = await toPdf(d); progress(null); if (!pp) { toast('PDF로 바꾸지 못해 나눌 수 없습니다(이 PC의 한글·오피스 확인).', 'err'); return; } }
     const tok = ++sp.tok;
     Object.assign(sp, { doc: d, rows: [], lines: [], n: 0, act: null, lastP: null, bytes: null });
     $('#spName').textContent = d.name + (sp.resume ? ` — 여러 서류가 든 파일이라 나누기 화면을 열었습니다. 나누지 않으려면 [닫기](묶음 그대로 두고 다음으로)` : ''); $('#spErr').hidden = true; $('#spSave').disabled = true;
@@ -2183,13 +2191,29 @@
     if ($('#dlgPreview').open) { if (pv.confirm && !sp.resume) sp.resume = pv.ids.slice(pv.i + 1); pv.split = true; $('#dlgPreview').close(); }
     $('#dlgSplit').showModal();
     try {
-      sp.bytes = await S.readBytes(d.path);
-      const heads = await R.pageHeads(sp.bytes, 'pdf', { max: 120, ocrMax: 120, onPage: (p, n) => { if (tok === sp.tok) $('#spRows').innerHTML = `<p class="muted small">쪽 제목 읽는 중 ${p}/${n}… (스캔본은 쪽마다 몇 초)</p>`; } });
+      sp.bytes = await S.readBytes(d.kind === 'pdf' && !d.pdfPath ? d.path : d.pdfPath || d.path);
+      // 1) 바로 보여 줌: 글자 층에 있는 제목 + 올릴 때 읽어 둔 제목(스캔 글자 인식은 하지 않음) → 쪽 그림을 그리고 바로 고를 수 있게
+      const plan = (heads) => { sp.rows = L.splitPlan(pagesByRules(classList(c), heads || []), sp.n).map((r) => { const ps = []; for (let p = r.from; p <= r.to; p++) ps.push(p); return { pages: ps, item: r.item, sugg: r.item }; }); sp.act = sp.rows[0]; sp.lastP = null; };
+      const h0 = await R.pageHeads(sp.bytes, 'pdf', { max: 120, ocrMax: -1 });
       if (tok !== sp.tok) return;
-      sp.n = (heads && heads.total) || 1; sp.lines = (heads && heads.rows) || [];
-      sp.rows = L.splitPlan(pagesByRules(classList(c), heads || []), sp.n).map((r) => { const ps = []; for (let p = r.from; p <= r.to; p++) ps.push(p); return { pages: ps, item: r.item, sugg: r.item }; });
-      sp.act = sp.rows[0]; sp.lastP = null;
-      paintSplit(); renderSplitPages(tok);
+      sp.n = (h0 && h0.total) || 1; sp.lines = (h0 && h0.rows) || []; sp.touched = false;
+      const cached = d.pgHeads || [];
+      const heads = Array.from({ length: Math.min(sp.n, 120) }, (_, i) => (h0 && L.norm(h0[i] || '').length >= 4 ? h0[i] : cached[i] || ''));
+      plan(heads); paintSplit(); renderSplitPages(tok);
+      // 2) 제목을 못 읽은 스캔 쪽은 뒤에서 글자 인식 — 그동안 바로 골라도 됨. 사람이 손대지 않았으면 다 읽은 뒤 안을 다시 만듦
+      const need = heads.map((h, i) => (L.norm(h).length < 4 ? i + 1 : 0)).filter(Boolean);
+      if (need.length) {
+        const note = (t) => { if (tok === sp.tok) { const el = $('#spReading'); if (el) el.textContent = t; } };
+        $('#spRows').insertAdjacentHTML('afterbegin', `<p class="muted small" id="spReading">스캔 쪽 제목 읽는 중 0/${need.length}… 기다리지 않고 바로 골라도 됩니다</p>`);
+        (async () => {
+          const full = await R.pageHeads(sp.bytes, 'pdf', { max: 120, ocrMax: 120, onPage: (p, n) => note(`스캔 쪽 제목 읽는 중 ${p}/${n}… 기다리지 않고 바로 골라도 됩니다`) }).catch(() => null);
+          if (tok !== sp.tok || !full) return;
+          sp.lines = full.rows || sp.lines;
+          if (!sp.touched) { plan(full.map((h, i) => (L.norm(h || '').length >= 4 ? h : heads[i]))); paintSplit(); markPages(); }
+          const el = $('#spReading'); if (el) el.remove();
+          if (sp.touched) toast('스캔 쪽 제목을 다 읽었습니다(직접 고친 것은 그대로 둠).', 'ok');
+        })();
+      }
     } catch (e) { if (tok === sp.tok) $('#spRows').innerHTML = `<p class="warn-t small">이 파일을 읽지 못했습니다: ${esc(e.message)}</p>`; }
   }
   // 쪽마다 서류 찾기: 배운 규칙(내가 고친 것·동료에게서 받은 것)이 먼저, 없으면 찾는 말
@@ -2210,7 +2234,17 @@
     for (let i = 0; i < a.length; i++) { let j = i; while (j + 1 < a.length && a[j + 1] === a[j] + 1) j++; out.push(i === j ? `${a[i]}` : `${a[i]}~${a[j]}`); i = j; }
     return out.length ? out.join(', ') + '쪽' : '쪽 없음';
   }
-  const firstPage = (r) => (r.pages.length ? Math.min(...r.pages) : 1e9);
+  const firstPage = (r) => (r.pages.length ? Math.min(...r.pages) : r.slot != null ? r.slot : 1e9); // 쪽이 아직 없는 새 줄은 넣은 자리(slot)
+  // 쪽 번호 직접 쓰기: '3-5, 8, 10~12' → [3,4,5,8,10,11,12] (1~전체 쪽 안에서만)
+  function parsePages(t, n) {
+    const out = new Set();
+    for (const part of String(t || '').replace(/쪽/g, '').split(/[,\s]+/).filter(Boolean)) {
+      const m = part.match(/^(\d+)(?:\s*[-~]\s*(\d+))?$/); if (!m) return null;
+      let a = +m[1], b = m[2] ? +m[2] : a; if (a > b) [a, b] = [b, a];
+      for (let p = a; p <= b; p++) if (p >= 1 && p <= n) out.add(p);
+    }
+    return [...out].sort((x, y) => x - y);
+  }
   // 나누기 화면: 왼쪽은 서류 줄(쪽 묶음 + 서류 종류), 오른쪽은 쪽 그림.
   // 서류 줄을 고르고 쪽 그림을 누르면 그 쪽이 그 서류로(Shift+누르기 = 범위). 떨어진 쪽도 한 서류로 묶을 수 있음
   // 나눌 때 직접 쓴 서류 이름: 이 PC에 기억(동료와 나누지 않음) → 다음에 치면 자동완성, 고르면 그때 고른 서류 종류도 같이
@@ -2272,7 +2306,7 @@
     for (const r of sp.rows) if (r.name == null && r.pages.length) { const h = pageHead(Math.min(...r.pages)); const m = h && splitNames().find((x) => x.head === h && (!r.item || !x.item || x.item === L.suffixOf(r.item))); if (m) { r.name = m.name; r.nameAuto = true; if (!r.item) r.item = itemForName(list, m.name); } }
     fillSpNames();
     $('#spRows').innerHTML = (sp.rows.length ? '' : '<p class="muted small">잘라 낼 서류가 없습니다. [+ 새 서류]를 누르고 종류를 고른 뒤 쪽을 누르세요.</p>') + sp.rows.map((r, i) => `<div class="sp-row${r === sp.act ? ' on' : ''}" data-spi="${i}">
-      <div class="sp-pg"><span class="sp-no">${i + 1}</span><b class="sp-pages">${pagesText(r.pages)}</b>${r.item && r.item === r.sugg ? ' <small class="muted">제목으로 찾음</small>' : ''}<button type="button" class="x" data-spdel="${i}" title="이 서류 빼기(쪽은 앞 서류에 붙고, 앞 서류가 없으면 원래 파일에 남음)" aria-label="이 서류 빼기">✕</button></div>
+      <div class="sp-pg"><span class="sp-no">${i + 1}</span><input type="text" class="sp-pin" data-spf="pages" value="${r.pages.length ? esc(pagesText(r.pages).replace(/쪽$/, '')) : ''}" placeholder="예: 3-5, 8" title="쪽 번호를 직접 쓸 수 있음(예: 3-5, 8). 쓰고 Enter" aria-label="쪽 번호">쪽${r.item && r.item === r.sugg ? ' <small class="muted">제목으로 찾음</small>' : ''}<button type="button" class="link sm" data-spadd="${i}" title="이 서류 바로 아래에 새 서류 줄 넣기">+ 아래에</button><button type="button" class="x" data-spdel="${i}" title="이 서류 빼기(쪽은 앞 서류에 붙고, 앞 서류가 없으면 원래 파일에 남음)" aria-label="이 서류 빼기">✕</button></div>
       <div class="cpick"><input type="search" class="cpick-q" placeholder="서류 찾기(예: 재해율, 보험)" autocomplete="off" aria-label="서류 찾기"><select data-spf="item" data-autopick aria-label="서류 종류">${itemOptions(list, r.item, false)}</select></div>
       <input type="text" class="sp-nm" data-spf="name" list="spNames" autocomplete="off" value="${esc(r.name || '')}" placeholder="서류 이름 직접 쓰기(비우면 서류 종류 이름)" aria-label="서류 이름" title="저장할 파일 이름. 쓴 이름은 기억해 다음에 치면 자동완성되고, 같은 제목 쪽에는 미리 채웁니다">${r.nameAuto ? '<small class="muted">전에 쓴 이름</small>' : ''}
     </div>`).join('');
@@ -2313,7 +2347,7 @@
         await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
         const fig = document.createElement('div'); fig.className = 'sp-pgv'; fig.dataset.p = p;
         fig.title = `${p}쪽 — 누르면 고른 서류 줄로 넣음(Shift+누르기 = 앞에 누른 쪽부터 여기까지), 두 번 누르면 이 쪽부터 새 서류로 자름`;
-        fig.append(cv); fig.insertAdjacentHTML('beforeend', `<b>${p}</b><small></small>`);
+        fig.append(cv); fig.insertAdjacentHTML('beforeend', `<b>${p}</b><button type="button" class="sp-zbtn" data-zoom="${p}" title="${p}쪽 크게 보기">🔍</button><small></small>`);
         $('#spView').append(fig); markPages();
       }
     } finally { doc.destroy(); }
@@ -2337,6 +2371,14 @@
     const row = e.target.closest('[data-spi]'); if (!row) return;
     const r = sp.rows[+row.dataset.spi]; if (!r) return;
     if (e.target.dataset.spf === 'item') { r.item = e.target.value || null; markPages(); }
+    if (e.target.dataset.spf === 'pages') {
+      const ps = parsePages(e.target.value, sp.n);
+      if (!ps) { toast('쪽 번호는 "3-5, 8"처럼 써 주세요.', 'err'); e.target.value = r.pages.length ? pagesText(r.pages).replace(/쪽$/, '') : ''; return; }
+      for (const x of sp.rows) if (x !== r) x.pages = x.pages.filter((p) => !ps.includes(p));
+      r.pages = ps; if (!ps.length) r.slot = r.slot != null ? r.slot : 1e9; sp.act = r;
+      sp.rows = sp.rows.filter((x) => x === r || x.pages.length || x.slot != null);
+      paintSplit(); markPages(true);
+    }
     if (e.target.dataset.spf === 'name') {
       r.name = e.target.value.trim(); r.nameAuto = false;
       const it = itemForName(classList(db.contracts[sp.doc.key]), r.name);
@@ -2345,7 +2387,10 @@
     }
   });
   $('#spRows').addEventListener('input', (e) => { if (e.target.dataset.spf !== 'name') return; const r = sp.rows[+e.target.closest('[data-spi]').dataset.spi]; if (r) { r.name = e.target.value.trim(); r.nameAuto = false; } });
+  $('#spRows').addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.dataset && e.target.dataset.spf === 'pages') { e.preventDefault(); e.target.blur(); } });
   $('#spRows').addEventListener('click', (e) => {
+    const ad = e.target.closest('[data-spadd]');
+    if (ad) { const r = sp.rows[+ad.dataset.spadd]; if (!r) return; const base = r.pages.length ? Math.max(...r.pages) : (r.slot || 0); const nr = { pages: [], item: null, sugg: undefined, slot: base + 0.5 }; sp.rows.push(nr); sp.act = nr; paintSplit(); setTimeout(() => { const el = $(`#spRows .sp-row.on .cpick-q`); if (el) el.focus(); }, 30); return; }
     const x = e.target.closest('[data-spdel]');
     if (x) { const i = +x.dataset.spdel, r = sp.rows[i], to = sp.rows[i - 1] || sp.rows[i + 1]; if (to && !e.shiftKey) to.pages = [...to.pages, ...r.pages].sort((a, b) => a - b); sp.rows.splice(i, 1); sp.act = to || sp.rows[0] || null; paintSplit(); return; }
     const row = e.target.closest('[data-spi]'); if (!row) return;
@@ -2375,6 +2420,50 @@
   };
   $('#spCancel').onclick = () => { sp.tok++; $('#dlgSplit').close(); };
   // 나누기 화면을 닫으면(나눴든 안 나눴든) 확인하던 다음 파일로 이어짐
+  // 사람이 나눌 안을 손댔는지(뒤에서 제목을 다 읽어도 덮어쓰지 않게)
+  ['click', 'change'].forEach((ev) => $('#dlgSplit').addEventListener(ev, (e) => { const t = e.target; if (t.closest && !t.closest('[data-zoom]') && t.closest('#spRows, #spView, #spAddRow, #spClear')) sp.touched = true; }, true));
+  // ---- 나누기 화면에서 쪽 크게 보기: 마우스를 올리면 옆에 크게(잠깐 멈추면), 🔍를 누르면 화면 가득(◀▶·Esc) ----
+  const zcache = new Map(); let zdocP = null, zdocBytes = null, hoverT = 0, zoomP = 0, hoverOn = null;
+  function zdoc() {
+    if (!zdocP || zdocBytes !== sp.bytes) { zcache.clear(); zdocBytes = sp.bytes; zdocP = JH.lib('pdfjs').then((lib) => lib.getDocument({ data: sp.bytes.slice(), isEvalSupported: false, cMapUrl: 'vendor/pdfjs/cmaps/', cMapPacked: true }).promise); }
+    return zdocP;
+  }
+  async function zoomCanvas(p, w) {
+    const k = p + ':' + w; if (zcache.has(k)) return zcache.get(k);
+    const job = (async () => { const doc = await zdoc(); const page = await doc.getPage(p); const v1 = page.getViewport({ scale: 1 }); const vp = page.getViewport({ scale: w / v1.width }); const cv = document.createElement('canvas'); cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height); await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise; return cv; })();
+    zcache.set(k, job); return job;
+  }
+  function hideHover() { clearTimeout(hoverT); const h = $('#spHover'); h.hidden = true; h.innerHTML = ''; }
+  $('#spView').addEventListener('mouseover', (e) => {
+    const f = e.target.closest('.sp-pgv'); if (!f || !$('#spZoom').hidden) return;
+    hoverOn = f;
+    if (f.dataset.p === $('#spHover').dataset.p && !$('#spHover').hidden) return;
+    clearTimeout(hoverT);
+    hoverT = setTimeout(async () => {
+      const p = +f.dataset.p; const r = f.getBoundingClientRect(); const W = Math.min(560, Math.max(380, window.innerWidth * 0.36));
+      const cv = await zoomCanvas(p, Math.round(W * 1.5)); if (hoverOn !== f || !$('#spZoom').hidden) return;
+      const h = $('#spHover'); h.dataset.p = p; h.innerHTML = `<b>${p}쪽</b>`; const c2 = cv.cloneNode(); c2.getContext('2d').drawImage(cv, 0, 0); h.append(c2);
+      h.style.width = W + 'px'; h.hidden = false;
+      const left = r.right + 12 + W < window.innerWidth ? r.right + 12 : Math.max(8, r.left - W - 12);
+      const hh = W * (cv.height / cv.width) + 30; h.style.left = left + 'px'; h.style.top = Math.max(8, Math.min(r.top, window.innerHeight - hh - 8)) + 'px';
+    }, 450);
+  });
+  $('#spView').addEventListener('mouseout', (e) => { const f = e.target.closest('.sp-pgv'); if (f && !f.contains(e.relatedTarget)) { if (hoverOn === f) hoverOn = null; hideHover(); } });
+  $('#spView').addEventListener('scroll', hideHover, { passive: true });
+  async function showZoom(p) {
+    if (!sp.n) return; zoomP = Math.max(1, Math.min(sp.n, p)); hideHover();
+    const z = $('#spZoom'); z.hidden = false; $('#spZNo').textContent = `${zoomP} / ${sp.n}쪽`; $('#spZPrev').disabled = zoomP <= 1; $('#spZNext').disabled = zoomP >= sp.n;
+    const body = $('#spZBody'); body.innerHTML = '<p class="muted">불러오는 중…</p>';
+    const cv = await zoomCanvas(zoomP, Math.min(1400, Math.round(body.clientWidth * (window.devicePixelRatio || 1)) || 1000));
+    if (z.hidden) return; body.innerHTML = ''; const c2 = cv.cloneNode(); c2.getContext('2d').drawImage(cv, 0, 0); body.append(c2);
+  }
+  const hideZoom = () => { $('#spZoom').hidden = true; $('#spZBody').innerHTML = ''; };
+  document.addEventListener('click', (e) => { const z = e.target.closest && e.target.closest('[data-zoom]'); if (z) { e.preventDefault(); e.stopPropagation(); showZoom(+z.dataset.zoom); } }, true);
+  $('#spZPrev').onclick = () => showZoom(zoomP - 1); $('#spZNext').onclick = () => showZoom(zoomP + 1); $('#spZClose').onclick = hideZoom;
+  $('#spZBody').addEventListener('click', hideZoom);
+  $('#dlgSplit').addEventListener('cancel', (e) => { if (!$('#spZoom').hidden) { e.preventDefault(); hideZoom(); } });
+  $('#dlgSplit').addEventListener('keydown', (e) => { if ($('#spZoom').hidden) return; if (e.key === 'ArrowLeft') { e.preventDefault(); showZoom(zoomP - 1); } else if (e.key === 'ArrowRight') { e.preventDefault(); showZoom(zoomP + 1); } });
+  $('#dlgSplit').addEventListener('close', () => { hideHover(); hideZoom(); zcache.clear(); if (zdocP) { zdocP.then((d) => d.destroy()).catch(() => {}); zdocP = null; zdocBytes = null; } });
   $('#dlgSplit').addEventListener('close', () => { sp.tok++; const rest = sp.resume || []; sp.resume = null; if (rest.length) askLater(rest); });
   $('#spSave').onclick = async () => {
     checkSplitUi(); if ($('#spSave').disabled) return;
@@ -2425,7 +2514,15 @@
     } catch (e) { console.error(e); toast('나누지 못했습니다: ' + e.message, 'err'); }
     finally { progress(null); checkSplitUi(); }
   };
-  $('#pvSplit') && ($('#pvSplit').onclick = () => { const d = docById(pv.ids[pv.i]); if (d) openSplit(d); });
+  $('#pvSplit') && ($('#pvSplit').onclick = async () => {
+    const d = docById(pv.ids[pv.i]); if (!d) return;
+    if (!d.key || !db.contracts[d.key]) {
+      const key = $('#pvContract').value;
+      if (!key) { toast('먼저 위에서 어느 계약 서류인지 고르세요. 계약을 고르면 바로 나눌 수 있습니다.', 'err'); $('#pvSearch').focus(); return; }
+      await recorded(`「${d.name}」 정리`, [null, key], [d.id], () => moveDoc(d, key, $('#pvItem').value || null, true)); delete d.cands;
+    }
+    openSplit(d);
+  });
   $('#pvPrev').onclick = () => { if (pv.i > 0) { pv.i--; showPreview(); } };
   // 확인 팝업을 다 마치면(닫으면) 마지막으로 저장한 서류의 계약 화면으로 이동
   $('#dlgPreview').addEventListener('close', async () => {
@@ -2526,7 +2623,7 @@
         ${docs.map((d) => `<tr class="inbox-row"><td><div class="nm">${esc(d.name)}</div><div class="sub">${KIND_LABEL[d.kind]}${d.ocr ? ' · 스캔 인식' : ''} · ${esc(L.fmtDate(d.addedAt))}</div></td>
           <td class="sub">${esc([d.meta && d.meta.name, d.meta && d.meta.vendor].filter(Boolean).join(' / ') || (d.text ? d.text.slice(0, 40) + '…' : '읽을 수 있는 글자가 없음'))}</td>
           <td>${contractPicker(`<select data-act="assign" data-doc="${d.id}" aria-label="계약">${contractOptions('', (d.cands || []).filter((k) => db.contracts[k]))}</select>`)}${(d.cands || []).filter((k) => db.contracts[k]).length ? `<div class="sub rec-t">추천: ${esc(db.contracts[(d.cands || []).find((k) => db.contracts[k])].name)}${d.cands.length > 1 ? ` 외 ${d.cands.length - 1}` : ''} — 목록 맨 위</div>` : ''}</td>
-          <td style="white-space:nowrap"><button class="link" data-act="view" data-doc="${d.id}">보기</button> &nbsp; <button class="btn sm ghost" data-act="del" data-doc="${d.id}" title="우리 서류가 아니면 버림(_삭제됨으로 옮김, 되돌리기 가능)">버리기</button></td></tr>`).join('')}
+          <td style="white-space:nowrap"><button class="link" data-act="view" data-doc="${d.id}">보기</button>${splittable(d) ? ` &nbsp; <button class="link" data-act="split" data-doc="${d.id}" title="여러 서류가 든 파일이면 서류마다 잘라 넣음(먼저 계약을 고르세요)">나누기</button>` : ''} &nbsp; <button class="btn sm ghost" data-act="del" data-doc="${d.id}" title="우리 서류가 아니면 버림(_삭제됨으로 옮김, 되돌리기 가능)">버리기</button></td></tr>`).join('')}
         </tbody></table>` : `<div class="empty-line">미분류 서류가 없습니다.</div>`}`;
   }
 
