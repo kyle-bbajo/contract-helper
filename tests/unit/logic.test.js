@@ -310,3 +310,14 @@ test('저장하는 서류 글자에서 주민등록번호·휴대전화·카드�
   assert.match(t, /800101-\*{7}/); assert.match(t, /010-\*{4}-5678/); assert.match(t, /123-45-67890/); assert.match(t, /R26BK01234567-00/); assert.match(t, /1234-\*{4}-\*{4}-3456/);
   assert.match(L.maskPrivate(L.norm('주민번호 8001011234567')), /800101\*{7}/);
 });
+
+test('노무비 서류: 파일 이름·제목으로 각 칸', () => {
+  const d = L.defaultChecklists();
+  for (const t of ['공사', '용역']) {
+    const k = t === '공사' ? 'c' : 's';
+    const want = { '노무비 구분관리 및 지급확인제 합의서.pdf': 'laborconfirm', '공사 노무비 구분관리 및 지급 확인 적용 제외 신청서.pdf': 'laborconfirm', '노무비 개인정보 이용 동의서.pdf': 'laborpriv',
+      '노무비 미체불 확약서.pdf': 'nounpaid', '노무비 지급명세서.pdf': 'laborlist', '노무비 지급내역서.pdf': 'laborlist' };
+    for (const [n, suf] of Object.entries(want)) assert.equal(L.classifyItem(d[t], n, ''), `${k}-${suf}`, `${t} ${n}`);
+    assert.equal(L.classifyItem(d[t], 'scan001.pdf', L.norm('노 무 비 구 분 관 리 및 지 급 확 인 제 합 의 서')), `${k}-laborconfirm`);
+  }
+});

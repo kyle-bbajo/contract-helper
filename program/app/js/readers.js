@@ -100,6 +100,14 @@
     g.translate(c.width / 2, c.height / 2); g.rotate((deg * Math.PI) / 180); g.drawImage(src, -src.width / 2, -src.height / 2);
     return c;
   }
+  // 화면을 찍은 사진·망점 스캔(모아레·점무늬)은 그대로면 글자를 거의 못 읽고 아주 느림 → 흑백 + 살짝 흐리게 해서 점무늬를 지우고 읽음
+  function cleaned(src) {
+    const c = document.createElement('canvas'); c.width = src.width; c.height = src.height;
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+    g.filter = `grayscale(1) blur(${Math.max(0.8, Math.max(src.width, src.height) / 1400).toFixed(2)}px)`;
+    g.drawImage(src, 0, 0); g.filter = 'none';
+    return c;
+  }
   // 글자 품질: tesseract 신뢰도 + 한글 낱말(두 글자 이상 이어진 한글) 비율
   function quality(data) {
     const t = String((data && data.text) || '');
@@ -116,7 +124,8 @@
     try {
       const w = await getOcr();
       const readPage = async (n) => {
-        const canvas = await firstPageCanvas(bytes, kind, type, n); if (!canvas) return null;
+        const raw = await firstPageCanvas(bytes, kind, type, n); if (!raw) return null;
+        const canvas = cleaned(raw); // 점무늬 지운 그림으로 읽음(망점 스캔은 그대로면 1분 넘게 걸리고 거의 못 읽음, 지우면 몇 초)
         let best = await recognize(w, canvas);
         if (best.conf < 75) {
           for (const deg of [180, 90, 270]) {
@@ -212,7 +221,7 @@
             const top = document.createElement('canvas'); top.width = c.width; top.height = Math.ceil(c.height * 0.3);
             top.getContext('2d').drawImage(c, 0, 0);
             const w = await getOcr();
-            const { data } = await withTimeout(w.recognize(top), 60000, '글자 인식');
+            const { data } = await withTimeout(w.recognize(cleaned(top)), 60000, '글자 인식'); // 점무늬 지우고 읽음
             lines = String(data.text || '').split(/\n+/).map((x) => x.trim()).filter(Boolean).slice(0, 8);
             head = String(data.text || '').replace(/\s+/g, ' ').trim();
           } catch (e) { console.warn('쪽 글자 인식 실패', p, e); }

@@ -34,7 +34,7 @@
   const WIN = Math.random().toString(36).slice(2, 10), ROLE = ONLY === 'notice' ? 'notice' : 'main';
   const ui = { view: 'home', sel: null, q: '', officer: '', officerTouched: false, type: '', state: '', board: '', sort: (() => { try { return localStorage.getItem('jh.sort') || 'end-desc'; } catch (_) { return 'end-desc'; } })() };
 
-  const CHECKLIST_VER = 10; // 10: 준공계·준공검사원을 두 칸으로, 준공검사원 지정통보는 필수 아님 · 9: 노무비 지급확인제 → 공사 노무비 구분관리 및 지급확인 적용제외 신청서(합의서도 이 칸) // (지난 것) 4: 선금 보증서 · 5: 준공검사원 지정통보 · 6: 사업장 가입내역 확인서(4대보험 가입증명서) 등 찾는 말 추가 · 7: 하도급 계약서·계약보증서는 그 밖의 계약 서류 · 8: 구매요구에 산업안전재해율 결과·안전보건관리계획서·적격수급업체 안전보건 수준 평가표(공사·용역)
+  const CHECKLIST_VER = 11; // 11: 노무비 미체불 확약서·지급 명세서 찾는 말 · 10: 준공계·준공검사원을 두 칸으로, 준공검사원 지정통보는 필수 아님 · 9: 노무비 지급확인제 → 공사 노무비 구분관리 및 지급확인 적용제외 신청서(합의서도 이 칸) // (지난 것) 4: 선금 보증서 · 5: 준공검사원 지정통보 · 6: 사업장 가입내역 확인서(4대보험 가입증명서) 등 찾는 말 추가 · 7: 하도급 계약서·계약보증서는 그 밖의 계약 서류 · 8: 구매요구에 산업안전재해율 결과·안전보건관리계획서·적격수급업체 안전보건 수준 평가표(공사·용역)
   const lists = (type) => (db.checklists && db.checklists[type]) || defaults[type] || defaults.공사;
   const contracts = () => Object.values(db.contracts).filter((c) => !c.archived);
   // 계약별 서류: 화면을 그리는 동안은 한 번 만든 색인(docIndex)으로 찾음(서류 수천 개여도 계약마다 다시 훑지 않음)
@@ -501,13 +501,20 @@
     const files = [...fileList].filter((f) => f && f.name && !f.name.startsWith('.') && !/^(thumbs\.db|desktop\.ini)$/i.test(f.name));
     if (!files.length) return;
     if (!S.online) { toast('바탕화면의 "계약업무 도우미" 아이콘으로 실행해야 서류를 저장할 수 있습니다.', 'err'); return; }
+    // 여러 파일을 올리고 하나씩 확인할 때: 다 읽을 때까지 기다리지 않고 한 파일씩 읽어 바로 팝업 — 확인하는 동안 나머지는 뒤에서 읽어 팝업 뒤에 붙임
+    if (!opt.one && files.length > 1 && !opt.onlyMatched && cfg.uploadConfirm !== false) {
+      const order = [...files].sort((a, b) => (/계약서/.test(b.name) - /계약서/.test(a.name))); // 계약서 먼저(계약을 먼저 찾게)
+      for (let i = 0; i < order.length; i++) await ingest([order[i]], forceKey, forceItem, { ...opt, one: { i, n: order.length } });
+      toast(`${order.length}개 파일을 모두 읽었습니다.${$('#dlgPreview').open ? ' 확인 팝업에서 차례로 확인하세요.' : ''}`, 'ok', undoAction());
+      return;
+    }
     const recs = []; let skipped = 0; const dupWhere = []; const again = [];
     const snap0 = snapshot([], [], true);
     try {
       // 1) 읽기
       for (let i = 0; i < files.length; i++) {
         const f = files[i];
-        progress(`내용 읽는 중 ${i + 1}/${files.length}`, i / files.length);
+        progress(opt.one ? `내용 읽는 중 ${opt.one.i + 1}/${opt.one.n}${$('#dlgPreview').open ? ' — 확인하는 동안 뒤에서 읽음' : ''}` : `내용 읽는 중 ${i + 1}/${files.length}`, opt.one ? opt.one.i / opt.one.n : i / files.length);
         const dup = db.docs.find((d) => d.name === f.name && d.size === f.size);
         // 이미 올린 파일: 다 정리된 것만 건너뜀. 종류를 못 정했거나 확인 필요·미분류이면 다시 보고, 다른 계약에 놓았으면 그 계약으로 옮김
         if (dup) {
@@ -663,7 +670,7 @@
       const unsure = [...recs.filter((r) => !r.ignored).map((r) => r.id), ...again.map((d) => d.id)].filter((id) => db.docs.some((d) => d.id === id && (confirmAll || !d.key || !d.itemId || d.unsure || d.revOf)));
       const nLearned = recs.filter((r) => r.learned).length;
       if (nLearned) msg += ` ${nLearned}개는 전에 배운 대로 넣었습니다.`;
-      toast(msg, inbox ? '' : 'ok', unsure.length ? { label: '확인하기', run: () => openPreview(unsure, 0, true) } : recs.length || again.length ? undoAction() : null);
+      if (!opt.one) toast(msg, inbox ? '' : 'ok', unsure.length ? { label: '확인하기', run: () => openPreview(unsure, 0, true) } : recs.length || again.length ? undoAction() : null);
       if (unsure.length) askLater(unsure);
       const keys = Object.keys(byContract);
       if (!forced && !opt.onlyMatched && keys.length === 1) ui.sel = keys[0]; // 폴더에서 자동으로 읽은 것은 보던 계약 화면을 바꾸지 않음
