@@ -3018,11 +3018,14 @@
   });
   $('#btnUndo').onclick = () => undo();
   // 종료: 프로그램(뒤의 연결 창구)까지 끔. 다른 창(공고문 창)도 같이 닫힘
+  // (묻지 않고 바로 끔 — 저장은 이미 돼 있고, 다시 쓰려면 바탕화면 아이콘. 공고문 창에서 누르면 원래 창도 같이 꺼짐)
   $('#btnExit').onclick = async () => {
-    if (!confirm(ROLE === 'notice' ? '프로그램을 끌까요? 원래 창도 같이 꺼집니다. (이 창만 닫으려면 오른쪽 위 X)' : '프로그램을 끌까요? 다시 쓰려면 바탕화면의 계약업무 도우미를 누르세요.')) return;
+    const b = $('#btnExit'); b.disabled = true;
     try { await saveDb(true); } catch (_) {}
     try { await S.quit(); } catch (_) {}
-    window.close(); setTimeout(() => banner('프로그램을 껐습니다. 이 창을 닫아 주세요.'), 500);
+    try { window.close(); } catch (_) {}
+    // 창을 스크립트로 못 닫는 경우(브라우저가 막음): 화면을 '꺼짐'으로 바꿔 둠
+    setTimeout(() => { document.body.innerHTML = '<div style="display:grid;place-items:center;height:100vh;font:16px/1.6 sans-serif;color:#333;text-align:center"><div><b style="font-size:20px">계약업무 도우미를 껐습니다</b><br>이 창은 오른쪽 위 X로 닫으세요. 다시 쓰려면 바탕화면의 계약업무 도우미를 누르세요.</div></div>'; }, 400);
   };
   // 공고문을 새 창으로: 공고문 전용 창을 열고 이 창은 계약 서류 쪽으로
   $('#btnNoticeWin').onclick = async () => {
