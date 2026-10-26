@@ -208,7 +208,6 @@
     async open() { throw new Error('시연판에서는 폴더를 열 수 없습니다. 실제 프로그램은 탐색기로 엽니다.'); },
     async openFile(path) { await showFile(norm(path)); return { ok: true }; },
     async printFile(path) { await showFile(norm(path)); return { ok: true, how: 'open' }; },
-    async printFile(path) { await showFile(norm(path)); return { ok: true, how: 'open' }; },
     async view(path) { await showFile(norm(path)); },
     async pickFolder() { throw new Error('시연판에서는 폴더를 바꿀 수 없습니다.'); },
     async quit() { return { ok: true }; },
