@@ -1206,6 +1206,39 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   }
   step('칸에 직접 넣으면 묻지 않음 · 계약을 정해 넣은 것은 팝업을 넘겨도 미분류로 안 감');
 
+  // 여러 파일·여러 확장자(PDF·한글·엑셀·옛 엑셀·워드·그림·텍스트)를 한 번에 올려도 하나씩 팝업으로 차례로 뜸
+  {
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    await page.evaluate(async () => { JH.app.cfg.uploadConfirm = true; await JH.app.saveCfg(); });
+    const one = Buffer.from(await (async () => { const d = await PDFDocument.create(); d.addPage(); return d.save(); })());
+    const xls = readFileSync(new URL('../fixtures/old-estimate.xls', import.meta.url));
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+    const files = [
+      { name: '여러개_시청사 옥상 방수공사_준공사진.pdf', mimeType: 'application/pdf', buffer: one },
+      { name: '여러개_착공계.hwp', mimeType: 'application/octet-stream', buffer: hwpBytes(['착 공 계', '공사명 시청사 옥상 방수공사']) },
+      { name: '여러개_견적서.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: xlsx },
+      { name: '여러개_견적서_옛.xls', mimeType: 'application/vnd.ms-excel', buffer: xls },
+      { name: '여러개_사진.png', mimeType: 'image/png', buffer: png },
+      { name: '여러개_메모.txt', mimeType: 'text/plain', buffer: Buffer.from('메모') },
+    ];
+    const [fcm] = await Promise.all([page.waitForEvent('filechooser'), page.click('#btnAdd')]);
+    await fcm.setFiles(files);
+    await page.waitForSelector('#dlgPreview[open]', { timeout: 60000 });
+    const seen = new Set();
+    for (let k = 0; k < 40 && seen.size < files.length; k++) {
+      if (!(await page.evaluate(() => document.querySelector('#dlgPreview').open))) { await page.waitForTimeout(1000); continue; }
+      seen.add((await page.textContent('#pvName')).trim());
+      if (!(await page.$eval('#pvItem', (x) => x.disabled)) && !(await page.inputValue('#pvItem'))) await page.selectOption('#pvItem', { index: 1 });
+      if (!(await page.inputValue('#pvContract'))) await page.fill('#pvSearch', '방수');
+      await page.click('#pvSave'); await page.waitForTimeout(500);
+    }
+    assert.deepEqual([...seen].sort(), files.map((f) => f.name).sort(), '여섯 파일 모두 차례로 팝업: ' + JSON.stringify([...seen]));
+    await waitFor(async () => !(await page.isVisible('#progress')), 30000, '정리 끝');
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    await page.evaluate(async () => { JH.app.cfg.uploadConfirm = false; await JH.app.saveCfg(); });
+  }
+  step('여러 파일·여러 확장자(PDF·한글·엑셀·옛 엑셀·그림·텍스트)를 한 번에 올려도 하나씩 차례로 확인 팝업');
+
 
   // 뒤로: 현황판 → 계약을 눌러 넘어간 뒤 [←]면 다시 현황판 · 현황판에서 가운데 버튼이면 새 탭(보던 화면 그대로)
   {
