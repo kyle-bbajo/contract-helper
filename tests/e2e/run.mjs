@@ -285,20 +285,18 @@ try {
   await page.check('.row[data-drop-item="c-estimate"] [data-act="noprint"]');
   await waitFor(async () => !/뺌/.test(await page.textContent('[data-act="print"]')), 5000, '다시 넣기');
   step('서류 줄마다 [인쇄] 체크: 빼면 한 번에 인쇄·PDF·표지에서 빠짐, 다시 체크하면 들어감');
-  // 내려받는 폴더에 파일이 들어오면(받는 중 → 다 받음) 자동으로 계약·서류 종류를 찾아 정리, 원래 파일은 그대로
+  // 자동으로 읽을 폴더 기능은 뺌: 예전에 더해 둔 폴더(local.json watchDirs)에 파일이 들어와도 읽지 않고, 설정에도 없음 · 서류는 직접 올리기로
   {
     const pdf = Buffer.from(await (async () => { const d = await PDFDocument.create(); d.addPage(); d.addPage(); return d.save(); })());
-    writeFileSync(join(WATCH, '시청사 옥상 방수공사_준공사진대지.pdf.crdownload'), pdf.subarray(0, 50)); // 받는 중
-    await new Promise((r) => setTimeout(r, 6000));
-    assert.ok(!(await page.evaluate(() => JH.app.db.docs.some((d) => /준공사진대지/.test(d.name)))), '받는 중인 파일은 아직');
-    renameSync(join(WATCH, '시청사 옥상 방수공사_준공사진대지.pdf.crdownload'), join(WATCH, '시청사 옥상 방수공사_준공사진대지.pdf')); writeFileSync(join(WATCH, '시청사 옥상 방수공사_준공사진대지.pdf'), pdf);
-    await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => /준공사진대지/.test(d.name))), 30000, '폴더에서 자동으로 읽기');
-    // 폴더 더하기: 경로를 붙여 넣어도 됨(고르기 창이 안 보일 때), 없는 경로는 알려 줌
-    const added = await page.evaluate(async (d) => { const r = await JH.server.watchPick({ dir: d }); let bad = ''; try { await JH.server.watchPick({ dir: d + '_없음' }); } catch (e) { bad = e.message; } return { n: r.dirs.length, bad }; }, WATCH2);
-    assert.equal(added.n, 2, '이미 있는 폴더는 한 번만'); assert.match(added.bad, /폴더가 없습니다/);
+    writeFileSync(join(WATCH, '시청사 옥상 방수공사_준공사진대지.pdf'), pdf);
+    await new Promise((r) => setTimeout(r, 7000));
+    assert.ok(!(await page.evaluate(() => JH.app.db.docs.some((d) => /준공사진대지/.test(d.name)))), '폴더에 들어온 파일은 자동으로 읽지 않음');
+    assert.ok(!(await page.$('#watchList')) && !(await page.$('#btnWatchAll')), '설정에 자동으로 읽을 폴더 없음');
+    assert.equal((await page.evaluate(() => JH.server.watch())).dirs.length, 0, '예전에 더한 폴더 목록도 비움');
+    await page.evaluate(async (b64) => { const b = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)); await JH.app.ingest([new File([b], '시청사 옥상 방수공사_준공사진대지.pdf', { type: 'application/pdf' })], null, null); }, pdf.toString('base64'));
+    await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => /준공사진대지/.test(d.name))), 30000, '직접 올리기');
     const w = await page.evaluate(() => { const d = JH.app.db.docs.find((x) => /준공사진대지/.test(x.name)); return { c: JH.app.db.contracts[d.key].name, item: d.itemId }; });
     assert.deepEqual(w, { c: '시청사 옥상 방수공사', item: 'c-photo' });
-    assert.ok(existsSync(join(WATCH, '시청사 옥상 방수공사_준공사진대지.pdf')), '원래 파일은 그대로');
     // 정리된 사본은 "서류명_계약명" 이름으로 계약 폴더에, 뜻 없는 원래 이름(noname)은 붙이지 않음
     const cp = await page.evaluate(() => JH.app.db.docs.find((x) => /준공사진대지/.test(x.name)).path);
     assert.match(cp, /^계약\/.+\/준공\/1_준공사진대지_시청사 옥상 방수공사\.pdf$/, cp); // 계약 폴더\준공\단계 번호_서류명
@@ -307,23 +305,13 @@ try {
     assert.match(lay.contract, /\/0 계약\/2_계약서_/, JSON.stringify(lay)); assert.match(lay.inspect, /\/준공\/3_지방세 납세증명서_/, JSON.stringify(lay));
     const nn = await page.evaluate(() => (JH.app.db.docs.find((x) => x.name === 'noname(1).pdf') || {}).path || '');
     assert.ok(!nn || !/noname/.test(nn.split('/').pop()), 'noname 이름은 바꿈: ' + nn);
-    await new Promise((r) => setTimeout(r, 6000));
-    assert.equal(await page.evaluate(() => JH.app.db.docs.filter((d) => /준공사진대지/.test(d.name)).length), 1, '한 번 읽은 파일은 다시 안 읽음');
-    await page.click('#btnSettings'); await page.click('#dlgSettings .dlg-tabs button[data-tab="folder"]');
-    // 두 번째 폴더 + 계약과 상관없는 파일(다른 기관 공고문)은 가져오지 않음
-    writeFileSync(join(WATCH2, '익산시 사업장폐기물 입찰공고문.pdf'), Buffer.from(await (async () => { const d = await PDFDocument.create(); d.addPage(); d.addPage(); d.addPage(); return d.save(); })()));
-    writeFileSync(join(WATCH2, '체육관 시설 청소 용역_준공계.pdf'), Buffer.from(await (async () => { const d = await PDFDocument.create(); d.addPage(); d.addPage(); d.addPage(); d.addPage(); return d.save(); })()));
-    await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => d.name === '체육관 시설 청소 용역_준공계.pdf')), 30000, '두 번째 폴더');
-    await new Promise((r) => setTimeout(r, 1500));
-    assert.ok(!(await page.evaluate(() => JH.app.db.docs.some((d) => /익산시/.test(d.name)))), '상관없는 공고문은 가져오지 않음(미분류에도 안 쌓임)');
-    // 말없이 버리지 않음: 알림([그래도 가져오기])과 최근 작업에 남김
-    await waitFor(() => page.evaluate(() => [...document.querySelectorAll('#toasts .toast')].some((t) => /익산시/.test(t.textContent) && /그래도 가져오기/.test(t.textContent))), 5000, '건너뜀 알림');
-    assert.ok(await page.evaluate(() => (JH.app.db.log || []).some((l) => /자동 읽기 건너뜀.*익산시/.test(l.text))), '최근 작업에 건너뜀 기록');
+    const pdf4 = Buffer.from(await (async () => { const d = await PDFDocument.create(); d.addPage(); d.addPage(); d.addPage(); d.addPage(); return d.save(); })());
+    await page.evaluate(async (b64) => { const b = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)); await JH.app.ingest([new File([b], '체육관 시설 청소 용역_준공계.pdf', { type: 'application/pdf' })], null, null); }, pdf4.toString('base64'));
+    await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => d.name === '체육관 시설 청소 용역_준공계.pdf')), 30000, '직접 올리기 2');
     await page.evaluate(() => document.querySelectorAll('#toasts .toast').forEach((t) => t.remove()));
-    const lt = await page.textContent('#watchList'); assert.match(lt, /계약서류/); assert.match(lt, /메일첨부/);
-    await page.keyboard.press('Escape');
+    await page.click('.citem:has-text("시청사 옥상 방수공사")'); await page.waitForTimeout(300);
   }
-  step('자동으로 읽을 폴더: 문서함·메일에서 내려받기만 하면(다 받아진 뒤) 계약·서류 종류를 찾아 정리, 원래 파일은 그대로·다시 안 읽음');
+  step('자동으로 읽을 폴더 기능 뺌: 폴더에 들어온 파일은 읽지 않고(예전에 더한 폴더도 비움) 직접 올린 서류는 계약 폴더에 "서류명_계약명"으로 정리');
 
   // ===== 메모(감독부서·감독관·연락처·특이사항)와 찾기 =====
   // 위 칸(지출요청일 | 메모, 아래 감사 자료)은 접혀 있고 펼치면 이 PC에 기억
@@ -1285,20 +1273,6 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   }
   step('묶음 파일: 한 칸 줄의 ✕는 그 칸에서만 빼고(파일·다른 칸 그대로), 함께 든 서류 줄의 ✕는 그 표시만 뺌');
 
-  // 자동으로 읽을 폴더 [폴더 안 파일 모두 읽기]: 폴더를 더하기 전부터 있던(오래된) 파일도 읽음 · 몇 초마다 보는 것은 새 파일만
-  {
-    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
-    const old = join(WATCH2, '예전부터있던_통장사본.pdf'); copyFileSync(join(DOCS, 'noname(3).pdf'), old);
-    const t0 = new Date(Date.now() - 400 * 864e5); utimesSync(old, t0, t0);
-    await page.waitForTimeout(7000); // 몇 초마다 보는 자동 읽기는 오래된 파일을 건너뜀
-    assert.ok(!(await page.evaluate(() => JH.app.db.docs.some((d) => d.name === '예전부터있던_통장사본.pdf'))), '오래된 파일은 자동으로는 안 읽음');
-    await page.click('#btnSettings'); await page.click('[data-tab="data"], [data-stab="data"], .tabs-h [data-tab="data"]').catch(() => {});
-    await page.evaluate(() => document.getElementById('btnWatchAll').click());
-    await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => d.name === '예전부터있던_통장사본.pdf')), 60000, '모두 읽기');
-    await waitFor(async () => !(await page.isVisible('#progress')), 30000, '정리 끝'); await page.waitForTimeout(800);
-    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
-  }
-  step('자동으로 읽을 폴더: [지금 읽기]·[폴더 안 파일 모두 읽기](폴더를 더하기 전부터 있던 파일도), [새로고침]도 새 파일을 읽음');
 
   // 올릴 때마다 확인 중 묶음 파일(착수계 묶음)이 오면 바로 '쪽별로 나누기' 화면 → 닫으면 다음 파일 확인으로
   {

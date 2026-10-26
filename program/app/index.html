@@ -178,23 +178,6 @@
         <button type="button" class="btn" id="btnOpenData">탐색기로 열기</button>
         <button type="button" class="btn" id="btnPickData">폴더 바꾸기</button>
       </div>
-      <h3 class="sub-h">자동으로 읽을 폴더</h3>
-      <p class="help">문서함·메일에서 서류를 내려받는 폴더(예: 다운로드)를 골라 두면, 프로그램이 켜져 있는 동안 몇 초마다 새 파일을 읽어 <b>우리 계약에 맞는 서류만</b> 사본을 만들어 계약별·서류 종류별로 정리합니다(이름도 "서류명_계약명"으로). 원래 파일은 그대로 두고, 계약과 상관없는 파일(다른 공고문·개인 파일 등)은 가져오지 않습니다. 폴더는 여러 개 골라도 됩니다.</p>
-      <ul class="watch-list" id="watchList"><li class="muted">꺼짐</li></ul>
-      <div class="watch-add"><button type="button" class="btn sm" id="btnWatchNow" title="자동으로 읽을 폴더에 새로 들어온 파일을 지금 읽음(다 받아지기를 기다리지 않음)">지금 읽기</button><button type="button" class="btn sm" id="btnWatchAll" title="폴더를 더하기 전부터 있던 파일까지 모두 읽음(이미 읽은 파일·같은 파일은 빼고). 계약과 상관없는 파일은 가져오지 않음">폴더 안 파일 모두 읽기</button><span class="muted small">[새로고침]을 눌러도 새로 들어온 파일을 읽습니다</span></div>
-      <label class="chk"><input type="checkbox" id="chkWatchConfirm"> 자동으로 가져온 서류는 넣은 뒤 확인 팝업으로 하나씩 보여 주기(맞으면 [이대로 저장], 틀리면 고르면 배움)</label>
-      <div class="watch-add">
-        <span class="muted small">바로 더하기</span>
-        <button type="button" class="btn sm" data-watchknown="downloads">다운로드 폴더</button>
-        <button type="button" class="btn sm" data-watchknown="desktop">바탕화면</button>
-        <button type="button" class="btn sm" data-watchknown="documents">문서</button>
-      </div>
-      <div class="watch-add">
-        <input type="text" id="watchPath" placeholder="폴더 경로 붙여 넣기 — 탐색기 주소창에서 복사(예: C:\Users\나\Downloads\계약서류)" autocomplete="off">
-        <button type="button" class="btn sm" id="btnWatchPath">이 경로 더하기</button>
-      </div>
-      <div class="dlg-actions"><button type="button" class="btn primary" id="btnWatchPick">찾아보기(폴더 고르기 창)</button></div>
-      <p class="help small" id="watchHint" hidden>폴더 고르기 창이 프로그램 창 뒤에 열렸을 수 있습니다. 아래 작업 표시줄을 보거나, 위 버튼·경로 붙여 넣기로 더하세요.</p>
     </div>
     <div class="tab" data-pane="lists">
       <div class="lists-head">

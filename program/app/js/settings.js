@@ -146,10 +146,10 @@
     } catch (e) { JH.app.toast('폴더를 더하지 못했습니다: ' + e.message, 'err'); }
   }
   // 고르기 창은 몇 초 안에 안 보이면 '창 뒤에 열렸을 수 있음' 안내
-  $('#btnWatchPick').onclick = async () => { const t = setTimeout(() => { $('#watchHint').hidden = false; }, 2500); try { await addWatch({ pick: '1' }); } finally { clearTimeout(t); $('#watchHint').hidden = true; } };
+  if ($('#btnWatchPick')) $('#btnWatchPick').onclick = async () => { const t = setTimeout(() => { $('#watchHint').hidden = false; }, 2500); try { await addWatch({ pick: '1' }); } finally { clearTimeout(t); $('#watchHint').hidden = true; } };
   document.addEventListener('click', (e) => { const b = e.target.closest('[data-watchknown]'); if (b) addWatch({ known: b.dataset.watchknown }); });
-  $('#btnWatchPath').onclick = () => { const v = $('#watchPath').value.trim().replace(/^"|"$/g, ''); if (!v) { $('#watchPath').focus(); return; } addWatch({ dir: v }).then(() => { $('#watchPath').value = ''; }); };
-  $('#watchList').addEventListener('click', async (e) => {
+  if ($('#btnWatchPath')) $('#btnWatchPath').onclick = () => { const v = $('#watchPath').value.trim().replace(/^"|"$/g, ''); if (!v) { $('#watchPath').focus(); return; } addWatch({ dir: v }).then(() => { $('#watchPath').value = ''; }); };
+  if ($('#watchList')) $('#watchList').addEventListener('click', async (e) => {
     const b = e.target.closest('[data-watchoff]'); if (!b) return;
     try {
       // 빼면 뒤 폴더 번호가 당겨지므로 본 기록의 번호도 맞춤

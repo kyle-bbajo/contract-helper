@@ -909,10 +909,10 @@
     } catch (e) { console.warn('자동 읽기', e); }
     finally { watch.busy = false; }
   }
+  // 자동으로 읽을 폴더 기능은 뺌(1.6.26) — 서류는 직접 올리기·끌어다 놓기로만. 예전에 더해 둔 폴더는 읽지 않고 목록도 비움
   function startWatch(dirs) {
-    watch.dirs = (dirs || []).filter(Boolean); clearInterval(watch.timer); watch.timer = null;
-    if (watch.dirs.length) { watch.timer = setInterval(watchTick, 5000); watchTick(); }
-    if (JH.settings && JH.settings.showWatch) JH.settings.showWatch(watch.dirs);
+    clearInterval(watch.timer); watch.timer = null; watch.dirs = [];
+    if ((dirs || []).filter(Boolean).length && S.watchClear) (async () => { try { for (let i = dirs.length - 1; i >= 0; i--) await S.watchClear(i); } catch (_) {} })();
   }
 
   // ---------- 켤 때 연결 확인 + 점심시간 자동 새로고침 ----------
@@ -3023,7 +3023,6 @@
   $('#btnFetch').onclick = async () => {
     try { await fetchContracts(); } catch (e) { console.warn(e); }
     try { progress('계약 폴더 다시 읽는 중', .5); await reconcile(); } catch (e) { console.warn('폴더 확인 실패', e); } finally { progress(null); render(); }
-    if (watch.dirs.length) { try { await watchTick({ now: true }); } catch (e) { console.warn('자동 읽기', e); } }
   };
   $('#btnNewContract').onclick = () => openContract(null);
   let pickTarget = null;
