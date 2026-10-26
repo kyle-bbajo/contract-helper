@@ -155,7 +155,9 @@
         </div>
         <div class="form-row">
           <label>내 이름 <span class="hint">나라장터의 계약 담당자명과 같게</span><input type="text" id="cfgOfficer" placeholder="예: 용도공"></label>
-          <label>불러올 기간<select id="cfgMonths"><option value="3">최근 3개월</option><option value="6">최근 6개월</option><option value="12">최근 1년</option><option value="24">최근 2년</option></select></label>
+          <label>불러올 기간<select id="cfgMonths"><option value="3">최근 3개월</option><option value="6">최근 6개월</option><option value="12">최근 1년</option><option value="24">최근 2년</option><option value="36">최근 3년</option><option value="60">최근 5년</option><option value="0">기간 직접 정하기</option></select></label>
+          <label class="months-range" id="cfgRange" hidden>계약일 기간 <span class="hint">이 기간에 맺은 계약을 불러옴 · 끝을 비우면 오늘까지</span>
+            <span class="range-in"><input type="text" id="cfgFrom" data-date inputmode="numeric" maxlength="10" placeholder="시작 예: 20230101" autocomplete="off"> ~ <input type="text" id="cfgTo" data-date inputmode="numeric" maxlength="10" placeholder="끝(비우면 오늘)" autocomplete="off"></span></label>
         </div>
       </div>
       <div class="form">

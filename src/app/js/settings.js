@@ -24,7 +24,9 @@
     $('#cfgKey').placeholder = org.apiKey ? '비워 두면 기관 공용 인증키를 씁니다' : '';
     $('#cfgInstt').value = cfg.insttNm || '';
     $('#cfgInsttDiv').value = cfg.insttDivCd || '1'; $('#cfgOfficer').value = cfg.officer || '';
-    $('#cfgMonths').value = String(cfg.months || 6);
+    $('#cfgMonths').value = String(cfg.months === 0 ? 0 : (cfg.months || 6));
+    $('#cfgFrom').value = cfg.fetchFrom ? L.fmtDate(cfg.fetchFrom) : ''; $('#cfgTo').value = cfg.fetchTo ? L.fmtDate(cfg.fetchTo) : '';
+    $('#cfgRange').hidden = $('#cfgMonths').value !== '0';
     $('#cfgExtNames').value = (cfg.extNames || []).join('\n');
     renderHideOff();
     note('');
@@ -45,7 +47,8 @@
   function note(t, kind) { const n = $('#naraNote'); n.textContent = t; n.className = 'note' + (kind ? ' ' + kind : ''); }
   function readNara() {
     return { ...JH.app.cfg, apiKey: $('#cfgKey').value.trim() || (JH.app.org || {}).apiKey || '', insttNm: $('#cfgInstt').value.trim(), insttDivCd: $('#cfgInsttDiv').value,
-      officer: $('#cfgOfficer').value.trim(), months: Number($('#cfgMonths').value) || 6,
+      officer: $('#cfgOfficer').value.trim(), months: $('#cfgMonths').value === '0' ? 0 : (Number($('#cfgMonths').value) || 6),
+      fetchFrom: $('#cfgMonths').value === '0' ? String($('#cfgFrom').value || '').replace(/\D/g, '').slice(0, 8) : '', fetchTo: $('#cfgMonths').value === '0' ? String($('#cfgTo').value || '').replace(/\D/g, '').slice(0, 8) : '',
       extNames: $('#cfgExtNames').value.split(/\n+/).map((s) => s.trim()).filter(Boolean) };
   }
   async function testNara() {
@@ -121,8 +124,11 @@
     JH.app.toast(JH.app.cfg.hideOfficers.length ? `계약 고르기에서 ${JH.app.cfg.hideOfficers.join(', ')} 담당 계약을 뺍니다.` : '계약 고르기에 모든 담당자 계약을 보입니다.', 'ok');
   });
   $('#cfgExtNames').addEventListener('change', async () => { JH.app.cfg.extNames = readNara().extNames; await JH.app.saveCfg(); JH.app.render(); JH.app.toast('외부 예산 사업 이름을 저장했습니다.', 'ok'); });
+  $('#cfgMonths').addEventListener('change', () => { $('#cfgRange').hidden = $('#cfgMonths').value !== '0'; if ($('#cfgMonths').value === '0') $('#cfgFrom').focus(); });
   $('#btnSaveNara').onclick = async () => {
     const c = readNara();
+    if (c.months === 0 && !/^\d{8}$/.test(c.fetchFrom)) { note('기간 직접 정하기: 시작일을 넣어 주세요(예: 20230101).', 'err'); $('#cfgFrom').focus(); return; }
+    if (c.months === 0 && c.fetchTo && c.fetchTo < c.fetchFrom) { note('끝 날짜가 시작일보다 앞입니다.', 'err'); return; }
     if (!(await testNara())) return;
     JH.app.cfg = c; await JH.app.saveCfg(); JH.app.banner('');
     dlg.close(); JH.app.fetchContracts(true);

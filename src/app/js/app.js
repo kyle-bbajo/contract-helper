@@ -978,13 +978,22 @@
     const stale = contracts().some((c) => c.source === 'api' && !c.untyNo && !c.method && !c.corpRaw);
     if (cfg.fetchVer !== FETCH_VER || stale) full = true;
     let months = Number(cfg.months) || 6;
+    if (cfg.months === 0) months = 2; // 기간 직접: 지난번 이후 새로고침은 최근 달만(아래에서 since로 줄임)
     const last = cfg.lastFetch ? new Date(cfg.lastFetch) : null;
     if (!full && last && !isNaN(last)) {
       const now = new Date();
       const since = (now.getFullYear() - last.getFullYear()) * 12 + now.getMonth() - last.getMonth() + 1;
       months = Math.max(1, Math.min(months, since));
     }
-    const ranges = L.monthRanges(months);
+    let ranges = L.monthRanges(months);
+    // 기간 직접 정하기: 처음(또는 기간을 바꾼 뒤)엔 정한 기간 전체, 그 뒤 새로고침은 지난번 이후 달만(끝 날짜를 정했으면 다시 안 물음)
+    if (cfg.months === 0 && /^\d{8}$/.test(cfg.fetchFrom || '')) {
+      const rk = `${cfg.fetchFrom}~${cfg.fetchTo || ''}`;
+      if (full || cfg.rangeDone !== rk) ranges = L.rangesBetween(cfg.fetchFrom, cfg.fetchTo);
+      else if (cfg.fetchTo) ranges = [];
+      else ranges = L.monthRanges(months);
+      cfg.rangeDone = rk;
+    }
     const btn = $('#btnFetch'); if (btn.classList.contains('busy')) return; btn.classList.add('busy'); btn.disabled = true;
     const steps = ranges.length * L.TYPES.length; let step = 0, created = 0; const seen = new Set(); const raw = [];
     try {

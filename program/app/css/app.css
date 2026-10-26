@@ -919,3 +919,5 @@ body.only-notice .bar .btn.back { display: none; }
 .chg-etc { width: 12em; padding: 3px 6px; font-size: 13px; }
 
 .sp-tools { display: flex; gap: 6px; flex-wrap: wrap; }
+.months-range .range-in { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.months-range .range-in input { width: 9.5em; }

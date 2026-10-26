@@ -563,6 +563,20 @@
     return `${API_BASE}/${op}?serviceKey=${keyParam(cfg.apiKey)}&${q.toString()}`;
   }
   // 조회 기간을 한 달 단위로 쪼갬
+  // 정한 기간(YYYYMMDD~YYYYMMDD)을 달마다 나눔(나라장터는 한 번에 한 달 안쪽으로 묻는 게 안전) — 최근 달부터
+  function rangesBetween(from, to, today) {
+    const p = (x) => new Date(+x.slice(0, 4), +x.slice(4, 6) - 1, +x.slice(6, 8));
+    const ymd = (x) => `${x.getFullYear()}${String(x.getMonth() + 1).padStart(2, '0')}${String(x.getDate()).padStart(2, '0')}`;
+    const t = today ? new Date(today) : new Date();
+    const a = p(String(from)); let end = to && /^\d{8}$/.test(to) ? p(to) : new Date(t.getFullYear(), t.getMonth(), t.getDate());
+    const out = [];
+    while (end >= a && out.length < 240) {
+      const bgn = new Date(end.getFullYear(), end.getMonth(), 1);
+      out.push([ymd(bgn < a ? a : bgn), ymd(end)]);
+      end = new Date(bgn.getFullYear(), bgn.getMonth(), 0);
+    }
+    return out;
+  }
   function monthRanges(months, today) {
     const d = today ? new Date(today) : new Date();
     const out = [];
@@ -986,7 +1000,7 @@
   const safeName = (s, max = 60) => String(s || '').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, max) || '이름없음';
 
   const api = {
-    norm, uid, stem, extOf, kindOf, defaultChecklists, STAGES, ORIGINAL_SOURCES,
+    rangesBetween, norm, uid, stem, extOf, kindOf, defaultChecklists, STAGES, ORIGINAL_SOURCES,
     classifyItem, guessType, findMeta, vendorCore, baseNo, contractScore, matchContract, contractKey,
     API_BASE, API_OPS, TYPES, apiUrl, keyParam, monthRanges, parseApiText, parseApiBody, parseCorpList, parseCorpRows, normalizeApiItem, detectExtFinance,
     G2B, g2bUrl, scanAuditFields, summarizeChanges, chgPlan, autoKind, CHG_KINDS, changesOf, ordSnap, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
