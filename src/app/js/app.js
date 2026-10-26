@@ -327,6 +327,11 @@
   // 창 신호: 창마다 id로 '아직 열려 있음'을 알림. 다른 창에서 공고문 전용 창이 열려 있으면 이 창의 공고문 화면은 잠금
   async function pingWin() {
     const info = await S.ping({ w: WIN, role: ROLE });
+    // 켤 때 뒤에서 새 버전을 받아 두었으면(다 받으면) 바로 알려 줌 — 누르면 지금 다시 켜서 바꿈(안 누르면 다음에 켤 때)
+    if (ROLE === 'main' && info && info.staged && info.staged.sha && !ui.stagedShown && !S.demo) {
+      ui.stagedShown = true;
+      toast(`새 버전을 받아 두었습니다(${String(info.staged.message || '').slice(0, 40)}). 지금 바꿀까요? 안 누르면 다음에 켤 때 바뀝니다.`, 'ok', { label: '지금 다시 켜기', ms: 60000, run: async () => { try { saveDb(true); const r = await S.update(); if (r && r.updated) { ui.restarting = true; toast('새 버전으로 다시 켭니다. 새 창이 열리면 이 창은 닫으세요.', 'ok'); setTimeout(() => { try { window.close(); } catch (_) {} }, 6000); } else toast(r && r.skipped ? r.skipped : '이미 최신입니다.', 'ok'); } catch (e) { toast(e.message, 'err'); } } });
+    }
     if (ROLE === 'main') {
       const other = (info.wins || []).some((x) => x.role === 'notice' && x.w !== WIN);
       if (ui.noticeElsewhere && !other && JH.notice && JH.notice.reload) JH.notice.reload(); // 공고문 창을 닫았으면 그 창에서 쓴 내용을 다시 읽음
