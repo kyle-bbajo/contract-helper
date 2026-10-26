@@ -860,6 +860,24 @@
     if (n > 3) toast(`계약 폴더를 정리했습니다: 서류 ${n}개를 '0 계약'·'1차 기성'·'준공' 같은 폴더로 옮기고 처리 순서 번호를 붙였습니다.`, 'ok');
     return n;
   }
+  // 읽는 방법이 좋아졌을 때 예전에 못 읽었던 파일을 한 번 다시 읽음(전자결재 .hwx, 글자가 거의 없던 한글 파일)
+  const READ_VER = 2;
+  async function rereadOld() {
+    if ((db.readVer || 0) >= READ_VER) return;
+    const ds = db.docs.filter((d) => d.path && !d.missing && (/\.hwx$/i.test(d.name) || (d.kind === 'hwp' && String(d.text || '').replace(/[^가-힣]/g, '').length < 20))).slice(0, 80);
+    let fixed = 0, placed = 0;
+    for (const d of ds) {
+      try {
+        const bytes = await S.readBytes(d.path); const { lines } = await R.read(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), d.kind, '');
+        if (!lines.length) continue;
+        d.text = L.maskPrivate(L.norm(lines.join(' ')).slice(0, 6000)); d.title = L.maskPrivate(L.norm(lines.slice(0, 8).join(' ')).slice(0, 300)); d.heads = L.headLines(lines); fixed++;
+        const c = d.key && db.contracts[d.key];
+        if (c && (!d.itemId || d.unsure) && !d.manual) { const g = classifyDoc(c, d.name, d.title, d.heads); if (g.id && !(g.alts && g.alts.length)) { await moveDoc(d, c.key, g.id, false, d.pay, true); delete d.unsure; placed++; } }
+      } catch (e) { console.warn('다시 읽기 실패', d.name, e); }
+    }
+    db.readVer = READ_VER; if (fixed) textDirty = true; await saveDb(true);
+    if (fixed) { logAct(`다시 읽기: 예전에 못 읽은 파일 ${fixed}개(.hwx·한글)`); toast(`예전에 글자를 못 읽었던 파일 ${fixed}개를 다시 읽었습니다${placed ? ` — ${placed}개는 서류 칸에 넣음` : ''}. 미분류에 있는 것은 이제 팝업에서 바로 고를 수 있습니다.`, 'ok'); }
+  }
   async function reconcile() {
     const r = await S.list('', true);
     const all = r.files.filter((f) => /^(계약|미분류)\//.test(f.path) && !/\/인쇄본\//.test(f.path) && DOC_EXT.test(f.path));
@@ -2121,8 +2139,12 @@
       let path = d.pdfPath || d.path, kind = d.pdfPath ? 'pdf' : d.kind;
       if (needsPdf(d)) {
         // 한글·엑셀은 PDF로 바꾸는 데 몇 초 걸림(처음 한 번만) — 그동안 읽은 글자를 먼저 보여 줌
-        box.innerHTML = `<p class="muted small">원래 모양으로 불러오는 중… (${kind === 'hwp' ? '한글' : '엑셀·워드'}로 바꾸는 중, 파일마다 처음 한 번만)</p><pre class="pv-text">${esc((d.text || '').slice(0, 3000) || '')}</pre>`;
-        const pp = await toPdf(d); if (pp) { path = pp; kind = 'pdf'; }
+        const prog = kind === 'hwp' || /\.hwx$/i.test(d.name) ? '한글' : '엑셀·워드';
+        box.innerHTML = `<p class="muted small" id="pvConv">원래 모양으로 불러오는 중… (${prog}로 PDF로 바꾸는 중, 파일마다 처음 한 번만 · 보통 몇 초)</p><pre class="pv-text">${esc((d.text || '').slice(0, 3000) || '')}</pre>`;
+        // 오래 걸리면: 한글의 '접근 허용' 창이 다른 창 뒤에 떠서 기다리는 경우가 많음
+        const slow = setTimeout(() => { const n = document.getElementById('pvConv'); if (n && tok === pv.tok) { n.className = 'warn-t small'; n.textContent = `${prog} 변환이 오래 걸립니다. 작업 표시줄에 ${prog}의 '접근 허용' 창이 떠 있으면 [모두 허용]을 누르세요. 아래 글자로 먼저 확인하고 [맞음 · 다음]을 눌러도 됩니다.`; } }, 15000);
+        const pp = await toPdf(d); clearTimeout(slow); if (pp) { path = pp; kind = 'pdf'; }
+        else if (tok === pv.tok) { const n = document.getElementById('pvConv'); if (n) { n.className = 'muted small'; n.textContent = `원래 모양으로 바꾸지 못해 읽은 글자만 보여 줍니다(이 PC에 ${prog}이 없거나 바꾸기 실패). [원래 프로그램으로 열기]로 볼 수 있습니다.`; } return; }
       }
       if (tok !== pv.tok) return;
       prefetchPdf(pv.ids[pv.i + 1]); // 다음 파일도 미리 바꿔 둠
@@ -3234,6 +3256,7 @@
     if (ONLY) return; // 공고문 전용 창: 폴더 확인·정리·자동 새로고침은 원래 창이 함
     S.hwpSec().then((r) => { hwpSecState = r && r.state; }).catch(() => {}); // 한글 보안모듈 있는지(한글은 띄우지 않음)
     try { await reconcile(); render(); } catch (e) { console.warn('폴더 확인 실패', e); }
+    try { await rereadOld(); render(); } catch (e) { console.warn('다시 읽기 실패', e); }
     try { await relayout(); } catch (e) { console.warn('폴더 정리 실패', e); }
     // 스캔 글자가 깨져 이상한 이름으로 만들어진 계약(예전 버전): 알려 주고 [정리하기]로 서류는 미분류, 계약은 지움
     try {
