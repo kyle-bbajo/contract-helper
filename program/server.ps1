@@ -13,7 +13,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '1.6.32'
+$Version = '1.6.33'
 $AppRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $WebRoot = Join-Path $AppRoot 'app'
 $LocalCfg = Join-Path $AppRoot 'local.json'
@@ -886,6 +886,15 @@ function Handle($stream, $req) {
       elseif (Test-Path -LiteralPath $full -PathType Leaf) { Start-Process -FilePath 'explorer.exe' -ArgumentList "/select,`"$full`"" }
       else { if (-not (Test-Path -LiteralPath $full)) { New-Item -ItemType Directory -Path $full -Force | Out-Null }; Start-Process -FilePath 'explorer.exe' -ArgumentList "`"$full`"" }
       Send-Json $stream 200 @{ ok = $true }; return
+    }
+
+    '/api/printfile' {
+      # 합쳐 인쇄할 수 없는 파일(.hwx 등): 윈도우에 등록된 그 형식의 '인쇄' 동작으로 기본 프린터에 보냄. 인쇄 동작이 없으면 원래 프로그램으로 열기
+      $full = Resolve-DataPath $q['path']
+      if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { Send-Error $stream 404 '파일이 없습니다'; return }
+      $how = 'print'
+      try { Start-Process -FilePath $full -Verb Print -ErrorAction Stop } catch { $how = 'open'; try { Start-Process -FilePath $full } catch { Send-Error $stream 500 ('열 수 있는 프로그램이 없습니다: ' + $_.Exception.Message); return } }
+      Send-Json $stream 200 @{ ok = $true; how = $how }; return
     }
 
     '/api/pickfolder' {

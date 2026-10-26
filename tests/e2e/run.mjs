@@ -1273,6 +1273,18 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   }
   step('그룹웨어 결재문서(.hwp인데 속은 HWPML·HTML·MHT)도 글자를 읽어 분류');
 
+  // 전자결재 문서(.hwx, 핸디소프트): 결재 정보 머리 + 한글 문서 통째 → 한글 부분을 찾아 본문 글자를 읽음
+  {
+    const hw = hwpBytes(['구 매 요 구 서', '제목 : 구매요구 / 시청사 옥상 방수공사 건의']);
+    const head = Buffer.alloc(429); Buffer.from('Handysoft Approval Document File').copy(head);
+    await page.evaluate(async (b64) => { const b = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)); await JH.app.ingest([new File([b], '결재문서_시험.hwx', { type: '' })], null, null); }, Buffer.concat([head, hw]).toString('base64'));
+    await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => d.name === '결재문서_시험.hwx')), 30000, 'hwx');
+    const hx = await page.evaluate(() => { const d = JH.app.db.docs.find((x) => x.name === '결재문서_시험.hwx'); return { c: (JH.app.db.contracts[d.key] || {}).name, item: d.itemId }; });
+    assert.deepEqual(hx, { c: '시청사 옥상 방수공사', item: 'c-req' }, 'hwx ' + JSON.stringify(hx));
+    await page.waitForTimeout(800); for (let k = 0; k < 3; k++) { await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close())); await page.waitForTimeout(300); }
+  }
+  step('전자결재 문서(.hwx)도 안의 한글 문서를 찾아 본문 글자로 분류');
+
 
   // 뒤로: 현황판 → 계약을 눌러 넘어간 뒤 [←]면 다시 현황판 · 현황판에서 가운데 버튼이면 새 탭(보던 화면 그대로)
   {

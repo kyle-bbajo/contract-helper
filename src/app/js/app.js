@@ -725,7 +725,7 @@
       if (!opt.one) toast(msg, inbox ? '' : 'ok', unsure.length ? { label: '확인하기', run: () => openPreview(unsure, 0, true) } : recs.length || again.length ? undoAction() : null);
       if (unsure.length || askDup.length) askLater([...unsure, ...askDup]);
       // 한글·엑셀은 뒤에서 미리 PDF로 바꿔 둠(미리 보기·인쇄가 바로 뜨게) — 한 번에 하나씩, 앞 5개까지
-      { const conv = placed.filter(needsPdf).filter((d) => d.kind !== 'hwp' || hwpSecState === 'on' || hwpSecState === 'ready').slice(0, 5); /* 한글은 보안모듈이 있을 때만 미리(없으면 '접근 허용' 창이 줄줄이 뜸) */ let ch = Promise.resolve(); conv.forEach((d) => { ch = ch.then(() => toPdf(d)); }); }
+      { const conv = placed.filter(needsPdf).filter((d) => (d.kind !== 'hwp' && !/\.hwx$/i.test(d.name)) || hwpSecState === 'on' || hwpSecState === 'ready').slice(0, 5); /* 한글은 보안모듈이 있을 때만 미리(없으면 '접근 허용' 창이 줄줄이 뜸) */ let ch = Promise.resolve(); conv.forEach((d) => { ch = ch.then(() => toPdf(d)); }); }
       const keys = Object.keys(byContract);
       if (!forced && !opt.onlyMatched && keys.length === 1) ui.sel = keys[0]; // 폴더에서 자동으로 읽은 것은 보던 계약 화면을 바꾸지 않음
     } catch (e) {
@@ -1074,7 +1074,7 @@
       return { kind: 'hwp', name: d.name };
     }
     // 엑셀·워드: 설치된 오피스로 PDF로 바꿔 같이 인쇄(오피스가 없으면 '별도 인쇄' 자리)
-    if (d.kind === 'other' && /\.(xlsx?|docx?)$/i.test(d.name)) {
+    if (d.kind === 'other' && /\.(xlsx?|docx?|hwx)$/i.test(d.name)) {
       if (!d.pdfPath) await toPdf(d);
       if (d.pdfPath) return { kind: 'pdf', name: d.name, bytes: await S.readBytes(d.pdfPath) };
     }
@@ -1083,6 +1083,11 @@
   // 인쇄할 서류: 줄마다 [인쇄] 체크를 뺀 서류(c.noPrint)는 한 번에 인쇄·PDF·표지 목록에서 뺌
   const printList = (c) => lists(c.type).filter((x) => !(c.noPrint || {})[x.id]);
   const printDocs = (c) => finalDocs(c).filter((d) => d.itemId && !(c.noPrint || {})[d.itemId]);
+  async function printSeparate(ds) {
+    let opened = 0;
+    for (const d of ds) { try { const r = await S.printFile(d.path); if (r && r.how === 'open') opened++; } catch (e) { toast(`「${d.name}」 인쇄 실패: ${e.message}`, 'err'); } }
+    toast(opened ? `${opened}개는 바로 인쇄할 수 없어 원래 프로그램으로 열었습니다 — 그 창에서 인쇄(Ctrl+P)하세요.` : `${ds.length}개를 원래 프로그램으로 인쇄 보냈습니다.`, 'ok');
+  }
   async function printContract(c, mode) {
     const docs = printDocs(c);
     try {
@@ -1101,6 +1106,9 @@
         printBytes(r.bytes);
         toast(`인쇄 창을 열었습니다 (${msg}).`, r.errors.length ? 'err' : 'ok');
       }
+      // 합칠 수 없는 파일(전자결재 .hwx, 한글이 없을 때의 한글 파일 등): 그 파일을 여는 프로그램으로 따로 인쇄
+      const sep = (r.separate || []).map(docById).filter(Boolean);
+      if (sep.length && !S.demo) setTimeout(() => toast(`합쳐 인쇄할 수 없는 파일 ${sep.length}개(${sep.slice(0, 2).map((d) => `「${d.name}」`).join(', ')}${sep.length > 2 ? ' 외' : ''})는 표지 순서 자리에 '별도 인쇄'로 표시했습니다. 원래 프로그램으로 인쇄할까요?`, '', { label: '따로 인쇄', ms: 30000, run: () => printSeparate(sep) }), 1200);
     } catch (e) { console.error(e); toast('인쇄 파일을 만들지 못했습니다: ' + e.message, 'err'); }
     finally { progress(null); }
   }
@@ -2040,12 +2048,28 @@
     return ds.length;
   }
   // 한글·엑셀·워드 → PDF(미리 보기·인쇄용). 한 번 바꾸면 옆에 PDF로 두고 다시 씀. 같은 파일을 두 번 바꾸지 않게 진행 중인 것은 공유
-  const needsPdf = (d) => d && !d.pdfPath && (d.kind === 'hwp' || (d.kind === 'other' && /\.(xlsx?|docx?)$/i.test(d.name)));
+  const needsPdf = (d) => d && !d.pdfPath && (d.kind === 'hwp' || (d.kind === 'other' && /\.(xlsx?|docx?|hwx)$/i.test(d.name)));
+  // 전자결재 문서(.hwx): 앞에 결재 정보가 붙고 그 뒤에 한글 문서가 통째로 들어 있음 → 한글 부분만 떼어 한글로 PDF로 바꿈
+  async function hwxToPdf(d) {
+    const u8 = await S.readBytes(d.path); const b = u8 instanceof Uint8Array ? u8 : new Uint8Array(u8);
+    const sig = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]; let at = -1;
+    for (let i = 0; i <= b.length - 8 && at < 0; i++) if (sig.every((x, j) => b[i + j] === x)) at = i;
+    if (at < 0) throw new Error('결재문서 안에서 한글 문서를 찾지 못했습니다');
+    hwpPromptHint();
+    const tmp = (await S.save('_임시', 'hwx_' + L.uid() + '.hwp', b.subarray(at))).path;
+    try {
+      const r = await S.hwp2pdf(tmp);
+      const dir = d.path.split('/').slice(0, -1).join('/');
+      const m = await S.move(r.path, dir, L.stem(d.name) + '.pdf');
+      return m.path;
+    } finally { S.remove(tmp).catch(() => {}); }
+  }
   const pdfJobs = new Map();
   function toPdf(d) {
     if (!needsPdf(d)) return Promise.resolve(d && d.pdfPath);
     if (d.kind === 'hwp') hwpPromptHint();
-    if (!pdfJobs.has(d.id)) pdfJobs.set(d.id, (d.kind === 'hwp' ? S.hwp2pdf(d.path) : S.office2pdf(d.path)).then((r) => { d.pdfPath = r.path; saveDb(); return r.path; }).catch(() => null).finally(() => pdfJobs.delete(d.id)));
+    const job = () => (/\.hwx$/i.test(d.name) ? hwxToPdf(d).then((path) => ({ path })) : d.kind === 'hwp' ? S.hwp2pdf(d.path) : S.office2pdf(d.path));
+    if (!pdfJobs.has(d.id)) pdfJobs.set(d.id, job().then((r) => { d.pdfPath = r.path; saveDb(); return r.path; }).catch(() => null).finally(() => pdfJobs.delete(d.id)));
     return pdfJobs.get(d.id);
   }
   function prefetchPdf(id) { const d = id && docById(id); if (needsPdf(d)) setTimeout(() => toPdf(d), 300); }

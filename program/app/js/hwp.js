@@ -6,10 +6,15 @@
  */
 (function (root) {
   'use strict';
+  // 압축 풀기. 압축 끝 뒤에 찌꺼기 바이트가 붙은 문서(전자결재 .hwx 안의 한글 등)는 브라우저가 오류를 내므로, 그때까지 푼 것을 씀
   async function inflateRaw(u8) {
     const ds = new DecompressionStream('deflate-raw');
-    const stream = new Blob([u8]).stream().pipeThrough(ds);
-    return new Uint8Array(await new Response(stream).arrayBuffer());
+    const reader = new Blob([u8]).stream().pipeThrough(ds).getReader();
+    const parts = []; let n = 0;
+    try { for (;;) { const { done, value } = await reader.read(); if (done) break; parts.push(value); n += value.length; } }
+    catch (e) { if (!n) throw e; }
+    const out = new Uint8Array(n); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; }
+    return out;
   }
   // 문단 글자: 0~31은 제어 문자. 1칸짜리(줄바꿈 등)와 8칸짜리(표·그림 등 개체)가 있음
   const ONE = new Set([0, 10, 13, 24, 25, 26, 27, 28, 29, 30, 31]);

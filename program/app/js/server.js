@@ -65,6 +65,7 @@
     aiSetup: (body) => call('POST', '/api/ai/setup', null, JSON.stringify(body || {})),
     async fetchFile(url) { const r = await call('GET', '/api/fetchfile', { u: url }); return new Uint8Array(await r.arrayBuffer()); },
     openFile: (path) => call('POST', '/api/open', { path, launch: '1' }),
+    printFile: (path) => call('POST', '/api/printfile', { path }), // 그 파일을 여는 프로그램으로 인쇄(안 되면 열기) → { how: 'print'|'open' }
     open: (path) => call('POST', '/api/open', { path }),
     pickFolder: () => call('POST', '/api/pickfolder'),
     quit: () => call('POST', '/api/quit'),

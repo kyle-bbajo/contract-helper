@@ -121,7 +121,7 @@
     const out = await PDFDocument.create();
     const useCover = opts.cover !== false, useHolder = opts.holder !== false;
     const originals = c.originals || {}, received = c.received || {};
-    const toc = [], errors = [], missing = [];
+    const toc = [], errors = [], missing = [], separate = [];
     let page = 0;
     // 표지 쪽수는 목록 길이로 미리 계산
     const tocRows = list.reduce((n, it) => n + Math.max(1, docs.filter((d) => d.itemId === it.id).length), 0);
@@ -155,11 +155,11 @@
             const ps = await out.copyPages(src, src.getPageIndices()); ps.forEach((p) => out.addPage(p)); added = ps.length;
           } else if (f.kind === 'image') { await addImage(out, f.bytes, f.name); added = 1; }
           else {
-            note = f.kind === 'hwp' ? '한글 – 별도 인쇄' : '별도 인쇄';
+            note = f.kind === 'hwp' ? '한글 – 별도 인쇄' : '별도 인쇄'; separate.push(d.id);
             if (useHolder) { await addPng(out, await holder(top, f.kind === 'hwp' ? '한글 파일 자리' : '별도 인쇄 파일 자리', d.name, '이 위치에 해당 파일을 따로 인쇄해서 끼워 넣으세요.')); added = 1; }
           }
         } catch (e) {
-          console.error(e); errors.push(d.name); note = '읽기 실패 – 별도 인쇄';
+          console.error(e); errors.push(d.name); separate.push(d.id); note = '읽기 실패 – 별도 인쇄';
           if (useHolder) { await addPng(out, await holder(top, '읽을 수 없는 파일', d.name, '이 위치에 해당 파일을 따로 인쇄해서 끼워 넣으세요.')); added = 1; }
         }
         toc.push({ ...rb, file: d.name, note, status: 'ok', start: added ? coverCount + page + 1 : null, pages: added });
@@ -172,7 +172,7 @@
     }
     if (out.getPageCount() === 0) throw new Error('인쇄할 페이지가 없습니다.');
     out.setTitle(`${c.name || '계약'} 지출서류`);
-    return { bytes: await out.save(), errors, missing, pages: out.getPageCount() };
+    return { bytes: await out.save(), errors, missing, separate, pages: out.getPageCount() };
   }
 
   root.JH = root.JH || {};
