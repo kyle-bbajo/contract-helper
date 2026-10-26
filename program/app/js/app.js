@@ -1000,7 +1000,7 @@
       }
       mergeSameContracts();
       // 예전 버전이 저장한 서류 글자에서도 개인 식별번호를 한 번 가림(서류본문.json)
-      if (!db.masked) { let n = 0; for (const d of db.docs) { for (const k of ['text', 'title']) if (d[k]) { const v = L.maskPrivate(d[k]); if (v !== d[k]) { d[k] = v; n++; } } } db.masked = 1; if (n) textDirty = true; saveDb(true); } // 새로 받은 차수(-01 …)가 따로 생겼으면 바로 합침
+      if ((db.masked || 0) < 2) { let n = 0; for (const d of db.docs) { for (const k of ['text', 'title']) if (d[k]) { const v = L.maskPrivate(d[k]); if (v !== d[k]) { d[k] = v; n++; } } if (d.heads) d.heads = d.heads.map((h) => L.maskPrivate(h)); } db.masked = 2; if (n) textDirty = true; saveDb(true); } // 2: 계좌·여권·면허·전자우편도 가림, 머리 줄도 // 새로 받은 차수(-01 …)가 따로 생겼으면 바로 합침
       cfg.lastFetch = new Date().toISOString(); await saveCfg();
       // 나라장터가 준 그대로를 남겨 둠(어떤 항목이 오는지 확인할 때: 데이터 폴더 \진단\나라장터_계약응답.json)
       if (raw.length) S.writeJson('진단/나라장터_계약응답.json', { at: cfg.lastFetch, count: raw.length, items: raw }).catch(() => {});
