@@ -151,7 +151,7 @@
   function markupLines(bytes) {
     const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
     const head = new TextDecoder('latin1').decode(u8.subarray(0, 600));
-    if (!/^\s*(<|\ufeff<|\xef\xbb\xbf<|MIME-Version|From:|Content-Type)/i.test(head) && !/<(\?xml|html|HWPML)/i.test(head)) return [];
+    if (!/^(\xef\xbb\xbf|\ufeff)?\s*(<|MIME-Version|From:|Content-Type)/i.test(head)) return []; // 처음부터 글자 문서여야(바이너리 속 XML은 아래 anyLines가 잘라서 읽음)
     const dec = (b, cs) => { try { return new TextDecoder(cs || 'utf-8', { fatal: !cs }).decode(b); } catch (_) { return new TextDecoder('euc-kr').decode(b); } };
     let csm = head.match(/charset\s*=\s*["']?([\w-]+)/i) || head.match(/encoding\s*=\s*["']([\w-]+)/i);
     let t = dec(u8, csm && !/utf-?8/i.test(csm[1]) ? csm[1].toLowerCase().replace('ks_c_5601-1987', 'euc-kr') : '');
@@ -166,6 +166,39 @@
     t = t.replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ').replace(/<\/(p|div|tr|li|h\d|P|TEXT|PARAGRAPH)>|<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, ' ')
       .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#(\d+);/g, (m, n) => String.fromCharCode(+n)).replace(/&amp;/g, '&');
     return t.split(/\r?\n/).map((x) => x.replace(/\s+/g, ' ').trim()).filter((x) => x && /[가-힣A-Za-z0-9]/.test(x)).slice(0, 3000);
+  }
+  // 모르는 형식(전자결재 .hwx 등): 안에 든 것을 차례로 찾아 읽음 — zip 안 XML·한글·PDF, OLE 안 한글 본문,
+  // XML·HTML 글자, 중간에 끼어 있는 PDF·한글·zip, gzip, 마지막으로 파일 속 한글 글자(UTF-16·UTF-8) 줄
+  async function anyLines(bytes, depth = 0) {
+    const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    if (u8.length < 8 || depth > 2) return [];
+    const sig = (o, ...b) => b.every((x, i) => u8[o + i] === x);
+    const tryIt = async (f) => { try { const r = await f(); return r && r.length ? r : null; } catch (_) { return null; } };
+    let r;
+    if (sig(0, 0x25, 0x50, 0x44, 0x46) && (r = await tryIt(() => pdfLines(u8)))) return r;
+    if (sig(0, 0x50, 0x4b, 0x03, 0x04)) {
+      if ((r = await tryIt(() => JH.hwp.fullLines(root.CFB, u8)))) return r; // hwpx 같은 구조
+      if ((r = await tryIt(async () => { const items = await unzip(u8); const out = []; for (const it of items) { if (!it.bytes) continue; const x = await anyLines(it.bytes, depth + 1); out.push(...x); if (out.length > 1500) break; } return out; }))) return r;
+    }
+    if (sig(0, 0xd0, 0xcf, 0x11, 0xe0)) {
+      if ((r = await tryIt(() => JH.hwp.fullLines(root.CFB, u8)))) return r;
+      if ((r = await tryIt(() => hwpLines(u8)))) return r;
+    }
+    if (sig(0, 0x1f, 0x8b) && (r = await tryIt(async () => anyLines(new Uint8Array(await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer()), depth + 1)))) return r;
+    if ((r = markupLines(u8)).length) return r;
+    // 중간에 끼어 있는 다른 형식
+    const find = (b, from) => { outer: for (let i = from; i <= u8.length - b.length; i++) { for (let j = 0; j < b.length; j++) if (u8[i + j] !== b[j]) continue outer; return i; } return -1; };
+    for (const b of [[0x25, 0x50, 0x44, 0x46, 0x2d], [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1], [0x50, 0x4b, 0x03, 0x04], [0x3c, 0x3f, 0x78, 0x6d, 0x6c]]) {
+      const at = find(b, 1); if (at > 0 && (r = await tryIt(() => anyLines(u8.subarray(at), depth + 1)))) return r;
+    }
+    // 마지막: 파일 속 한글 글자 줄
+    const runs = (t) => t.match(/[가-힣][가-힣0-9A-Za-z\s()·.,:\-~%/]{2,120}/g) || [];
+    // 흔한 한글 글자가 대부분인 줄만(아무 바이트나 한글로 읽힌 찌꺼기는 뺌)
+    const COMMON = /[이가의는을를에서고다하한기사계약서류공용도시업체금액일월년정보관리확인신청지급번호명대표자주소날짜출결재문]/g;
+    const ok = (x) => { const h = (x.match(/[가-힣]/g) || []).length; return h >= 3 && (x.match(COMMON) || []).length / h >= 0.25; };
+    let words = [...runs(new TextDecoder('utf-16le').decode(u8.subarray(0, u8.length - (u8.length % 2)))), ...runs(new TextDecoder('utf-8').decode(u8))].filter(ok);
+    if (words.length < 3) words = words.concat(runs(new TextDecoder('euc-kr').decode(u8)).filter(ok));
+    return words.map((x) => x.replace(/\s+/g, ' ').trim()).filter((x) => (x.match(/[가-힣]/g) || []).length >= 3).slice(0, 2000);
   }
   // 파일 하나 읽기 → { lines, ocr }
   // 엑셀(.xlsx)·워드(.docx): 압축 안 XML의 글자만(견적서·산출내역서를 엑셀로 받는 경우 등). .xls(옛 형식)는 글자를 못 읽고 파일 이름으로 분류
@@ -208,7 +241,7 @@
         if (!lines.length) { try { lines = hwpLines(bytes); } catch (_) { lines = []; } }
         if (!lines.length) lines = markupLines(bytes); // 그룹웨어(BizFlow 등)에서 받은 결재문서: 확장자만 .hwp이고 속은 HWPML(XML)·HTML·MHT인 경우
       }
-      else if (kind === 'other') lines = officeLines(bytes);
+      else if (kind === 'other') { lines = officeLines(bytes); if (!lines.length) lines = await anyLines(bytes); }
     } catch (e) { console.warn('읽기 실패', e); }
     // 스캔 PDF에 스캐너 앱 글씨(CamScanner 등)만 글자로 들어 있는 경우가 있어 '한글이 거의 없으면' 글자 인식
     const hangul = (lines.join('').match(/[가-힣]/g) || []).length;
@@ -298,5 +331,5 @@
     }
     return out;
   }
-  root.JH.readers = { unzip, markupLines, read, officeLines, fullLines, pdfLines, hwpLines, ocrLines, pageHeads, get ocrBroken() { return ocrBroken; } };
+  root.JH.readers = { unzip, markupLines, anyLines, read, officeLines, fullLines, pdfLines, hwpLines, ocrLines, pageHeads, get ocrBroken() { return ocrBroken; } };
 })(window);
