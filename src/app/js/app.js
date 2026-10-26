@@ -485,6 +485,7 @@
   }
   // 확인 팝업 띄우기: 다른 창(설정·계약 수정 등)이 열려 있으면 기다렸다가 그 창을 닫는 즉시 띄움. 이미 확인 팝업이 떠 있으면 뒤에 이어 붙임
   let askQueue = [];
+  const keepSeen = new Set(); // 계약을 정해 넣은 파일 — 팝업에서 넘겨도 미분류로 옮기지 않음
   const dupSeen = new Set(); // 다시 올린(이미 있는) 파일 — 팝업에서 지금 자리를 보여 주고, 저장 안 하고 넘겨도 그 자리 그대로
   function askLater(ids) {
     ids = ids.filter((id) => docById(id));
@@ -573,10 +574,10 @@
         r.unsure = !!(info && info.id && ((info.alts && info.alts.length) || info.fuzzy)); r.alts = r.unsure ? info.alts : null; r.learned = !!(info && info.by === 'learned');
         // 한 파일에 여러 양식(착공계 묶음 등): 쪽마다 서류 이름을 찾아 함께 든 서류로 표시
         let also = [], pagesOf = null;
-        if (c) {
+        if (c && !(forced && forceItem)) { // 칸에 직접 넣은 것은 쪽마다 읽지 않음(빠르게)
           try {
             progress(`여러 양식이 든 파일인지 보는 중 ${i + 1}/${recs.length}`, i / recs.length);
-            const heads = await R.pageHeads(r.bytes, r.kind); r.pages = heads ? heads.total : null;
+            const heads = await R.pageHeads(r.bytes, r.kind, { ocrMax: 12, onPage: (p, n) => { if (n > 2) progress(`여러 양식이 든 파일인지 보는 중 — ${p}/${n}쪽 (스캔본은 쪽마다 몇 초)`, p / n); } }); r.pages = heads ? heads.total : null;
             pagesOf = heads ? L.classifyPages(classList(c), heads) : r.kind === 'hwp' ? L.classifyTitleLines(classList(c), r.lines) : null;
           } catch (e) { console.warn('쪽별 서류 찾기 실패', e); }
           // 파일 이름에 서류가 여럿이면(견적서_산출내역.pdf) 그것도 함께 든 서류로
@@ -653,7 +654,7 @@
       const nDone = recs.length - ignored + again.length;
       // 이미 있는 파일을 직접 다시 올렸으면(확인 켜짐): 말없이 넘기지 않고 지금 자리를 팝업으로 보여 줌 — 잘못 들어가 있으면 거기서 고침
       const askDup = !opt.onlyMatched && cfg.uploadConfirm !== false ? dupIds.filter((id) => docById(id)) : [];
-      askDup.forEach((id) => dupSeen.add(id));
+      askDup.forEach((id) => { dupSeen.add(id); keepSeen.add(id); });
       if (!nDone && skipped) { toast((opt.from ? `${opt.from}의 ` : '') + `같은 파일이 이미 있어 새로 넣지 않았습니다: ${dupWhere.slice(0, 2).join(', ')}${dupWhere.length > 2 ? ` 외 ${dupWhere.length - 2}개` : ''}.${askDup.length ? ' 지금 자리를 팝업으로 보여 드립니다.' : ''}`); dupWhere.forEach((x) => logAct('올림 건너뜀: ' + x)); if (askDup.length) askLater(askDup); return; }
       let msg = (opt.from ? `${opt.from}에서 ` : '') + `${nDone}개 정리했습니다` + (parts.length ? ` — ${parts.join(', ')}` : '') + '.';
       if (again.length) msg += ` 전에 올렸던 파일 ${again.length}개는 다시 정리했습니다${againDone < again.length ? `(${again.length - againDone}개는 확인 필요)` : ''}.`;
@@ -675,7 +676,10 @@
       // 확인할 것: 계약·종류를 못 정함, 헷갈림, 같은 칸에 이미 서류가 있음(수정본?). 자동으로 읽은 폴더에서 온 것은 모두 확인(설정에서 끌 수 있음)
       // 올린 파일은 모두 확인 팝업으로 보여 줌(설정 → 서류 목록 '올릴 때마다 확인'으로 끌 수 있음). 자동으로 읽은 폴더는 따로 '자동으로 가져온 서류 확인'
       const confirmAll = opt.onlyMatched ? cfg.watchConfirm !== false : cfg.uploadConfirm !== false;
-      const unsure = [...recs.filter((r) => !r.ignored).map((r) => r.id), ...again.map((d) => d.id)].filter((id) => db.docs.some((d) => d.id === id && (confirmAll || !d.key || !d.itemId || d.unsure || d.revOf)));
+      // 서류 칸에 직접 넣은 것(계약·서류 종류를 사람이 정함)은 묻지 않음(수정본인지만 물음). 계약을 정해 넣은 것은 팝업에서 넘겨도 그 계약에 그대로
+      const direct = !!(forced && forceItem);
+      const unsure = [...recs.filter((r) => !r.ignored).map((r) => r.id), ...again.map((d) => d.id)].filter((id) => db.docs.some((d) => d.id === id && (direct ? d.revOf : (confirmAll || !d.key || !d.itemId || d.unsure || d.revOf))));
+      if (forced) unsure.forEach((id) => keepSeen.add(id));
       const nLearned = recs.filter((r) => r.learned).length;
       if (nLearned) msg += ` ${nLearned}개는 전에 배운 대로 넣었습니다.`;
       if (!opt.one) toast(msg, inbox ? '' : 'ok', unsure.length ? { label: '확인하기', run: () => openPreview(unsure, 0, true) } : recs.length || again.length ? undoAction() : null);
@@ -1972,7 +1976,7 @@
   }
   // 확인 팝업에서 [이대로 저장] 없이 [다음]·[닫기]·✕로 넘긴 파일은 미분류로 — 고른 계약·종류는 추천으로 남겨 미분류 화면·다음 팝업에서 맨 위에
   async function skipToInbox(ids) {
-    const ds = ids.map(docById).filter((d) => d && d.key && !pv.done.has(d.id) && !dupSeen.has(d.id));
+    const ds = ids.map(docById).filter((d) => d && d.key && !pv.done.has(d.id) && !keepSeen.has(d.id));
     if (!ds.length) return 0;
     await recorded(`확인 안 한 파일 ${ds.length}개 미분류로`, ds.map((d) => d.key), ds.map((d) => d.id), async () => {
       for (const d of ds) {

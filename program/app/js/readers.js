@@ -71,7 +71,7 @@
   }
   const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, j) => setTimeout(() => j(new Error(what + ' 시간 초과')), ms))]);
   function capCanvas(src, w, h) {
-    const s = Math.min(1, 2200 / Math.max(w, h));
+    const s = Math.min(1, 1800 / Math.max(w, h));
     const c = document.createElement('canvas'); c.width = Math.round(w * s); c.height = Math.round(h * s);
     const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(src, 0, 0, c.width, c.height);
     return c;
@@ -85,7 +85,7 @@
     try {
       if (pageNo > doc.numPages) return null;
       const page = await doc.getPage(pageNo); const v1 = page.getViewport({ scale: 1 });
-      const vp = page.getViewport({ scale: Math.min(3, 2200 / Math.max(v1.width, v1.height)) });
+      const vp = page.getViewport({ scale: Math.min(3, 1800 / Math.max(v1.width, v1.height)) }); // 1800px: 제목·계약명은 충분히 읽히고 빠름
       const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
       const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
       await page.render({ canvasContext: g, viewport: vp }).promise;
@@ -127,7 +127,7 @@
         const raw = await firstPageCanvas(bytes, kind, type, n); if (!raw) return null;
         const canvas = cleaned(raw); // 점무늬 지운 그림으로 읽음(망점 스캔은 그대로면 1분 넘게 걸리고 거의 못 읽음, 지우면 몇 초)
         let best = await recognize(w, canvas);
-        if (best.conf < 75) {
+        if (best.conf < 55) { // 점무늬를 지우면 바로 선 종이는 보통 60 넘음 — 그보다 낮을 때만 돌려 봄(돌릴 때마다 한 쪽을 다시 읽어 느림)
           for (const deg of [180, 90, 270]) {
             const r = await recognize(w, rotated(canvas, deg));
             if (r.score > best.score + 8) best = { ...r, deg };

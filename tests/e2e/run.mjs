@@ -1179,6 +1179,33 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     await page.evaluate(async () => { JH.app.cfg.uploadConfirm = false; await JH.app.saveCfg(); });
   }
   step('이미 있는 파일을 다시 올리면 새로 넣지 않고 지금 자리를 팝업으로 보여 줌');
+  // 칸에 직접 넣으면(계약·서류 종류를 사람이 정함) 묻지 않고 그 칸에 · 계약만 정해 넣고 팝업을 넘기면 그 계약에 그대로(미분류로 안 감)
+  {
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    const r = await page.evaluate(async () => {
+      const A = JH.app, c = Object.values(A.db.contracts).find((x) => x.name === '시청사 옥상 방수공사');
+      A.cfg.uploadConfirm = true; await A.saveCfg();
+      await A.ingest([new File([new Uint8Array([37, 80, 68, 70, 1, 2])], '직접넣기_시험.pdf', { type: 'application/pdf' })], c.key, 'c-related');
+      await new Promise((ok) => setTimeout(ok, 800));
+      const d = A.db.docs.find((x) => x.name === '직접넣기_시험.pdf');
+      return { key: d.key === c.key, item: d.itemId, popup: document.querySelector('#dlgPreview').open, ck: c.key };
+    });
+    assert.deepEqual([r.key, r.item, r.popup], [true, 'c-related', false], '칸에 직접 넣으면 묻지 않음 ' + JSON.stringify(r));
+    await page.evaluate(async (k) => { await JH.app.ingest([new File([new Uint8Array([37, 80, 68, 70, 3, 4, 5])], '계약만정함_시험.pdf', { type: 'application/pdf' })], k, null); }, r.ck);
+    await page.waitForSelector('#dlgPreview[open]', { timeout: 10000 });
+    await page.click('#dlgPreview button[value="close"]'); await page.waitForTimeout(800);
+    assert.ok(await page.evaluate((k) => JH.app.db.docs.find((x) => x.name === '계약만정함_시험.pdf').key === k, r.ck), '계약을 정해 넣은 것은 넘겨도 그 계약에');
+    // 오른쪽 위 [업로드](계약을 안 정함)로 넣고 저장하지 않고 닫으면 미분류로(고른 계약은 추천으로 남김)
+    await page.evaluate(async () => { await JH.app.ingest([new File([new Uint8Array([37, 80, 68, 70, 6, 7, 8, 9])], '시청사 옥상 방수공사_통장사본_시험.pdf', { type: 'application/pdf' })], null, null); });
+    await page.waitForSelector('#dlgPreview[open]', { timeout: 10000 });
+    const had = await page.evaluate(() => JH.app.db.docs.find((x) => x.name === '시청사 옥상 방수공사_통장사본_시험.pdf').key);
+    await page.click('#dlgPreview button[value="close"]');
+    await waitFor(() => page.evaluate(() => { const d = JH.app.db.docs.find((x) => x.name === '시청사 옥상 방수공사_통장사본_시험.pdf'); return d && !d.key && /^미분류\//.test(d.path); }), 10000, '닫으면 미분류');
+    if (had) assert.ok(await page.evaluate((k) => (JH.app.db.docs.find((x) => x.name === '시청사 옥상 방수공사_통장사본_시험.pdf').cands || [])[0] === k, had), '고른 계약은 추천으로');
+    await page.evaluate(async () => { JH.app.cfg.uploadConfirm = false; await JH.app.saveCfg(); });
+  }
+  step('칸에 직접 넣으면 묻지 않음 · 계약을 정해 넣은 것은 팝업을 넘겨도 미분류로 안 감');
+
 
   // 뒤로: 현황판 → 계약을 눌러 넘어간 뒤 [←]면 다시 현황판 · 현황판에서 가운데 버튼이면 새 탭(보던 화면 그대로)
   {
@@ -1292,9 +1319,9 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     assert.match(await page.textContent('#pvName'), /통장사본2/, '닫으면 다음 파일 확인으로');
     const had = await page.evaluate(() => { const d = JH.app.db.docs.find((x) => x.name === '통장사본2.pdf'); return d.key; });
     await page.click('#dlgPreview button[value="close"]');
-    // 저장하지 않고 닫으면 미분류로(고른 계약은 추천으로 남김)
-    await waitFor(() => page.evaluate(() => { const d = JH.app.db.docs.find((x) => x.name === '통장사본2.pdf'); return d && !d.key && /^미분류\//.test(d.path); }), 10000, '닫으면 미분류');
-    if (had) assert.ok(await page.evaluate((k) => (JH.app.db.docs.find((x) => x.name === '통장사본2.pdf').cands || [])[0] === k, had), '고른 계약은 추천으로');
+    // 계약 안 [업로드]로 넣은 것(계약을 정함)은 저장하지 않고 닫아도 그 계약에 그대로
+    await page.waitForTimeout(800);
+    assert.ok(await page.evaluate(() => !!JH.app.db.docs.find((x) => x.name === '통장사본2.pdf').key), '계약을 정해 넣은 것은 닫아도 그 계약에');
     // 묶음 파일(나누기 화면을 닫은 것)은 계약에 그대로
     assert.ok(await page.evaluate(() => !!JH.app.db.docs.find((x) => x.name === '착수계묶음2.pdf').key), '나누기 화면 거친 묶음은 그대로');
     await page.evaluate(async () => { JH.app.cfg.uploadConfirm = false; await JH.app.saveCfg(); });
