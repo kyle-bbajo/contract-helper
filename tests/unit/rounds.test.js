@@ -84,3 +84,16 @@ test('배우기: 헷갈림 판단, 고른 답을 제목으로 배워 다음부�
   assert.strictEqual(L.learnedItem(rules, s, 'x.hwp', ['안전점검결과확인서']).id, 's-related');
   assert.strictEqual(L.learnedItem(rules, c, 'x.hwp', ['다른제목']), null);
 });
+
+test('배우기: 스캔 글자 인식이 조금 달라도(구분관리→구분권리) 배운 제목과 거의 같으면 그 종류, 다른 서류는 아님', () => {
+  const c = L.defaultChecklists().공사;
+  const d = { name: 'scan001.pdf', heads: L.headLines(['소서 이탈 준 후자 곤지 - 78, 에', '건설기계 임대차 표준계약서 갑지', '계약금액 금18,364,000원', '공사명 시청사 옥상 방수공사']) };
+  const sig = L.learnSigs(d, { name: '시청사 옥상 방수공사', vendor: '(주)다해토건' });
+  assert.ok(sig.heads.includes('건설기계임대차표준계약서갑지'), JSON.stringify(sig));
+  assert.ok(!sig.heads.some((h) => /18364000|시청사/.test(h)), '금액·계약명 줄은 배우지 않음');
+  const rules = sig.heads.map((h) => ({ head: h, suf: 'related' }));
+  assert.strictEqual(L.learnedItem(rules, c, 'x.pdf', [L.norm('건설기계 임대자 표준게약서 갑지')]), null, '정확히 같지는 않음');
+  assert.strictEqual(L.learnedFuzzy(rules, c, [L.norm('건설기계 임대자 표준게약서 갑지')]).id, 'c-related', '거의 같으면 찾음');
+  assert.strictEqual(L.learnedFuzzy(rules, c, [L.norm('하도급 대금 지급 보증서 사본')]), null, '다른 서류는 아님');
+  assert.ok(L.similar('공사노무비구분관리및지급확인적용제외신청서', '공사노무비구분권리및자급확인적용제외신청서') > 0.72);
+});

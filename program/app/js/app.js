@@ -79,7 +79,11 @@
     const list = classList(c);
     const lr = L.learnedItem(db.learned, list, name, heads);
     if (lr) return { id: lr.id, by: 'learned', alts: [] };
-    return L.classifyInfo(list, name, title);
+    const ci = L.classifyInfo(list, name, title);
+    if (ci.id) return ci;
+    // 찾는 말로 못 찾으면: 전에 배운 제목과 거의 같은지(같은 양식인데 글자 인식이 조금 다르게 된 경우) — 확인 팝업에서 확인
+    const fz = L.learnedFuzzy(db.learned, list, heads);
+    return fz ? { id: fz.id, by: 'learned', alts: [], fuzzy: true } : ci;
   }
   // ---------- 배운 규칙 나누기(GitHub 이슈 댓글) ----------
   // 배우면 잠시 뒤 올리고(한 번에 모아서), 켤 때 다른 PC가 배운 것을 받아 씀(이 PC가 배운 것이 먼저)
@@ -124,7 +128,7 @@
   // any=true: 켤 때 — 배운 규칙뿐 아니라 새로 늘어난 찾는 말로도(확실할 때만) 다시 봄
   async function applyShared(any = false) {
     const ds = db.docs.filter((d) => d.key && db.contracts[d.key] && !d.manual && (!d.itemId || d.unsure));
-    const hits = ds.map((d) => [d, classifyDoc(db.contracts[d.key], d.name, d.title, d.heads)]).filter(([, r]) => r.id && (r.by === 'learned' || (any && !(r.alts && r.alts.length))));
+    const hits = ds.map((d) => [d, classifyDoc(db.contracts[d.key], d.name, d.title, d.heads)]).filter(([, r]) => r.id && ((r.by === 'learned' && !r.fuzzy) || (any && !(r.alts && r.alts.length))));
     if (!hits.length) return 0;
     await recorded(any ? '켤 때 서류 종류 다시 정함' : '동료 규칙으로 서류 종류 정함', hits.map(([d]) => d.key), hits.map(([d]) => d.id), async () => {
       for (const [d, r] of hits) { try { await moveDoc(d, d.key, r.id, false, undefined, true); delete d.unsure; delete d.alts; } catch (_) {} }
@@ -565,7 +569,7 @@
         // 계약 화면 안에서 올린 서류는 그 계약으로(다른 계약으로 보내지 않음). 오른쪽 위 [업로드]는 전체 계약에서 찾아 정리
         const info = c && !(forced && forceItem) ? classifyDoc(c, r.name, r.title, r.heads) : null;
         let itemId = c ? (forced && forceItem ? forceItem : info.id) : null;
-        r.unsure = !!(info && info.id && info.alts && info.alts.length); r.alts = r.unsure ? info.alts : null; r.learned = !!(info && info.by === 'learned');
+        r.unsure = !!(info && info.id && ((info.alts && info.alts.length) || info.fuzzy)); r.alts = r.unsure ? info.alts : null; r.learned = !!(info && info.by === 'learned');
         // 한 파일에 여러 양식(착공계 묶음 등): 쪽마다 서류 이름을 찾아 함께 든 서류로 표시
         let also = [], pagesOf = null;
         if (c) {
@@ -2012,7 +2016,7 @@
       $('#pvWhy').textContent = '이렇게 넣었습니다. 계약과 서류 종류가 맞으면 [이대로 저장], 틀리면 고르세요(고친 것은 배웁니다). 묻지 않고 바로 넣으려면 설정 → 서류 목록 → 올릴 때마다 확인을 끄세요.';
       if (d.also && d.also.length) { const nmv = (id) => (classList(db.contracts[d.key]).find((x) => x.id === id) || {}).name || id; $('#pvWhy').textContent += ` 이 파일 안에서 ${d.also.map(nmv).join(', ')}도 찾았습니다 — 잘못 찾은 게 있으면 그 칸 줄의 ✕(이 칸에서만 빼기), 서류마다 자르려면 [쪽별로 나누기].`; }
     } else
-    $('#pvWhy').textContent = pv.confirm ? (!c ? (cands.length > 1 ? `같은 업체(또는 비슷한 이름) 계약이 ${cands.length}개라 확실하지 않습니다. 가장 가까운 계약을 골라 두었으니 맞는지 확인해 주세요.` : cands.length ? '확실하지 않아 가장 가까운 계약을 골라 두었습니다.' : '어느 계약 서류인지 찾지 못했습니다.') : !d.itemId ? '어떤 서류인지 찾지 못했습니다.' : d.unsure ? `제목에 다른 서류 이름(${altNames.join(', ')})도 있어 헷갈립니다.` : '') + ' 내용을 보고 맞게 골라 주세요. 고른 답은 배워서 다음부터 같은 제목이면 바로 넣습니다.' : '';
+    $('#pvWhy').textContent = pv.confirm ? (!c ? (cands.length > 1 ? `같은 업체(또는 비슷한 이름) 계약이 ${cands.length}개라 확실하지 않습니다. 가장 가까운 계약을 골라 두었으니 맞는지 확인해 주세요.` : cands.length ? '확실하지 않아 가장 가까운 계약을 골라 두었습니다.' : '어느 계약 서류인지 찾지 못했습니다.') : !d.itemId ? '어떤 서류인지 찾지 못했습니다.' : d.unsure ? (altNames.length ? `제목에 다른 서류 이름(${altNames.join(', ')})도 있어 헷갈립니다.` : '전에 배운 서류와 제목이 거의 같아 그 종류로 골라 두었습니다(글자 인식이 조금 다르게 됨).') : '') + ' 내용을 보고 맞게 골라 주세요. 고른 답은 배워서 다음부터 같은 제목이면 바로 넣습니다.' : '';
     if (pv.confirm && !d.key && d.guess) { const gn = (defaults.공사.concat(defaults.용역, defaults.물품).find((x) => L.suffixOf(x.id) === d.guess) || {}).name; if (gn) $('#pvWhy').textContent += ` 서류 종류는 '${gn}'(으)로 보입니다 — 계약만 고르면 골라집니다.`; }
     if (pv.confirm && revPrev && d.unsure) $('#pvWhy').textContent += ` 이 칸에는 이미 「${revPrev.name}」이 있습니다(같은 서류의 수정본이면 그대로 저장).`;
     $('#pvAi').hidden = true;
@@ -2072,8 +2076,10 @@
   function pagesByRules(list, heads) {
     const out = {};
     (heads || []).forEach((h, i) => {
-      const lr = L.learnedItem(db.learned, list, '', L.headLines((heads.rows && heads.rows[i]) || [h]));
-      const id = lr ? lr.id : Object.keys(L.classifyPages(list, [h]))[0];
+      const hl = L.headLines((heads.rows && heads.rows[i]) || [h]);
+      const lr = L.learnedItem(db.learned, list, '', hl);
+      let id = lr ? lr.id : Object.keys(L.classifyPages(list, [h]))[0];
+      if (!id) { const fz = L.learnedFuzzy(db.learned, list, hl); if (fz) id = fz.id; } // 배운 제목과 거의 같은 쪽(글자 인식 오류 감안)
       if (id) (out[id] = out[id] || []).push(i + 1);
     });
     return out;

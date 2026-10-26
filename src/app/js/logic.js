@@ -160,7 +160,9 @@
   // 배울 신호: 머리 줄 앞 2개(계약 이름·업체·번호 줄 빼고) + 뜻 있는 파일 이름
   function learnSigs(d, c) {
     const skip = [c && c.name, c && c.vendor && vendorCore(c.vendor)].filter(Boolean).map(norm).filter((x) => x.length >= 3);
-    const heads = (d.heads && d.heads.length ? d.heads : [String(d.title || '').slice(0, 24)]).filter((h) => h && h.length >= 3 && !skip.some((k) => h.includes(k)) && !/^\d+$/.test(h)).slice(0, 2);
+    // 글자 인식이 깨진 줄(한글이 적음)·숫자가 많은 줄(금액·날짜·번호)은 빼고, 내용 앞쪽 제목 줄 3개까지
+    const good = (h) => h && h.length >= 3 && !skip.some((k) => h.includes(k)) && !/^\d+$/.test(h) && (h.match(/\d/g) || []).length < 3 && (h.match(/[가-힣]/g) || []).length / h.length >= 0.6;
+    const heads = (d.heads && d.heads.length ? d.heads : [String(d.title || '').slice(0, 24)]).filter(good).slice(0, 3);
     const st = norm(stem(d.name || '')).replace(/\d+/g, '');
     const junk = /^(noname|scan|scanned|image|img|download|document|file|문서|새문서|제목없음|kakaotalk|캡처|스캔|복사본)?$/.test(st) || skip.some((k) => st.includes(k));
     // 파일 이름은 글자를 못 읽은 서류(머리 줄 없음)일 때만 배움 — '준공보완서류 소1-69호'처럼 여러 서류에 같이 쓰는 이름은 배우면 안 됨
@@ -182,6 +184,29 @@
     return true;
   }
   // 배운 규칙에서 찾기: 머리 줄이 배운 머리 줄을 품으면(가장 긴 것), 아니면 파일 이름
+  // 글자 인식은 할 때마다 조금씩 틀림(구분관리→구분권리, 지급→자급): 두 글자씩 묶어 얼마나 겹치는지(0~1)
+  function similar(a, b) {
+    if (!a || !b) return 0; if (a === b) return 1;
+    const bg = (t) => { const m = new Map(); for (let i = 0; i < t.length - 1; i++) { const k = t.slice(i, i + 2); m.set(k, (m.get(k) || 0) + 1); } return m; };
+    const A = bg(a), B = bg(b); let both = 0;
+    for (const [k, n] of A) both += Math.min(n, B.get(k) || 0);
+    return (2 * both) / Math.max(1, a.length - 1 + b.length - 1);
+  }
+  // 배운 제목과 '거의 같은' 제목(글자 인식 오류 감안) — 기본 찾는 말로 못 찾았을 때만 씀
+  function learnedFuzzy(rules, list, heads, min = 0.65) {
+    if (!rules || !rules.length || !(heads || []).length) return null;
+    const pick = (suf) => list.find((x) => suffixOf(x.id) === suf);
+    let best = null;
+    for (const r of rules) {
+      if (!r.head || r.head.length < 8) continue; const it = pick(r.suf); if (!it) continue;
+      for (const h of heads) {
+        if (h.length < 8) continue;
+        const sc = Math.max(similar(h, r.head), h.length > r.head.length ? similar(h.slice(0, r.head.length + 2), r.head) : 0);
+        if (sc >= min && (!best || sc > best.score)) best = { id: it.id, score: sc, rule: r, by: 'fuzzy' };
+      }
+    }
+    return best;
+  }
   function learnedItem(rules, list, name, heads) {
     if (!rules || !rules.length) return null;
     const ids = new Set(list.map((x) => x.id)); const pick = (suf) => list.find((x) => suffixOf(x.id) === suf && ids.has(x.id));
@@ -960,7 +985,7 @@
     API_BASE, API_OPS, TYPES, apiUrl, keyParam, monthRanges, parseApiText, parseApiBody, parseCorpList, parseCorpRows, normalizeApiItem, detectExtFinance,
     G2B, g2bUrl, scanAuditFields, summarizeChanges, chgPlan, autoKind, CHG_KINDS, changesOf, ordSnap, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
     ordOf, viaParts, viaKey, viaStatus, itemsInName, isRecentItem, issuedTooEarly, isAdvBond, advBondCheck, ADV_DAYS, matchCandidates, checklistStatus, holds, hasItem, classifyPages, classifyTitleLines, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail, issueCond,
-    headLines, learnSigs, learnedItem, classifyInfo, suffixOf, shareSafe, splitPlan, checkSplit, goodName, isG2bNo, maskPrivate,
+    headLines, learnSigs, learnedItem, learnedFuzzy, similar, classifyInfo, suffixOf, shareSafe, splitPlan, checkSplit, goodName, isG2bNo, maskPrivate,
     PAY_KINDS, typeKey, hasRounds, roundOnly, roundSteps, roundHint, roundLabel, routeRound,
   };
   root.JH = root.JH || {};
