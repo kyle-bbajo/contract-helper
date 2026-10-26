@@ -1177,6 +1177,21 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   }
   step('올릴 때마다 확인(기본): 확실히 찾은 서류도 팝업으로 보여 주고(추천 계약·종류 골라 둠) [이대로 저장]');
 
+  // 이미 있는 파일을 다시 올리면: 말없이 넘기지 않고 지금 자리를 팝업으로(넘겨도 그 자리 그대로)
+  {
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    const dn = await page.evaluate(() => (JH.app.db.docs.find((x) => x.key && x.itemId && !x.missing && x.path && x.kind === 'pdf' && x.size < 3e6) || {}).name);
+    const before = await page.evaluate((n) => { const d = JH.app.db.docs.find((x) => x.name === n); return { key: d.key, item: d.itemId, n: JH.app.db.docs.length }; }, dn);
+    await page.evaluate(async (n) => { const d = JH.app.db.docs.find((x) => x.name === n); const b = await JH.server.readBytes(d.path); JH.app.cfg.uploadConfirm = true; await JH.app.saveCfg(); await JH.app.ingest([new File([b], n, { type: 'application/pdf' })], null, null); }, dn);
+    await page.waitForSelector('#dlgPreview[open]', { timeout: 10000 });
+    assert.match(await page.textContent('#pvWhy'), /이미 올린 파일/, '다시 올리면 지금 자리를 팝업으로');
+    await page.click('#dlgPreview button[value="close"]'); await page.waitForTimeout(800);
+    const after = await page.evaluate((n) => { const d = JH.app.db.docs.find((x) => x.name === n); return { key: d.key, item: d.itemId, n: JH.app.db.docs.length }; }, dn);
+    assert.deepEqual(after, before, '넘기면 그 자리 그대로, 새로 넣지 않음');
+    await page.evaluate(async () => { JH.app.cfg.uploadConfirm = false; await JH.app.saveCfg(); });
+  }
+  step('이미 있는 파일을 다시 올리면 새로 넣지 않고 지금 자리를 팝업으로 보여 줌');
+
   // 뒤로: 현황판 → 계약을 눌러 넘어간 뒤 [←]면 다시 현황판 · 현황판에서 가운데 버튼이면 새 탭(보던 화면 그대로)
   {
     await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));

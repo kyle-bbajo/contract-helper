@@ -149,7 +149,20 @@
 
   // 파일 하나 읽기 → { lines, ocr }
   // 엑셀(.xlsx)·워드(.docx): 압축 안 XML의 글자만(견적서·산출내역서를 엑셀로 받는 경우 등). .xls(옛 형식)는 글자를 못 읽고 파일 이름으로 분류
+  // 옛 엑셀·워드(.xls·.doc, OLE 형식): 정확한 표 구조는 못 읽어도 안에 든 한글 글자(UTF-16)를 뽑아 분류에 씀
+  function oldOfficeLines(bytes) {
+    if (!(bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0)) return [];
+    const z = root.CFB.read(bytes, { type: 'array' });
+    const i = z.FullPaths.findIndex((p) => /\/(Workbook|Book|WordDocument)$/i.test(p));
+    if (i < 0) return [];
+    const c = new Uint8Array(z.FileIndex[i].content || []);
+    const txt = new TextDecoder('utf-16le').decode(c.subarray(0, c.length - (c.length % 2)));
+    const odd = c.length > 1 ? new TextDecoder('utf-16le').decode(c.subarray(1, c.length - ((c.length - 1) % 2))) : ''; // 글자가 홀수 자리에서 시작하는 경우
+    const runs = (t) => t.match(/[가-힣][가-힣0-9A-Za-z\s()·.,\-~%/]{1,80}/g) || [];
+    return [...runs(txt), ...runs(odd)].map((x) => x.replace(/\s+/g, ' ').trim()).filter((x) => (x.match(/[가-힣]/g) || []).length >= 2).slice(0, 2000);
+  }
   function officeLines(bytes) {
+    if (bytes[0] === 0xd0 && bytes[1] === 0xcf) { try { return oldOfficeLines(bytes); } catch (_) { return []; } }
     if (!(bytes[0] === 0x50 && bytes[1] === 0x4b)) return [];
     const z = root.CFB.read(bytes, { type: 'array' });
     const txt = (re) => z.FullPaths.map((p, i) => [p, i]).filter(([p]) => re.test(p)).map(([, i]) => new TextDecoder('utf-8').decode(new Uint8Array(z.FileIndex[i].content || [])));

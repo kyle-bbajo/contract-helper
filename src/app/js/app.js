@@ -485,6 +485,7 @@
   }
   // 확인 팝업 띄우기: 다른 창(설정·계약 수정 등)이 열려 있으면 기다렸다가 그 창을 닫는 즉시 띄움. 이미 확인 팝업이 떠 있으면 뒤에 이어 붙임
   let askQueue = [];
+  const dupSeen = new Set(); // 다시 올린(이미 있는) 파일 — 팝업에서 지금 자리를 보여 주고, 저장 안 하고 넘겨도 그 자리 그대로
   function askLater(ids) {
     ids = ids.filter((id) => docById(id));
     if (!ids.length) return;
@@ -512,7 +513,7 @@
       toast(`${order.length}개 파일을 모두 읽었습니다.${$('#dlgPreview').open ? ' 확인 팝업에서 차례로 확인하세요.' : ''}`, 'ok', undoAction());
       return;
     }
-    const recs = []; let skipped = 0; const dupWhere = []; const again = [];
+    const recs = []; let skipped = 0; const dupWhere = []; const dupIds = []; const again = [];
     const snap0 = snapshot([], [], true);
     try {
       // 1) 읽기
@@ -524,7 +525,7 @@
         if (dup) {
           const fk = forceKey && db.contracts[forceKey];
           if ((fk && dup.key !== fk.key) || !dup.key || !dup.itemId || dup.unsure) { if (!again.includes(dup)) again.push(dup); continue; }
-          skipped++; dupWhere.push(`「${f.name}」은 이미 ${whereOf(dup)}에 있음`); continue;
+          skipped++; dupWhere.push(`「${f.name}」은 이미 ${whereOf(dup)}에 있음`); dupIds.push(dup.id); continue;
         }
         const bytes = new Uint8Array(await f.arrayBuffer());
         const kind = L.kindOf(f.name);
@@ -650,7 +651,10 @@
       };
       if (opt.onlyMatched && ignored === recs.length) { tellIgnored(); return; }
       const nDone = recs.length - ignored + again.length;
-      if (!nDone && skipped) { toast((opt.from ? `${opt.from}의 ` : '') + `같은 파일이 이미 있어 넣지 않았습니다: ${dupWhere.slice(0, 2).join(', ')}${dupWhere.length > 2 ? ` 외 ${dupWhere.length - 2}개` : ''}.`); dupWhere.forEach((x) => logAct('올림 건너뜀: ' + x)); return; }
+      // 이미 있는 파일을 직접 다시 올렸으면(확인 켜짐): 말없이 넘기지 않고 지금 자리를 팝업으로 보여 줌 — 잘못 들어가 있으면 거기서 고침
+      const askDup = !opt.onlyMatched && cfg.uploadConfirm !== false ? dupIds.filter((id) => docById(id)) : [];
+      askDup.forEach((id) => dupSeen.add(id));
+      if (!nDone && skipped) { toast((opt.from ? `${opt.from}의 ` : '') + `같은 파일이 이미 있어 새로 넣지 않았습니다: ${dupWhere.slice(0, 2).join(', ')}${dupWhere.length > 2 ? ` 외 ${dupWhere.length - 2}개` : ''}.${askDup.length ? ' 지금 자리를 팝업으로 보여 드립니다.' : ''}`); dupWhere.forEach((x) => logAct('올림 건너뜀: ' + x)); if (askDup.length) askLater(askDup); return; }
       let msg = (opt.from ? `${opt.from}에서 ` : '') + `${nDone}개 정리했습니다` + (parts.length ? ` — ${parts.join(', ')}` : '') + '.';
       if (again.length) msg += ` 전에 올렸던 파일 ${again.length}개는 다시 정리했습니다${againDone < again.length ? `(${again.length - againDone}개는 확인 필요)` : ''}.`;
       if (ignored) { msg += ` 계약·서류 종류를 못 찾은 파일 ${ignored}개는 가져오지 않았습니다.`; tellIgnored(); }
@@ -675,7 +679,7 @@
       const nLearned = recs.filter((r) => r.learned).length;
       if (nLearned) msg += ` ${nLearned}개는 전에 배운 대로 넣었습니다.`;
       if (!opt.one) toast(msg, inbox ? '' : 'ok', unsure.length ? { label: '확인하기', run: () => openPreview(unsure, 0, true) } : recs.length || again.length ? undoAction() : null);
-      if (unsure.length) askLater(unsure);
+      if (unsure.length || askDup.length) askLater([...unsure, ...askDup]);
       const keys = Object.keys(byContract);
       if (!forced && !opt.onlyMatched && keys.length === 1) ui.sel = keys[0]; // 폴더에서 자동으로 읽은 것은 보던 계약 화면을 바꾸지 않음
     } catch (e) {
@@ -1968,7 +1972,7 @@
   }
   // 확인 팝업에서 [이대로 저장] 없이 [다음]·[닫기]·✕로 넘긴 파일은 미분류로 — 고른 계약·종류는 추천으로 남겨 미분류 화면·다음 팝업에서 맨 위에
   async function skipToInbox(ids) {
-    const ds = ids.map(docById).filter((d) => d && d.key && !pv.done.has(d.id));
+    const ds = ids.map(docById).filter((d) => d && d.key && !pv.done.has(d.id) && !dupSeen.has(d.id));
     if (!ds.length) return 0;
     await recorded(`확인 안 한 파일 ${ds.length}개 미분류로`, ds.map((d) => d.key), ds.map((d) => d.id), async () => {
       for (const d of ds) {
@@ -2019,6 +2023,7 @@
     $('#pvWhy').textContent = pv.confirm ? (!c ? (cands.length > 1 ? `같은 업체(또는 비슷한 이름) 계약이 ${cands.length}개라 확실하지 않습니다. 가장 가까운 계약을 골라 두었으니 맞는지 확인해 주세요.` : cands.length ? '확실하지 않아 가장 가까운 계약을 골라 두었습니다.' : '어느 계약 서류인지 찾지 못했습니다.') : !d.itemId ? '어떤 서류인지 찾지 못했습니다.' : d.unsure ? (altNames.length ? `제목에 다른 서류 이름(${altNames.join(', ')})도 있어 헷갈립니다.` : '전에 배운 서류와 제목이 거의 같아 그 종류로 골라 두었습니다(글자 인식이 조금 다르게 됨).') : '') + ' 내용을 보고 맞게 골라 주세요. 고른 답은 배워서 다음부터 같은 제목이면 바로 넣습니다.' : '';
     if (pv.confirm && !d.key && d.guess) { const gn = (defaults.공사.concat(defaults.용역, defaults.물품).find((x) => L.suffixOf(x.id) === d.guess) || {}).name; if (gn) $('#pvWhy').textContent += ` 서류 종류는 '${gn}'(으)로 보입니다 — 계약만 고르면 골라집니다.`; }
     if (pv.confirm && revPrev && d.unsure) $('#pvWhy').textContent += ` 이 칸에는 이미 「${revPrev.name}」이 있습니다(같은 서류의 수정본이면 그대로 저장).`;
+    if (pv.confirm && dupSeen.has(d.id)) $('#pvWhy').textContent = `이미 올린 파일입니다 — 지금 ${whereOf(d)}에 있습니다. 맞으면 [맞음 · 다음], 다른 계약·서류면 골라서 저장하세요(넘겨도 지금 자리 그대로).`;
     $('#pvAi').hidden = true;
     if (pv.confirm && (c || cands[0]) && (!d.itemId || d.unsure)) aiGuess(d, c || db.contracts[cands[0]], tok);
     $('#pvPrev').disabled = pv.i === 0; $('#pvNext').textContent = pv.i < pv.ids.length - 1 ? '다음' : '닫기';
