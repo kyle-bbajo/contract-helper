@@ -9,6 +9,7 @@ if (!existsSync(SRC)) throw new Error('먼저 npm run build');
 const OUT = join(ROOT, 'dist/demo');
 rmSync(OUT, { recursive: true, force: true });
 cpSync(SRC, OUT, { recursive: true });
+rmSync(join(OUT, 'hwpsec'), { recursive: true, force: true }); // 한글 보안모듈(Windows DLL)은 시연판에 안 넣음
 
 // 실제 인증키가 든 기관 설정은 빼고 시연용으로
 writeFileSync(join(OUT, 'org.json'), JSON.stringify({ insttNm: '용인도시공사', insttDivCd: '1', apiKey: '시연용', lawOC: '시연용', months: 6, notice: { region: '용인시' } }, null, 2));

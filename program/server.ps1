@@ -13,7 +13,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '1.6.34'
+$Version = '1.6.35'
 $AppRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $WebRoot = Join-Path $AppRoot 'app'
 $LocalCfg = Join-Path $AppRoot 'local.json'
@@ -379,6 +379,19 @@ function Convert-HwpToPdf([string]$src, [string]$dst) {
 # 데이터 폴더\한글보안모듈(또는 프로그램 폴더)에 넣어 두면 레지스트리(HKCU\Software\HNC\HwpAutomation\Modules)에 등록하고 RegisterModule
 $script:HwpSec = ''   # on 등록됨 · nodll 파일 없음 · fail 등록 실패
 function Get-HwpSecDir { return (Join-Path $script:DataDir '한글보안모듈') }
+# 프로그램에 같이 넣어 둔 한컴 보안모듈(app\hwpsec)을 데이터 폴더\한글보안모듈로 복사(없을 때만) — 사람이 따로 넣지 않아도 됨
+function Copy-BundledHwpSec {
+  try {
+    $src = Get-ChildItem -LiteralPath (Join-Path $AppRoot 'app\hwpsec') -Filter 'FilePathChecker*.dll' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $src) { return }
+    $dir = Get-HwpSecDir
+    if (Get-ChildItem -LiteralPath $dir -Recurse -Depth 2 -Filter 'FilePathChecker*.dll' -ErrorAction SilentlyContinue | Select-Object -First 1) { return }
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    Copy-Item -LiteralPath $src.FullName -Destination (Join-Path $dir $src.Name) -Force
+    Unblock-File -LiteralPath (Join-Path $dir $src.Name) -ErrorAction SilentlyContinue
+    Write-StartLog '한글 보안모듈을 데이터 폴더에 넣음(프로그램에 들어 있던 것)'
+  } catch { }
+}
 function Find-HwpSecDll {
   foreach ($d in @((Get-HwpSecDir), $AppRoot, (Join-Path $AppRoot 'hwp'))) {
     if (-not (Test-Path -LiteralPath $d)) { continue }
@@ -401,6 +414,7 @@ function Enable-HwpSec($h) {
 }
 function Get-Hwp {
   if (-not $script:Hwp) {
+    Copy-BundledHwpSec
     try { $script:Hwp = New-Object -ComObject 'HWPFrame.HwpObject' } catch { throw '이 PC에서 한글 프로그램을 찾지 못했습니다.' }
     Enable-HwpSec $script:Hwp
     try { $script:Hwp.XHwpWindows.Item(0).Visible = $false } catch {}
@@ -619,7 +633,7 @@ function Handle($stream, $req) {
       Send-Json $stream 200 @{ ok = $true; version = $Version; wins = $roles; installed = (Read-Installed); staged = (Get-Staged); check = (Read-JsonFile (Join-Path $AppRoot 'update-check.json')); canUpdate = [bool]((Test-InstalledCopy) -and (Get-UpdateCfg)); dataDir = $script:DataDir; watchDirs = @($script:WatchDirs); relocated = $script:Relocated; lost = $script:Lost; oldDir = $script:OldDir; os = [Environment]::OSVersion.VersionString }; return
     }
     # 창을 닫음(X): 그 창을 지우고, 남은 창이 없으면 몇 초 기다렸다가(새로고침이면 바로 다시 들어옴) 끔
-    '/api/bye' { if ($q['w']) { $script:Wins.Remove([string]$q['w']) }; if ($script:Wins.Count -eq 0) { $script:ByeAt = Get-Date }; Send-Json $stream 200 @{ ok = $true }; return }
+    '/api/bye' { if ($q['w']) { $script:Wins.Remove([string]$q['w']) }; $script:ByeAt = Get-Date; Send-Json $stream 200 @{ ok = $true }; return }
     # 공고문 전용 창 열기(프로그램 창 모양으로)
     '/api/openwin' { Open-Browser "http://$BaseHost/?only=notice"; Send-Json $stream 200 @{ ok = $true }; return }
 
@@ -797,6 +811,7 @@ function Handle($stream, $req) {
     '/api/hwpsec' {
       # 한글 보안모듈 상태. apply=1이면 지금 등록해 봄(한글을 띄움)
       $dir = Get-HwpSecDir; if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+      Copy-BundledHwpSec
       $dll = Find-HwpSecDll
       if ($dll -and $q['apply'] -eq '1') { try { $null = Get-Hwp; Enable-HwpSec $script:Hwp } catch { $script:HwpSec = 'fail' } }
       $state = $script:HwpSec
@@ -989,7 +1004,11 @@ try {
       Start-Sleep -Milliseconds 40
       if (((Get-Date) - $script:LastSeen).TotalMinutes -gt $IdleMinutes) { break }
       # 마지막 창을 닫은 뒤 6초 동안 아무 창도 다시 안 들어오면 끔
-      if ($script:ByeAt -and $script:Wins.Count -eq 0 -and ((Get-Date) - $script:LastSeen).TotalSeconds -gt 6) { Write-StartLog '창을 모두 닫아 끔'; break }
+      # (창이 신호를 20초마다 보냄 — 2분 반 넘게 소식 없는 창은 이미 닫힌 것으로 봄. 최소화된 창은 1분에 한 번쯤 보내므로 넉넉히)
+      if ($script:ByeAt -and ((Get-Date) - $script:LastSeen).TotalSeconds -gt 6) {
+        $now = Get-Date; $live = @($script:Wins.Values | Where-Object { ($now - $_.at).TotalSeconds -lt 150 }).Count
+        if ($live -eq 0) { Write-StartLog '창을 모두 닫아 끔'; break }
+      }
       continue
     }
     $client = $listener.AcceptTcpClient()
