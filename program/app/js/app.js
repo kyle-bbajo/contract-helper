@@ -503,8 +503,46 @@
   document.addEventListener('close', (e) => { if (e.target && e.target.tagName === 'DIALOG') setTimeout(flushAsk, 150); }, true);
   // 파일이 여러 개인 게 보통인 칸(수정본을 묻지 않음)
   const MULTI_ITEM = /-(related|agent|photo|result|roster|laborlist|bizreg|license|licbook)$/;
+  // 압축 파일(.zip)은 풀어서 안에 든 파일을 하나씩 넣음(압축 안의 압축도 한 번 더). 원래 zip은 넣지 않음
+  async function hwpViaHangul(name, bytes) {
+    let tmp = null, pdf = null;
+    try {
+      progress(`한글로 여는 중: ${name}`, .1); hwpPromptHint();
+      tmp = (await S.save('_임시', 'read_' + L.uid() + (/\.hwpx$/i.test(name) ? '.hwpx' : '.hwp'), bytes)).path;
+      pdf = (await S.hwp2pdf(tmp)).path;
+      return await R.read(await S.readBytes(pdf), 'pdf', 'application/pdf');
+    } catch (e) { console.warn('한글로 읽기 실패', name, e); return null; }
+    finally { for (const p of [tmp, pdf]) if (p) S.remove(p).catch(() => {}); }
+  }
+  // 한글 '접근 허용' 창: 보안모듈을 안 넣었으면 한 번 알려 줌
+  let hwpSecState = null, hwpHinted = false;
+  function hwpPromptHint() {
+    if (hwpHinted || hwpSecState === 'on' || hwpSecState === 'ready') return; hwpHinted = true;
+    toast("한글이 '접근 허용/모두 허용'을 물으면 [모두 허용]을 누르세요. 다시는 안 묻게 하려면 설정 → 공고문 → '한글 보안 창 안 뜨게'(보안모듈 넣기, 한 번만).", '', { label: '설정 열기', ms: 15000, run: () => JH.settings.open('notice') });
+  }
+  async function expandZips(files) {
+    const out = [], locked = [], bad = [];
+    const walk = async (f, depth) => {
+      if (!/\.zip$/i.test(f.name)) { out.push(f); return; }
+      try {
+        progress(`압축 푸는 중: ${f.name}`, .05);
+        const items = await R.unzip(new Uint8Array(await f.arrayBuffer()));
+        for (const it of items) {
+          if (it.locked) { locked.push(`${f.name} › ${it.path}`); continue; }
+          const g = new File([it.bytes], it.name, { type: '' });
+          if (/\.zip$/i.test(it.name) && depth < 1) await walk(g, depth + 1); else if (!/\.zip$/i.test(it.name)) out.push(g);
+        }
+        logAct(`압축 풀기 「${f.name}」 → ${items.filter((x) => !x.locked).length}개 파일`);
+      } catch (e) { bad.push(`${f.name}(${e.message})`); }
+    };
+    for (const f of files) await walk(f, 0);
+    if (locked.length) toast(`암호가 걸렸거나 풀 수 없는 압축 안 파일 ${locked.length}개는 넣지 못했습니다: ${locked.slice(0, 2).join(', ')}${locked.length > 2 ? ' 외' : ''}. 압축을 직접 푼 뒤 올려 주세요.`, 'err');
+    if (bad.length) toast(`압축 파일을 풀지 못했습니다: ${bad.join(', ')}`, 'err');
+    return out;
+  }
   async function ingest(fileList, forceKey, forceItem, opt = {}) {
-    const files = [...fileList].filter((f) => f && f.name && !f.name.startsWith('.') && !/^(thumbs\.db|desktop\.ini)$/i.test(f.name));
+    let files = [...fileList].filter((f) => f && f.name && !f.name.startsWith('.') && !/^(thumbs\.db|desktop\.ini)$/i.test(f.name));
+    if (files.some((f) => /\.zip$/i.test(f.name))) { files = (await expandZips(files)).filter((f) => f && f.name && !f.name.startsWith('.')); progress(null); }
     if (!files.length) return;
     if (!S.online) { toast('바탕화면의 "계약업무 도우미" 아이콘으로 실행해야 서류를 저장할 수 있습니다.', 'err'); return; }
     // 여러 파일을 올리고 하나씩 확인할 때: 다 읽을 때까지 기다리지 않고 한 파일씩 읽어 바로 팝업 — 확인하는 동안 나머지는 뒤에서 읽어 팝업 뒤에 붙임
@@ -530,7 +568,9 @@
         }
         const bytes = new Uint8Array(await f.arrayBuffer());
         const kind = L.kindOf(f.name);
-        const { lines, ocr } = await R.read(bytes, kind, f.type);
+        let { lines, ocr } = await R.read(bytes, kind, f.type);
+        // 글자를 못 읽은 한글 파일(옛 형식·그룹웨어 결재문서 등): 설치된 한글로 PDF로 바꿔 읽어 봄
+        if (kind === 'hwp' && !lines.length) { const t = await hwpViaHangul(f.name, bytes); if (t) ({ lines, ocr } = t); }
         recs.push({
           id: L.uid(), name: f.name, kind, size: f.size, mime: f.type, bytes, ocr, lines,
           meta: L.findMeta(lines), text: L.maskPrivate(L.norm(lines.join(' ')).slice(0, 6000)), title: L.maskPrivate(L.norm(lines.slice(0, 8).join(' ')).slice(0, 300)), heads: L.headLines(lines),
@@ -685,7 +725,7 @@
       if (!opt.one) toast(msg, inbox ? '' : 'ok', unsure.length ? { label: '확인하기', run: () => openPreview(unsure, 0, true) } : recs.length || again.length ? undoAction() : null);
       if (unsure.length || askDup.length) askLater([...unsure, ...askDup]);
       // 한글·엑셀은 뒤에서 미리 PDF로 바꿔 둠(미리 보기·인쇄가 바로 뜨게) — 한 번에 하나씩, 앞 5개까지
-      { const conv = placed.filter(needsPdf).slice(0, 5); let ch = Promise.resolve(); conv.forEach((d) => { ch = ch.then(() => toPdf(d)); }); }
+      { const conv = placed.filter(needsPdf).filter((d) => d.kind !== 'hwp' || hwpSecState === 'on' || hwpSecState === 'ready').slice(0, 5); /* 한글은 보안모듈이 있을 때만 미리(없으면 '접근 허용' 창이 줄줄이 뜸) */ let ch = Promise.resolve(); conv.forEach((d) => { ch = ch.then(() => toPdf(d)); }); }
       const keys = Object.keys(byContract);
       if (!forced && !opt.onlyMatched && keys.length === 1) ui.sel = keys[0]; // 폴더에서 자동으로 읽은 것은 보던 계약 화면을 바꾸지 않음
     } catch (e) {
@@ -2004,6 +2044,7 @@
   const pdfJobs = new Map();
   function toPdf(d) {
     if (!needsPdf(d)) return Promise.resolve(d && d.pdfPath);
+    if (d.kind === 'hwp') hwpPromptHint();
     if (!pdfJobs.has(d.id)) pdfJobs.set(d.id, (d.kind === 'hwp' ? S.hwp2pdf(d.path) : S.office2pdf(d.path)).then((r) => { d.pdfPath = r.path; saveDb(); return r.path; }).catch(() => null).finally(() => pdfJobs.delete(d.id)));
     return pdfJobs.get(d.id);
   }
@@ -3167,6 +3208,7 @@
     initTabs(); // 지난번에 열어 둔 탭들(이 PC에 기억)
     setInterval(() => { pingWin().catch(() => banner(ui.restarting ? '새 버전으로 다시 켰습니다. 새로 열린 창을 쓰시고 이 창은 닫아 주세요(새 창이 안 보이면 바탕화면의 바로가기로 실행).' : '연결 창구가 꺼졌습니다. 바탕화면의 바로가기로 다시 실행하면 새 창이 열립니다 — 이 창은 닫아 주세요(작업한 내용은 저장돼 있음).', true)); }, 20000);
     if (ONLY) return; // 공고문 전용 창: 폴더 확인·정리·자동 새로고침은 원래 창이 함
+    S.hwpSec().then((r) => { hwpSecState = r && r.state; }).catch(() => {}); // 한글 보안모듈 있는지(한글은 띄우지 않음)
     try { await reconcile(); render(); } catch (e) { console.warn('폴더 확인 실패', e); }
     try { await relayout(); } catch (e) { console.warn('폴더 정리 실패', e); }
     // 스캔 글자가 깨져 이상한 이름으로 만들어진 계약(예전 버전): 알려 주고 [정리하기]로 서류는 미분류, 계약은 지움

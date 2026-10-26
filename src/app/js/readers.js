@@ -147,6 +147,26 @@
     }
   }
 
+  // 글자로 된 문서(HWPML·HTML·MHT·XML): 태그를 걷어 내고 글자만. 한글 인코딩(EUC-KR)도
+  function markupLines(bytes) {
+    const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    const head = new TextDecoder('latin1').decode(u8.subarray(0, 600));
+    if (!/^\s*(<|\ufeff<|\xef\xbb\xbf<|MIME-Version|From:|Content-Type)/i.test(head) && !/<(\?xml|html|HWPML)/i.test(head)) return [];
+    const dec = (b, cs) => { try { return new TextDecoder(cs || 'utf-8', { fatal: !cs }).decode(b); } catch (_) { return new TextDecoder('euc-kr').decode(b); } };
+    let csm = head.match(/charset\s*=\s*["']?([\w-]+)/i) || head.match(/encoding\s*=\s*["']([\w-]+)/i);
+    let t = dec(u8, csm && !/utf-?8/i.test(csm[1]) ? csm[1].toLowerCase().replace('ks_c_5601-1987', 'euc-kr') : '');
+    if (/^\s*(MIME-Version|From:|Content-Type)/i.test(head)) {
+      // MHT: html 부분만(quoted-printable·base64 풀기)
+      const part = t.split(/\r?\n--[^\r\n]+/).find((x) => /Content-Type:\s*text\/html/i.test(x)) || t;
+      const body = part.replace(/^[\s\S]*?\r?\n\r?\n/, '');
+      if (/Content-Transfer-Encoding:\s*base64/i.test(part)) { try { const raw = Uint8Array.from(atob(body.replace(/\s+/g, '')), (c) => c.charCodeAt(0)); const cs2 = part.match(/charset\s*=\s*["']?([\w-]+)/i); t = dec(raw, cs2 && !/utf-?8/i.test(cs2[1]) ? 'euc-kr' : ''); } catch (_) { t = body; } }
+      else if (/quoted-printable/i.test(part)) { const bs = []; const q = body.replace(/=\r?\n/g, ''); for (let i = 0; i < q.length; i++) { if (q[i] === '=' && /^[0-9A-F]{2}$/i.test(q.substr(i + 1, 2))) { bs.push(parseInt(q.substr(i + 1, 2), 16)); i += 2; } else bs.push(q.charCodeAt(i) & 255); } const cs2 = part.match(/charset\s*=\s*["']?([\w-]+)/i); t = dec(new Uint8Array(bs), cs2 && !/utf-?8/i.test(cs2[1]) ? 'euc-kr' : ''); }
+      else t = body;
+    }
+    t = t.replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ').replace(/<\/(p|div|tr|li|h\d|P|TEXT|PARAGRAPH)>|<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#(\d+);/g, (m, n) => String.fromCharCode(+n)).replace(/&amp;/g, '&');
+    return t.split(/\r?\n/).map((x) => x.replace(/\s+/g, ' ').trim()).filter((x) => x && /[가-힣A-Za-z0-9]/.test(x)).slice(0, 3000);
+  }
   // 파일 하나 읽기 → { lines, ocr }
   // 엑셀(.xlsx)·워드(.docx): 압축 안 XML의 글자만(견적서·산출내역서를 엑셀로 받는 경우 등). .xls(옛 형식)는 글자를 못 읽고 파일 이름으로 분류
   // 옛 엑셀·워드(.xls·.doc, OLE 형식): 정확한 표 구조는 못 읽어도 안에 든 한글 글자(UTF-16)를 뽑아 분류에 씀
@@ -183,7 +203,11 @@
     try {
       if (kind === 'pdf') lines = await pdfLines(bytes);
       // 한글: 본문 글자 전체(표 안 글자 포함). 본문을 못 읽으면(암호 등) 미리보기 글자
-      else if (kind === 'hwp') { try { lines = await JH.hwp.fullLines(root.CFB, bytes); } catch (_) { lines = []; } if (!lines.length) lines = hwpLines(bytes); }
+      else if (kind === 'hwp') {
+        try { lines = await JH.hwp.fullLines(root.CFB, bytes); } catch (_) { lines = []; }
+        if (!lines.length) { try { lines = hwpLines(bytes); } catch (_) { lines = []; } }
+        if (!lines.length) lines = markupLines(bytes); // 그룹웨어(BizFlow 등)에서 받은 결재문서: 확장자만 .hwp이고 속은 HWPML(XML)·HTML·MHT인 경우
+      }
       else if (kind === 'other') lines = officeLines(bytes);
     } catch (e) { console.warn('읽기 실패', e); }
     // 스캔 PDF에 스캐너 앱 글씨(CamScanner 등)만 글자로 들어 있는 경우가 있어 '한글이 거의 없으면' 글자 인식
@@ -244,5 +268,35 @@
     } finally { doc.destroy(); }
     return heads;
   }
-  root.JH.readers = { read, officeLines, fullLines, pdfLines, hwpLines, ocrLines, pageHeads, get ocrBroken() { return ocrBroken; } };
+  // 압축 파일(.zip) 풀기 — 브라우저 안에서(밖으로 안 나감). 윈도우에서 만든 zip은 한글 이름이 CP949라 그것도 읽음
+  // 돌려줌: [{ name, path(폴더 포함), bytes }] · 암호 걸린 항목은 { name, locked: true }
+  async function unzip(bytes) {
+    const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    let eocd = -1;
+    for (let i = u8.length - 22; i >= Math.max(0, u8.length - 65557); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    if (eocd < 0) throw new Error('압축 파일을 읽지 못했습니다(zip 형식이 아니거나 깨짐)');
+    const n = dv.getUint16(eocd + 10, true); let p = dv.getUint32(eocd + 16, true);
+    const utf8 = new TextDecoder('utf-8', { fatal: true }), kr = new TextDecoder('euc-kr');
+    const out = [];
+    for (let k = 0; k < n && dv.getUint32(p, true) === 0x02014b50; k++) {
+      const flags = dv.getUint16(p + 8, true), method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true);
+      const nl = dv.getUint16(p + 28, true), el = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), lo = dv.getUint32(p + 42, true);
+      const raw = u8.subarray(p + 46, p + 46 + nl); p += 46 + nl + el + cl;
+      let name; if (flags & 0x800) name = new TextDecoder('utf-8').decode(raw); else { try { name = utf8.decode(raw); } catch (_) { name = kr.decode(raw); } }
+      name = name.replace(/\\/g, '/');
+      if (name.endsWith('/') || /(^|\/)(__MACOSX|\.DS_Store|Thumbs\.db|desktop\.ini)(\/|$)/i.test(name)) continue;
+      const base = name.split('/').pop(); if (!base || base.startsWith('._')) continue;
+      if (flags & 1) { out.push({ name: base, path: name, locked: true }); continue; }
+      const ls = lo + 30 + dv.getUint16(lo + 26, true) + dv.getUint16(lo + 28, true);
+      const data = u8.subarray(ls, ls + csize);
+      let fileBytes;
+      if (method === 0) fileBytes = data.slice();
+      else if (method === 8) fileBytes = new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+      else { out.push({ name: base, path: name, locked: true }); continue; }
+      out.push({ name: base, path: name, bytes: fileBytes });
+    }
+    return out;
+  }
+  root.JH.readers = { unzip, markupLines, read, officeLines, fullLines, pdfLines, hwpLines, ocrLines, pageHeads, get ocrBroken() { return ocrBroken; } };
 })(window);

@@ -1239,6 +1239,40 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   }
   step('여러 파일·여러 확장자(PDF·한글·엑셀·옛 엑셀·그림·텍스트)를 한 번에 올려도 하나씩 차례로 확인 팝업');
 
+  // 압축 파일(.zip): 풀어서 안에 든 파일을 하나씩 넣음(윈도우 zip의 한글 이름 CP949, 폴더, 압축 안의 압축까지 · 맥 찌꺼기 파일은 뺌)
+  {
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    const zipb = readFileSync(new URL('../fixtures/업체서류묶음.zip', import.meta.url));
+    const [fcz] = await Promise.all([page.waitForEvent('filechooser'), page.click('#btnAdd')]);
+    await fcz.setFiles({ name: '업체서류묶음.zip', mimeType: 'application/zip', buffer: zipb });
+    const want = ['압축안_시청사 옥상 방수공사_착공계.pdf', '압축안_사업자등록증.pdf', '압축안_통장사본.pdf'];
+    await waitFor(() => page.evaluate((w) => w.every((n) => JH.app.db.docs.some((d) => d.name === n)), want), 60000, '압축 풀어 넣기');
+    const z = await page.evaluate(() => ({ zip: JH.app.db.docs.some((d) => /\.zip$/i.test(d.name)), mac: JH.app.db.docs.some((d) => d.name.startsWith('._')), st: (JH.app.db.docs.find((d) => d.name === '압축안_시청사 옥상 방수공사_착공계.pdf') || {}).itemId }));
+    assert.deepEqual([z.zip, z.mac], [false, false], '압축 파일 자체·맥 찌꺼기는 안 넣음');
+    assert.equal(z.st, 'c-start', '압축 안 파일도 이름으로 분류');
+    await waitFor(async () => !(await page.isVisible('#progress')), 30000, '정리 끝'); await page.waitForTimeout(1500);
+    for (let k = 0; k < 5; k++) { await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close())); await page.waitForTimeout(400); }
+  }
+  step('압축 파일(.zip)을 올리면 풀어서 안의 파일을 하나씩 정리(한글 이름·폴더·압축 안 압축)');
+
+  // 그룹웨어(BizFlow 등) 결재문서: 확장자는 .hwp인데 속은 HWPML(XML)·HTML·MHT → 글자를 읽어 분류
+  {
+    const xml = '<?xml version="1.0" encoding="UTF-8"?><HWPML Version="2.8"><BODY><SECTION><P><TEXT><CHAR>구 매 요 구 서</CHAR></TEXT></P><P><TEXT><CHAR>제목 : 구매요구 / 시청사 옥상 방수공사 건의</CHAR></TEXT></P></SECTION></BODY></HWPML>';
+    await page.evaluate(async (x) => { await JH.app.ingest([new File([new TextEncoder().encode(x)], '결재문서_20261026.hwp', { type: '' })], null, null); }, xml);
+    await waitFor(() => page.evaluate(() => JH.app.db.docs.some((d) => d.name === '결재문서_20261026.hwp')), 30000, 'HWPML 결재문서');
+    const bz = await page.evaluate(() => { const d = JH.app.db.docs.find((x) => x.name === '결재문서_20261026.hwp'); return { c: (JH.app.db.contracts[d.key] || {}).name, item: d.itemId }; });
+    assert.deepEqual(bz, { c: '시청사 옥상 방수공사', item: 'c-req' }, 'HWPML 결재문서 ' + JSON.stringify(bz));
+    // MHT(웹 보관 파일)·EUC-KR HTML도 글자를 읽음
+    const mt = await page.evaluate(() => {
+      const enc = (t) => { const u = []; for (const b of new TextEncoder().encode(t)) u.push(b < 128 && b !== 61 ? String.fromCharCode(b) : '=' + b.toString(16).toUpperCase().padStart(2, '0')); return u.join(''); };
+      const mht = 'MIME-Version: 1.0\r\nContent-Type: multipart/related; boundary="B"\r\n\r\n--B\r\nContent-Type: text/html; charset="utf-8"\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n' + enc('<html><body><p>지출결의서</p><p>시청사 옥상 방수공사</p></body></html>') + '\r\n--B--';
+      return JH.readers.markupLines(new TextEncoder().encode(mht));
+    });
+    assert.ok(mt.includes('지출결의서') && mt.includes('시청사 옥상 방수공사'), JSON.stringify(mt));
+    await page.waitForTimeout(800); for (let k = 0; k < 3; k++) { await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close())); await page.waitForTimeout(300); }
+  }
+  step('그룹웨어 결재문서(.hwp인데 속은 HWPML·HTML·MHT)도 글자를 읽어 분류');
+
 
   // 뒤로: 현황판 → 계약을 눌러 넘어간 뒤 [←]면 다시 현황판 · 현황판에서 가운데 버튼이면 새 탭(보던 화면 그대로)
   {
