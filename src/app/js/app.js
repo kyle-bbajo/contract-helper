@@ -1101,7 +1101,7 @@
       return { kind: 'hwp', name: d.name };
     }
     // 엑셀·워드: 설치된 오피스로 PDF로 바꿔 같이 인쇄(오피스가 없으면 '별도 인쇄' 자리)
-    if (d.kind === 'other' && /\.(xlsx?|docx?|hwx)$/i.test(d.name)) {
+    if (d.kind === 'other' && /\.(xlsx?|docx?|pptx?|hwx)$/i.test(d.name)) {
       if (!d.pdfPath) await toPdf(d);
       if (d.pdfPath) return { kind: 'pdf', name: d.name, bytes: await S.readBytes(d.pdfPath) };
     }
@@ -1177,12 +1177,15 @@
   const memoOf = (c) => c.memo || {};
   const hay = (c) => { const m = memoOf(c); return L.norm([c.name, c.vendor, c.no, ...(c.nums || []), c.officer, c.dept, m.dept, m.person, m.phone, m.note].join(' ')); };
   const hits = (c, q) => !q || hay(c).includes(q) || (/\d{3,}/.test(q) && hay(c).replace(/\D/g, '').includes(q.replace(/\D/g, '')));
+  // 찾기 칸에 %(또는 *)를 넣으면 '사이에 아무 글자나'(예: 이동%상리)
+  const fieldsOf = (c) => { const m = memoOf(c); return [c.name, c.vendor, c.no, ...(c.nums || []), c.officer, c.dept, m.dept, m.person, m.phone, m.note]; };
+  const hitsQ = (c, raw) => L.searchHit(fieldsOf(c), raw); // '1-69'은 그 표기 그대로, '이동%상리'는 사이 생략
   function filtered(ignoreState) {
     const q = L.norm(ui.q);
     return contracts().filter((c) => {
       if (ui.officer && c.officer !== ui.officer) return false;
       if (ui.type && c.type !== ui.type) return false;
-      if (q && !hits(c, q)) return false;
+      if (q && !hitsQ(c, ui.q)) return false;
       if (!ignoreState && ui.state && !inState(statusOf(c), ui.state)) return false;
       return true;
     }).sort(SORTS[ui.sort] || SORTS['end-desc']);
@@ -1219,7 +1222,7 @@
     if (!ui.sel && list.length) ui.sel = list[0].key;
     // 검색어가 있는데 담당자·구분·상태 거름 때문에 안 보이는 계약이 있으면 알려 줌
     const q = L.norm(ui.q);
-    const hidden = q ? contracts().filter((c) => hits(c, q) && !list.includes(c)).length : 0;
+    const hidden = q ? contracts().filter((c) => hitsQ(c, ui.q) && !list.includes(c)).length : 0;
     const raw = (ui.q || '').trim();
     const hl = (s) => { s = String(s || ''); const i = raw ? s.toLowerCase().indexOf(raw.toLowerCase()) : -1; return i < 0 ? esc(s) : esc(s.slice(0, i)) + '<mark>' + esc(s.slice(i, i + raw.length)) + '</mark>' + esc(s.slice(i + raw.length)); };
     $('#contractList').innerHTML = list.map((c) => {
@@ -2077,7 +2080,7 @@
     return ds.length;
   }
   // 한글·엑셀·워드 → PDF(미리 보기·인쇄용). 한 번 바꾸면 옆에 PDF로 두고 다시 씀. 같은 파일을 두 번 바꾸지 않게 진행 중인 것은 공유
-  const needsPdf = (d) => d && !d.pdfPath && (d.kind === 'hwp' || (d.kind === 'other' && /\.(xlsx?|docx?|hwx)$/i.test(d.name)));
+  const needsPdf = (d) => d && !d.pdfPath && (d.kind === 'hwp' || (d.kind === 'other' && /\.(xlsx?|docx?|pptx?|hwx)$/i.test(d.name)));
   // 전자결재 문서(.hwx): 앞에 결재 정보가 붙고 그 뒤에 한글 문서가 통째로 들어 있음 → 한글 부분만 떼어 한글로 PDF로 바꿈
   async function hwxToPdf(d) {
     const u8 = await S.readBytes(d.path); const b = u8 instanceof Uint8Array ? u8 : new Uint8Array(u8);
@@ -2186,13 +2189,24 @@
   // 쪽마다 위쪽 제목을 읽어 '제목 쪽부터 다음 제목 앞 쪽까지'를 한 서류로 보는 안을 만들고, 사람이 확인·고친 뒤 저장.
   // 원래 파일은 _삭제됨으로(되돌리기 가능). 사람이 종류를 고친 줄은 배움
   const sp = { doc: null, bytes: null, n: 0, lines: [], rows: [], on: 0, tok: 0 };
-  const splittable = (d) => d && (d.kind === 'pdf' || d.kind === 'hwp' || (d.kind === 'other' && /\.(xlsx?|docx?|hwx)$/i.test(d.name)));
+  // 나눌 수 있는 파일: PDF·한글·엑셀·워드·파워포인트·전자결재(.hwx)·그림(한 장 PDF로) — 사실상 글자·그림 문서 전부
+  const splittable = (d) => d && (d.kind === 'pdf' || d.kind === 'hwp' || d.kind === 'image' || (d.kind === 'other' && /\.(xlsx?|docx?|pptx?|hwx)$/i.test(d.name)));
+  // 그림을 한 쪽짜리 PDF로(나누기·합치기용)
+  async function imageToPdf(bytes, name) {
+    const PDFLib = await JH.lib('pdflib'); const out = await PDFLib.PDFDocument.create();
+    let img = null; const ext = L.extOf(name);
+    try { if (ext === 'jpg' || ext === 'jpeg') img = await out.embedJpg(bytes); else if (ext === 'png') img = await out.embedPng(bytes); } catch (_) { img = null; }
+    if (!img) { const bmp = await createImageBitmap(new Blob([bytes])); const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height; c.getContext('2d').drawImage(bmp, 0, 0); img = await out.embedPng(new Uint8Array(await (await new Promise((r) => c.toBlob(r, 'image/png'))).arrayBuffer())); }
+    const W = 595.28, H = 841.89, land = img.width > img.height, pw = land ? H : W, ph = land ? W : H, sc = Math.min((pw - 24) / img.width, (ph - 24) / img.height);
+    out.addPage([pw, ph]).drawImage(img, { x: (pw - img.width * sc) / 2, y: (ph - img.height * sc) / 2, width: img.width * sc, height: img.height * sc });
+    return out.save();
+  }
   async function openSplit(d) {
     const c = d && d.key && db.contracts[d.key];
-    if (!d || !splittable(d)) { toast('그림·텍스트 파일은 나눌 쪽이 없습니다(PDF·한글·엑셀·워드·전자결재 문서만).', 'err'); return; }
+    if (!d || !splittable(d)) { toast('이 형식은 쪽으로 나눌 수 없습니다(PDF·한글·엑셀·워드·파워포인트·전자결재·그림 파일).', 'err'); return; }
     if (!c) { toast('먼저 어느 계약 서류인지 정해 주세요(줄의 계약 고르기). 계약을 고르면 바로 나눌 수 있습니다.', 'err'); return; }
     // 한글·엑셀·워드·.hwx: 먼저 PDF로 바꿔서 그 PDF를 나눔(나눈 서류는 PDF로 저장)
-    if (d.kind !== 'pdf' && !d.pdfPath) { progress(`나누려고 PDF로 바꾸는 중: ${d.name}`, .3); const pp = await toPdf(d); progress(null); if (!pp) { toast('PDF로 바꾸지 못해 나눌 수 없습니다(이 PC의 한글·오피스 확인).', 'err'); return; } }
+    if (d.kind !== 'pdf' && d.kind !== 'image' && !d.pdfPath) { progress(`나누려고 PDF로 바꾸는 중: ${d.name}`, .3); const pp = await toPdf(d); progress(null); if (!pp) { toast('PDF로 바꾸지 못해 나눌 수 없습니다(이 PC의 한글·오피스 확인).', 'err'); return; } }
     const tok = ++sp.tok;
     Object.assign(sp, { doc: d, rows: [], lines: [], n: 0, act: null, lastP: null, bytes: null });
     $('#spName').textContent = d.name + (sp.resume ? ` — 여러 서류가 든 파일이라 나누기 화면을 열었습니다. 나누지 않으려면 [닫기](묶음 그대로 두고 다음으로)` : ''); $('#spErr').hidden = true; $('#spSave').disabled = true;
@@ -2200,7 +2214,7 @@
     if ($('#dlgPreview').open) { if (pv.confirm && !sp.resume) sp.resume = pv.ids.slice(pv.i + 1); pv.split = true; $('#dlgPreview').close(); }
     $('#dlgSplit').showModal();
     try {
-      sp.bytes = await S.readBytes(d.kind === 'pdf' && !d.pdfPath ? d.path : d.pdfPath || d.path);
+      sp.bytes = d.kind === 'image' ? await imageToPdf(await S.readBytes(d.path), d.name) : await S.readBytes(d.kind === 'pdf' && !d.pdfPath ? d.path : d.pdfPath || d.path);
       // 1) 바로 보여 줌: 글자 층에 있는 제목 + 올릴 때 읽어 둔 제목(스캔 글자 인식은 하지 않음) → 쪽 그림을 그리고 바로 고를 수 있게
       const plan = (heads) => { sp.rows = L.splitPlan(pagesByRules(classList(c), heads || []), sp.n).map((r) => { const ps = []; for (let p = r.from; p <= r.to; p++) ps.push(p); return { pages: ps, item: r.item, sugg: r.item }; }); sp.act = sp.rows[0]; sp.lastP = null; };
       const h0 = await R.pageHeads(sp.bytes, 'pdf', { max: 120, ocrMax: -1 });
@@ -2597,22 +2611,25 @@
     const cs = contracts().sort((a, b) => b.updatedAt - a.updatedAt);
     // 설정에서 뺀 담당자의 계약은 고르기 목록에서 뺌(지금 골라져 있는 계약은 남김). data-q: 타자로 찾을 때 쓰는 글(이름·업체·번호·담당자)
     const hide = new Set((cfg.hideOfficers || []).map((x) => L.norm(x)).filter(Boolean));
-    const opt = (c) => `<option value="${esc(c.key)}" data-q="${esc(L.norm([c.name, c.vendor, c.no, ...(c.nums || []), c.officer].join(' ')))}"${c.key === sel ? ' selected' : ''}>${esc(c.name)}${c.vendor ? ` (${esc(c.vendor)})` : ''}${c.officer ? ` · ${esc(c.officer)}` : ''}</option>`;
+    const opt = (c) => `<option value="${esc(c.key)}" data-q="${esc(L.norm([c.name, c.vendor, c.no, ...(c.nums || []), c.officer].join(' ')))}" data-r="${esc([c.name, c.vendor, c.no, ...(c.nums || []), c.officer].filter(Boolean).join('\u0001'))}"${c.key === sel ? ' selected' : ''}>${esc(c.name)}${c.vendor ? ` (${esc(c.vendor)})` : ''}${c.officer ? ` · ${esc(c.officer)}` : ''}</option>`;
     // 추천(서류 내용으로 찾은 후보)을 맨 위에
     const recs = (rec || []).map((k) => db.contracts[k]).filter(Boolean);
     if (recs.length) return '<option value="">계약 고르기</option>' + `<optgroup label="추천 — 서류 내용으로 찾은 계약">${recs.map(opt).join('')}</optgroup><optgroup label="전체">` + cs.filter((c) => !rec.includes(c.key) && (c.key === sel || !hide.has(L.norm(c.officer || '')))).map(opt).join('') + '</optgroup>';
-    return '<option value="">계약 고르기</option>' + cs.filter((c) => c.key === sel || !hide.has(L.norm(c.officer || ''))).map((c) => `<option value="${esc(c.key)}" data-q="${esc(L.norm([c.name, c.vendor, c.no, ...(c.nums || []), c.officer].join(' ')))}"${c.key === sel ? ' selected' : ''}>${esc(c.name)}${c.vendor ? ` (${esc(c.vendor)})` : ''}${c.officer ? ` · ${esc(c.officer)}` : ''}</option>`).join('');
+    return '<option value="">계약 고르기</option>' + cs.filter((c) => c.key === sel || !hide.has(L.norm(c.officer || ''))).map(opt).join('');
   }
   // 계약 고르기 + 타자로 찾기: 글자를 치면 맞는 계약만 남기고 첫 번째를 고름, Enter면 그 계약으로 정함
-  const contractPicker = (selectHtml) => `<div class="cpick"><input type="search" class="cpick-q" placeholder="계약 찾기: 이름·업체·번호 입력" autocomplete="off" aria-label="계약 찾기">${selectHtml}</div>`;
+  const contractPicker = (selectHtml) => `<div class="cpick"><input type="search" class="cpick-q" placeholder="계약 찾기: 이름·업체·번호 (사이 생략은 %: 이동%상리)" autocomplete="off" aria-label="계약 찾기">${selectHtml}</div>`;
   document.addEventListener('input', (e) => {
     const q = e.target.closest && e.target.closest('.cpick-q'); if (!q) return;
     const sel = q.parentElement.querySelector('select'), t = L.norm(q.value);
+    // % (또는 *)를 넣으면 '사이에 아무 글자나': '이동%상리'·'%방수%보수' → 그 말들이 그 순서대로 들어 있는 것
+    const wild = /[%*]/.test(q.value) ? q.value.split(/[%*]+/).map((x) => L.norm(x)).filter(Boolean) : null;
+    const wmatch = (h) => { let i = 0; for (const w of wild) { const j = h.indexOf(w, i); if (j < 0) return false; i = j + w.length; } return true; };
     let first = null;
-    for (const o of sel.options) { if (!o.value) continue; const hit = !t || (o.dataset.q || '').includes(t) || (/\d{3,}/.test(t) && (o.dataset.q || '').replace(/\D/g, '').includes(t.replace(/\D/g, ''))); o.hidden = !hit; if (hit && !first) first = o; }
+    for (const o of sel.options) { if (!o.value) continue; const h = o.dataset.q || ''; const hit = o.dataset.r != null ? L.searchHit(o.dataset.r.split('\u0001'), q.value) : wild ? (!wild.length || wmatch(h)) : (!t || h.includes(t) || (/\d{3,}/.test(t) && h.replace(/\D/g, '').includes(t.replace(/\D/g, '')))); o.hidden = !hit; if (hit && !first) first = o; }
     // 묶음(추천/전체) 안에 맞는 것이 하나도 없으면 묶음 이름도 숨김
     for (const g of sel.querySelectorAll('optgroup')) g.hidden = ![...g.children].some((o) => !o.hidden);
-    if ((sel.id === 'pvContract' || sel.id === 'pvItem' || sel.hasAttribute('data-autopick')) && first && t) { sel.value = first.value; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+    if ((sel.id === 'pvContract' || sel.id === 'pvItem' || sel.hasAttribute('data-autopick')) && first && (t || (wild && wild.length))) { sel.value = first.value; sel.dispatchEvent(new Event('change', { bubbles: true })); }
     const left = [...sel.options].filter((o) => o.value && !o.hidden && o.value !== '__inbox');
     q.title = t ? `${left.length}건${sel.dataset.act === 'moveitem' && left[0] ? ` — Enter면 「${left[0].textContent}」(으)로` : ''}` : '';
     q.classList.toggle('none', !!t && !left.length);

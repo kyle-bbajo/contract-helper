@@ -13,7 +13,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '1.6.39'
+$Version = '1.6.40'
 $AppRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $WebRoot = Join-Path $AppRoot 'app'
 $LocalCfg = Join-Path $AppRoot 'local.json'
@@ -446,6 +446,13 @@ function Convert-OfficeToPdf([string]$src, [string]$dst) {
     if (-not $wd) { try { $wd = New-Object -ComObject 'Word.Application' } catch { throw '이 PC에서 워드 프로그램을 찾지 못했습니다.' }; $wd.Visible = $false; $wd.DisplayAlerts = 0; $script:Wd = $wd }
     $doc = $wd.Documents.Open($src, $false, $true)
     try { $doc.SaveAs2($dst, 17) } finally { $doc.Close($false) }
+  } elseif ($ext -eq '.pptx' -or $ext -eq '.ppt') {
+    # 파워포인트: 창 없이 열어 PDF로(ppSaveAsPDF = 32). 켜 둔 채 다시 씀
+    $pp = $script:Pp
+    try { if ($pp) { $null = $pp.Presentations.Count } } catch { $pp = $null }
+    if (-not $pp) { try { $pp = New-Object -ComObject 'PowerPoint.Application' } catch { throw '이 PC에서 파워포인트 프로그램을 찾지 못했습니다.' }; $script:Pp = $pp }
+    $pr = $pp.Presentations.Open($src, $true, $false, $false)
+    try { $pr.SaveAs($dst, 32) } finally { $pr.Close() }
   } else { throw 'PDF로 바꿀 수 없는 파일입니다.' }
   if (-not (Test-Path -LiteralPath $dst)) { throw 'PDF로 저장하지 못했습니다.' }
 }
@@ -1029,5 +1036,6 @@ try {
   if ($script:Hwp) { try { $script:Hwp.Quit() } catch {} }
   if ($script:Xl) { try { $script:Xl.Quit(); [void][Runtime.InteropServices.Marshal]::ReleaseComObject($script:Xl) } catch {} }
   if ($script:Wd) { try { $script:Wd.Quit(); [void][Runtime.InteropServices.Marshal]::ReleaseComObject($script:Wd) } catch {} }
+  if ($script:Pp) { try { $script:Pp.Quit(); [void][Runtime.InteropServices.Marshal]::ReleaseComObject($script:Pp) } catch {} }
   Remove-Item -LiteralPath $RunFile -Force -ErrorAction SilentlyContinue
 }

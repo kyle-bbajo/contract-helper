@@ -395,6 +395,24 @@
     for (let i = hay.indexOf(n); i >= 0; i = hay.indexOf(n, i + 1)) { const tail = hay.slice(i + n.length, i + n.length + 8); if (!OTHER_TAIL.test(tail) && !PART_TAIL.test(tail)) return true; }
     return false;
   }
+  // 계약 찾기: fields = 계약명·업체·번호 등(원래 글자). raw = 친 글자
+  //  · '이동%상리' → 그 말들이 그 순서대로(사이 아무 글자) · '1-69'처럼 숫자-숫자 → 그 표기 그대로(앞뒤에 다른 숫자가 붙은 것은 아님: 11-69·1-690 제외)
+  //  · 숫자만 3자리 이상 → 한 칸(계약번호 등) 안의 숫자에서만(여러 칸 숫자를 이어 붙여 엉뚱하게 맞는 일 없게) · 그 밖 → 띄어쓰기 무시하고 포함
+  function searchHit(fields, raw) {
+    const r = String(raw || '').trim(); if (!r) return true;
+    const fs = (fields || []).filter(Boolean).map(String);
+    if (/[%*]/.test(r)) { const ws = r.split(/[%*]+/).map(norm).filter(Boolean); const h = norm(fs.join(' ')); let i = 0; for (const w of ws) { const j = h.indexOf(w, i); if (j < 0) return false; i = j + w.length; } return true; }
+    if (/\d\s*[-~]\s*\d/.test(r)) {
+      const q = r.toLowerCase().replace(/\s+/g, '').replace(/~/g, '-');
+      const re = new RegExp('(?<!\\d)' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?!\\d)');
+      return fs.some((f) => re.test(f.toLowerCase().replace(/\s+/g, '').replace(/~/g, '-')));
+    }
+    const t = norm(r);
+    if (/\s/.test(r)) { const ws = r.split(/\s+/).map(norm).filter(Boolean); if (ws.length > 1 && ws.every((w) => fs.some((f) => norm(f).includes(w)))) return true; } // '시청사 다해' = 각 낱말이 어느 칸에든
+    if (fs.some((f) => norm(f).includes(t))) return true; // 칸마다(여러 칸을 이어 붙여 맞추지 않음)
+    if (/^\d{3,}$/.test(t)) return fs.some((f) => f.replace(/\D/g, '').includes(t));
+    return false;
+  }
   // 배운 다른 이름으로 쓸 만한지: 6자 이상·한글 4자 이상, 우리 기관 이름(용인도시공사 등)이 든 것은 안 됨(모든 서류에 있어 한 계약으로 쏠림)
   function okAlias(a) {
     const t = norm(a);
@@ -1012,7 +1030,7 @@
     API_BASE, API_OPS, TYPES, apiUrl, keyParam, monthRanges, parseApiText, parseApiBody, parseCorpList, parseCorpRows, normalizeApiItem, detectExtFinance,
     G2B, g2bUrl, scanAuditFields, summarizeChanges, chgPlan, autoKind, CHG_KINDS, changesOf, ordSnap, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
     ordOf, viaParts, viaKey, viaStatus, itemsInName, isRecentItem, issuedTooEarly, isAdvBond, advBondCheck, ADV_DAYS, matchCandidates, checklistStatus, holds, hasItem, classifyPages, classifyTitleLines, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail, issueCond,
-    okAlias, headLines, learnSigs, learnedItem, learnedFuzzy, similar, classifyInfo, suffixOf, shareSafe, splitPlan, checkSplit, goodName, isG2bNo, maskPrivate,
+    searchHit, okAlias, headLines, learnSigs, learnedItem, learnedFuzzy, similar, classifyInfo, suffixOf, shareSafe, splitPlan, checkSplit, goodName, isG2bNo, maskPrivate,
     PAY_KINDS, typeKey, hasRounds, roundOnly, roundSteps, roundHint, roundLabel, routeRound,
   };
   root.JH = root.JH || {};

@@ -337,3 +337,12 @@ test('나라장터 불러올 기간 직접 정하기: 정한 기간을 달마다
   const r = L.rangesBetween('20230101', '', new Date(2026, 9, 26));
   assert.equal(r.length, 46); assert.deepEqual(r[0], ['20261001', '20261026']); assert.deepEqual(r[r.length - 1], ['20230101', '20230131']);
 });
+
+test('계약 찾기: 1-69는 그 표기 그대로(11-69·1-690 아님), %는 사이 생략, 숫자만은 한 칸 안에서', () => {
+  const a = ['준공보완서류 소1-69호', '(주)다해토건', 'R26BK01234567'], b = ['소11-69호 정비'], c = ['소1-690호'];
+  assert.ok(L.searchHit(a, '1-69') && !L.searchHit(b, '1-69') && !L.searchHit(c, '1-69'));
+  assert.ok(L.searchHit(a, '1~69'));
+  assert.ok(L.searchHit(['이동읍 상리선 도로 확포장 공사'], '이동%상리') && !L.searchHit(['상리선 이동'], '이동%상리'));
+  assert.ok(L.searchHit(a, '0123'));
+  assert.ok(!L.searchHit(['가나다 12', '345 라마'], '12345'), '여러 칸 숫자를 이어 붙여 맞추지 않음');
+});
