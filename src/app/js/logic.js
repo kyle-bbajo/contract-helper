@@ -62,6 +62,8 @@
       it(g2, '견적서(계약금액)', '견적서,견적', { source: '나라장터', note: '계약금액으로 작성', id: k + '-estimate' }),
       it(g2, '산출내역서', '산출내역,설계내역,내역서', { source: '나라장터', id: k + '-calc' }),
       it(g2, '통장사본', '통장,계좌사본,통장표지,예금통장,보통예금,입출금이자유로운,저축예금', { source: '나라장터', id: k + '-bank' }),
+      it(g2, '여성기업 확인서', '여성기업확인서,여성기업확인,여성기업 확인', { source: '나라장터', required: false, note: '해당 업체만', id: k + '-women' }),
+      it(g2, '장애인기업 확인서', '장애인기업확인서,장애인기업확인,장애인기업 확인', { source: '나라장터', required: false, note: '해당 업체만', id: k + '-disabled' }),
       it(g2, '그 밖의 계약 서류', '관련서류,관련문서,이행각서,서약서,청렴계약,수의계약각서,배제사유,확약서,하도급계약,하도급통보,계약보증,계약이행보증', { source: '나라장터', required: false, note: '각서·서약서·확약서 등', id: k + '-related' }),
     ];
     // 대금청구: 4대보험·고용산재 완납증명서와 지역개발채권도 여기서 받음(업체가 청구 때 냄)
@@ -263,38 +265,87 @@
     const keep = hits.filter((h) => !hits.some((o) => o !== h && o.pos <= h.pos && o.pos + o.len >= h.pos + h.len && o.len > h.len));
     return keep.sort((a, b) => a.pos - b.pos).map((h) => h.id);
   }
-  // 한 파일에 여러 양식(예: 착공계 묶음 PDF): 쪽마다 앞부분(제목 자리)에서 서류 이름을 찾음 → { 서류 id: [쪽 번호] }
+  // ---------- 한 파일에 여러 서류(업체가 한 PDF로 스캔해 보낸 계약서류·착공계·준공계 묶음) ----------
+  // 쪽 머리(위쪽 몇 줄)로 그 쪽이 어떤 서류의 첫 장인지 봄. 서류 이름만 있는 짧은 줄(제목)을 가장 믿고,
+  // '사업자등록번호 : …'처럼 칸 이름으로 나온 말이나 긴 문장 속 서류 이름(붙임 목록 등)은 제목으로 치지 않음
+  const PAGE_SIG = [ // 제목을 못 읽어도(스캔 흐림) 그 서류에만 있는 칸들로 알아봄
+    ['bizreg', /사업자등록번호.{0,40}(개업연월일|사업장소재지)|(개업연월일|사업장소재지).{0,40}사업자등록번호|개업연월일.{0,30}법인등록번호/],
+    ['corpreg', /말소사항포함|등기사항전부증명|등기사항일부증명|등기번호.{0,30}(등록번호|본점|상호)/],
+    ['seal', /인감증명서|인감증명/],
+    ['bank', /예금주.{0,40}(계좌번호|통장|예금|은행)|(계좌번호|통장).{0,40}예금주/],
+    ['women', /여성기업확인/], ['disabled', /장애인기업확인/],
+    ['licbook', /등록수첩/],
+  ];
+  // 앞 쪽에 이어지는 쪽 표시: '- 2 -', '2 / 4', '(뒷면)', '(계속)', '2쪽 중', 'page 2'
+  const isContLine = (raw) => { const t = String(raw || '').trim(); let m;
+    if (/^[-–—]\s*([2-9]|\d\d)\s*[-–—]$/.test(t)) return true;
+    if ((m = t.match(/^(\d{1,2})\s*\/\s*(\d{1,2})$/)) && +m[1] >= 2 && +m[1] <= +m[2]) return true;
+    return /\(\s*(뒷면|뒤쪽|이면|계속|앞장에서\s*계속)\s*\)|^(뒷면|이면)$|(^|\D)([2-9]|\d\d)\s*쪽\s*중|\d\s*쪽\s*중\s*([2-9]|\d\d)\s*쪽|^page\s*([2-9]|\d\d)\b/i.test(t); };
+  const isFieldLine = (raw) => /[:：;]\s*\S/.test(String(raw || '')) || (String(raw || '').match(/\d/g) || []).length >= 4;
+  function classifyPage(list, head, lines, opt = {}) {
+    const ls = (lines && lines.length ? lines : null);
+    const cont = (ls || [head]).slice(0, 10).some(isContLine) || /\(\s*(뒷면|계속)\s*\)/.test(String(head || ''));
+    const bySuffix = (s) => (list.find((x) => suffixOf(x.id) === s) || {}).id;
+    if (ls) {
+      let weak = null;
+      for (let li = 0; li < Math.min(ls.length, 10); li++) {
+        const ln = norm(ls[li]); if (ln.length < 2) continue;
+        let bk = null, bl = 0;
+        for (const item of list) for (const k of item.keywords) { const nk = norm(k); if (nk.length >= 2 && nk.length > bl && ln.includes(nk)) { bk = item.id; bl = nk.length; } }
+        if (!bk) continue;
+        const room = bl <= 2 ? 3 : bl <= 3 ? 8 : 14; // 서류 이름 + 짧은 덧말(사본·(말소사항 포함)·법인 등)
+        if (li <= 5 && ln.length <= bl + room && !isFieldLine(ls[li])) return { id: bk, strong: true, cont, by: 'title' };
+        if (!weak && li <= 3 && !isFieldLine(ls[li])) weak = { id: bk, strong: false, cont, by: 'line' };
+      }
+      const hay = norm(ls.slice(0, 12).join(' '));
+      for (const [s, re] of PAGE_SIG) { const id = bySuffix(s); if (id && re.test(hay)) return { id, strong: true, cont, by: 'sig' }; }
+      return weak || (cont ? { id: null, strong: false, cont } : null);
+    }
+    // 줄을 모를 때(예전에 읽어 둔 머리 글): 앞 40자 안에서 가장 앞에 나온 서류 이름
+    const hay = norm(head); if (!hay) return null;
+    let best = null, bp = 1e9, bl = 0;
+    for (const item of list) for (const k of item.keywords) {
+      const nk = norm(k); if (nk.length < 2) continue;
+      const p = hay.indexOf(nk); if (p < 0 || p > (opt.head || 40)) continue;
+      if (p < bp || (p === bp && nk.length > bl)) { best = item.id; bp = p; bl = nk.length; }
+    }
+    if (best) return { id: best, strong: true, cont, by: 'pos' };
+    for (const [s, re] of PAGE_SIG) { const id = bySuffix(s); if (id && re.test(hay.slice(0, 200))) return { id, strong: true, cont, by: 'sig' }; }
+    return cont ? { id: null, strong: false, cont } : null;
+  }
+  // 쪽마다 서류 찾기 → { 서류 id: [쪽 번호] } (첫 장으로 보이는 쪽만). pageHeads가 준 줄(heads.rows)이 있으면 줄로 봄
   function classifyPages(list, pageHeads, head = 40) {
     const out = {};
     (pageHeads || []).forEach((h, i) => {
-      const hay = norm(h); if (!hay) return;
-      let best = null, bp = 1e9, bl = 0;
-      for (const item of list) for (const k of item.keywords) {
-        const nk = norm(k); if (nk.length < 2) continue;
-        const p = hay.indexOf(nk); if (p < 0 || p > head) continue;
-        if (p < bp || (p === bp && nk.length > bl)) { best = item.id; bp = p; bl = nk.length; }
-      }
-      if (best) (out[best] = out[best] || []).push(i + 1);
+      const f = classifyPage(list, h, pageHeads.rows && pageHeads.rows[i], { head });
+      if (f && f.id && f.strong) (out[f.id] = out[f.id] || []).push(i + 1);
     });
     return out;
   }
-  // 한 파일에 여러 서류를 스캔한 PDF를 서류마다 자를 안: 제목이 나온 쪽부터 다음 제목 앞 쪽까지 한 서류
-  // (제목 없는 쪽은 앞 서류의 뒷장, 첫 제목 앞의 쪽은 종류 모름). 같은 서류 제목이 이어진 쪽은 한 서류로
+  // 쪽마다 본 결과([{id, strong, cont}] · 1쪽부터)로 서류마다 자르기
+  // - 제목 없는 쪽·'- 2 -'·(뒷면) 쪽은 앞 서류의 뒷장(통합서약서 4~5장, 등기부 여러 장 등)
+  // - 같은 서류가 이어진 쪽은 한 서류. 긴 문장 속에서만 나온 이름(약한 것)은 앞 서류를 끊지 않음
+  // - 통합서약서 안의 청렴계약 이행서약서 등은 통합서약서의 한 장으로
+  const PART_OF = { pledge: ['related'] };
+  const partOf = (a, b) => !!(a && b && (PART_OF[suffixOf(a)] || []).includes(suffixOf(b)));
+  function splitPages(infos, n) {
+    n = Math.max(1, n | 0);
+    const segs = [];
+    for (let p = 1; p <= n; p++) {
+      const f = infos[p - 1] || null, cur = segs[segs.length - 1];
+      const id = f && f.id;
+      const fresh = !cur || (id && id !== cur.item && !f.cont && (f.strong || !cur.item) && !partOf(cur.item, id));
+      if (fresh) segs.push({ from: p, to: p, item: id || null }); else cur.to = p;
+    }
+    // 첫 쪽들이 종류 모름이고 바로 뒤가 제목 없이 이어진 것이면 그대로(사람이 고름)
+    return segs.map((x) => ({ from: x.from, to: x.to, item: x.item }));
+  }
+  // (예전 방식) { 서류 id: [제목 쪽] } → 자를 안. 제목이 나온 쪽부터 다음 제목 앞 쪽까지 한 서류
   function splitPlan(pagesOf, n) {
     n = Math.max(1, n | 0);
-    const at = [];
-    for (const [id, ps] of Object.entries(pagesOf || {})) for (const p of ps || []) if (p >= 1 && p <= n) at.push({ p, id });
-    at.sort((a, b) => a.p - b.p);
-    const segs = [];
-    for (const h of at) {
-      const last = segs[segs.length - 1];
-      if (last && last.from === h.p) continue; // 한 쪽에 두 서류 이름: 앞에 찾은 것
-      if (last && last.item === h.id && h.p === last.head + 1) { last.head = h.p; continue; } // 같은 제목이 이어진 쪽
-      segs.push({ from: h.p, head: h.p, item: h.id });
-    }
-    if (!segs.length) return [{ from: 1, to: n, item: null }];
-    if (segs[0].from > 1) segs.unshift({ from: 1, head: 1, item: null });
-    return segs.map((x, i) => ({ from: x.from, to: i < segs.length - 1 ? segs[i + 1].from - 1 : n, item: x.item }));
+    const infos = [];
+    for (const [id, ps] of Object.entries(pagesOf || {})) for (const p of ps || []) if (p >= 1 && p <= n && !infos[p - 1]) infos[p - 1] = { id, strong: true };
+    return splitPages(infos, n);
   }
   // 나누기 안 확인: 쪽이 겹치거나 빠지면 알림 글
   function checkSplit(rows, n) {
@@ -1029,7 +1080,7 @@
     classifyItem, guessType, findMeta, vendorCore, baseNo, contractScore, matchContract, contractKey,
     API_BASE, API_OPS, TYPES, apiUrl, keyParam, monthRanges, parseApiText, parseApiBody, parseCorpList, parseCorpRows, normalizeApiItem, detectExtFinance,
     G2B, g2bUrl, scanAuditFields, summarizeChanges, chgPlan, autoKind, CHG_KINDS, changesOf, ordSnap, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
-    ordOf, viaParts, viaKey, viaStatus, itemsInName, isRecentItem, issuedTooEarly, isAdvBond, advBondCheck, ADV_DAYS, matchCandidates, checklistStatus, holds, hasItem, classifyPages, classifyTitleLines, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail, issueCond,
+    ordOf, viaParts, viaKey, viaStatus, itemsInName, isRecentItem, issuedTooEarly, isAdvBond, advBondCheck, ADV_DAYS, matchCandidates, checklistStatus, holds, hasItem, classifyPages, classifyPage, splitPages, classifyTitleLines, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail, issueCond,
     searchHit, okAlias, headLines, learnSigs, learnedItem, learnedFuzzy, similar, classifyInfo, suffixOf, shareSafe, splitPlan, checkSplit, goodName, isG2bNo, maskPrivate,
     PAY_KINDS, typeKey, hasRounds, roundOnly, roundSteps, roundHint, roundLabel, routeRound,
   };

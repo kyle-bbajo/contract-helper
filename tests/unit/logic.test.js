@@ -143,7 +143,7 @@ test('서류 목록: 대금청구에 완납증명서·지역개발채권, 착공
 test('계약 관련서류 세분화, 법인등기·인감증명서 계약일 기준 3개월 이내', () => {
   const d = L.defaultChecklists();
   const ids = d.공사.filter((x) => x.group === '계약').map((x) => x.id);
-  assert.deepEqual(ids, ['c-contract', 'c-pledge', 'c-bizreg', 'c-corpreg', 'c-seal', 'c-useseal', 'c-license', 'c-licbook', 'c-estimate', 'c-calc', 'c-bank', 'c-related']);
+  assert.deepEqual(ids, ['c-contract', 'c-pledge', 'c-bizreg', 'c-corpreg', 'c-seal', 'c-useseal', 'c-license', 'c-licbook', 'c-estimate', 'c-calc', 'c-bank', 'c-women', 'c-disabled', 'c-related']);
   assert.ok(!d.공사.some((x) => x.group === '대금청구' && x.id === 'c-bank'), '통장사본은 계약 서류로');
   assert.equal(L.classifyItem(d.공사, '사업자등록증 사본.pdf', ''), 'c-bizreg');
   assert.equal(L.classifyItem(d.공사, '건설업등록증.pdf', ''), 'c-license');
@@ -345,4 +345,45 @@ test('계약 찾기: 1-69는 그 표기 그대로(11-69·1-690 아님), %는 사
   assert.ok(L.searchHit(['이동읍 상리선 도로 확포장 공사'], '이동%상리') && !L.searchHit(['상리선 이동'], '이동%상리'));
   assert.ok(L.searchHit(a, '0123'));
   assert.ok(!L.searchHit(['가나다 12', '345 라마'], '12345'), '여러 칸 숫자를 이어 붙여 맞추지 않음');
+});
+
+test('계약서류 묶음 PDF(순서 뒤섞임·여러 장 서류): 쪽마다 제목 줄로 나눔', () => {
+  const list = L.defaultChecklists().공사;
+  const P = (...lines) => lines; // 쪽 머리 줄(스캔 글자 인식 결과처럼)
+  const rows = [
+    P('발급번호 : 1234-5678-9012', '사 업 자 등 록 증', '(법인사업자)', '등록번호 : 123-81-45678'),                 // 1 사업자등록증
+    P('계약이행 통합 서약서', '계약명 : 시청사 옥상 방수공사', '본인은 위 계약을 이행함에 있어'),                  // 2 통합서약서
+    P('2. 청렴계약 이행 서약서', '우리 회사는 부패 없는 투명한 기업경영과'),                                      // 3 (통합서약서 안)
+    P('- 3 -', '3. 수의계약 각서', '붙임: 사업자등록증 사본 1부, 인감증명서 1부를 함께 냅니다'),                   // 4 (통합서약서 이어짐)
+    P('4. 하도급 관련 서약', '위 사항을 지키지 않으면 어떠한 처분도 감수합니다'),                                  // 5 (통합서약서 이어짐)
+    P('등기번호 012345', '등기사항전부증명서(말소사항 포함)', '등록번호 110111-1234567'),                         // 6 법인등기
+    P('등기번호 012345', '임원에 관한 사항', '사내이사 김갑동'),                                                   // 7 (등기 이어짐)
+    P('[ 1 ]', '1. 목적', '건축공사업'),                                                                           // 8 (등기 이어짐 — 제목 없음)
+    P('법인 인감 증명서', '등록번호 110111-1234567'),                                                              // 9 인감증명서
+    P('사 용 인 감 계', '상호 : (주)다해토건', '위 인감을 계약 업무에 사용하고자 신고합니다'),                     // 10 사용인감계
+    P('보통예금', '예금주 : (주)다해토건', '계좌번호 : 123-456-789012'),                                           // 11 통장사본
+    P('건설업 등록증', '등록번호 : 서울-01-0123'),                                                                 // 12 면허 등록증
+    P('건설업 등록수첩'),                                                                                          // 13 등록수첩
+    P('2 / 4', '변경사항', '기술인력 보유 현황'),                                                                  // 14 (수첩 이어짐)
+    P('여성기업 확인서', '확인번호 : 0000-0000'),                                                                  // 15 여성기업
+    P('(뒷면)', '유의사항'),                                                                                       // 16 (여성기업 뒷면)
+    P('장애인기업 확인서'),                                                                                        // 17 장애인기업
+    P('xx은행 계좌 거래', '예금주 (주)다해토건 계좌번호 123'),                                                    // 18 제목 흐려도 통장(예금주·계좌번호)
+  ];
+  const heads = rows.map((r) => r.join(' ')); heads.rows = rows;
+  const infos = rows.map((r, i) => L.classifyPage(list, heads[i], r));
+  const segs = L.splitPages(infos, rows.length).map((s) => `${s.from}-${s.to}:${s.item}`);
+  assert.deepEqual(segs, ['1-1:c-bizreg', '2-5:c-pledge', '6-8:c-corpreg', '9-9:c-seal', '10-10:c-useseal', '11-11:c-bank', '12-12:c-license', '13-14:c-licbook', '15-16:c-women', '17-17:c-disabled', '18-18:c-bank']);
+  // 칸 이름으로 나온 서류 이름('사업자등록번호 : …')·붙임 목록은 제목이 아님
+  assert.equal(L.classifyPage(list, '', ['상호 : (주)다해', '사업자등록번호 : 123-81-45678']), null);
+  // 옛 방식(줄 없이 머리 글만) 그대로
+  assert.deepEqual(L.splitPlan({ a: [1], b: [3] }, 4), [{ from: 1, to: 2, item: 'a' }, { from: 3, to: 4, item: 'b' }]);
+});
+
+test('착공계·준공계 묶음도 쪽마다', () => {
+  const list = L.defaultChecklists().공사;
+  const rows = [['착 공 계', '공사명 : 방수공사'], ['현장대리인계'], ['예정공정표'], ['착공일 : 2026. 6. 1.'], ['준 공 계'], ['준공검사원'], ['준공사진대지'], ['사진 3'], ['노무비 미체불 확약서']];
+  const infos = rows.map((r) => L.classifyPage(list, r.join(' '), r));
+  const segs = L.splitPages(infos, rows.length).map((s) => `${s.from}-${s.to}:${s.item}`);
+  assert.deepEqual(segs, ['1-4:c-start', '5-5:c-finish', '6-6:c-finishreq', '7-8:c-photo', '9-9:c-nounpaid']);
 });

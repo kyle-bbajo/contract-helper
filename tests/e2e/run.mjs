@@ -1411,6 +1411,27 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   }
   step('올릴 때 확인: 여러 서류가 든 묶음 파일 차례가 오면 바로 쪽별로 나누기 화면, 닫으면 다음 파일 확인으로 · 저장 안 하고 닫은 파일은 미분류로');
 
+  // 업체가 한 PDF로 스캔해 보낸 계약서류 묶음(순서 뒤섞임, 여러 장 서류, 여성기업·장애인기업 확인서): 쪽마다 제목을 읽어 서류마다 나눔
+  {
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    await page.click('nav [data-view="contracts"]'); await page.click('.citem:has-text("시청사 옥상 방수공사")');
+    const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('[data-act="addhere"]')]);
+    await fc.setFiles([{ name: '업체서류일체.pdf', mimeType: 'application/pdf', buffer: readFileSync(join(ROOT, 'tests/fixtures/bundle/계약서류묶음_스캔.pdf')) }]);
+    await waitFor(() => page.evaluate(() => !!JH.app.db.docs.find((x) => x.name === '업체서류일체.pdf')), 180000, '묶음 올림');
+    await waitFor(async () => !(await page.isVisible('#progress')), 180000, '정리 끝');
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    const id = await page.evaluate(() => JH.app.db.docs.find((d) => d.name === '업체서류일체.pdf').id);
+    await page.click(`[data-act="split"][data-doc="${id}"]`);
+    await page.waitForSelector('#spRows .sp-row', { timeout: 60000 });
+    await waitFor(async () => !(await page.$('#spReading')), 300000, '스캔 쪽 제목 다 읽음');
+    const rows = await page.$$eval('#spRows .sp-row', (rs) => rs.map((r) => `${r.querySelector('.sp-pin').value}:${r.querySelector('select').selectedOptions[0].textContent.trim()}`));
+    const want = [/^1:.*사업자등록증/, /^2~5:.*계약이행 통합 서약서/, /^6~7:.*법인등기/, /^8:.*인감증명서/, /^9:.*사용인감계/, /^10:.*통장사본/, /^11:.*면허 등록증/, /^12~13:.*면허 등록수첩/, /^14~15:.*여성기업/, /^16:.*장애인기업/];
+    assert.equal(rows.length, want.length, '서류 수 ' + JSON.stringify(rows));
+    want.forEach((re, i) => assert.match(rows[i], re, JSON.stringify(rows)));
+    await page.click('#spCancel');
+  }
+  step('계약서류 묶음 스캔 PDF(16쪽 · 통합서약서 4장 · 등기 2장 · 수첩·확인서 뒷장): 쪽마다 제목 줄로 서류마다 나눔');
+
   // 특정 쪽만 잘라 넣기: [+ 새 서류] → 종류 고르고 → 그 쪽만 누르기 → 저장(고르지 않은 쪽은 원래 칸에 남음) · 확인을 마치면 그 계약 화면으로
   {
     await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));

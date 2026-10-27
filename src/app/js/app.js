@@ -34,7 +34,7 @@
   const WIN = Math.random().toString(36).slice(2, 10), ROLE = ONLY === 'notice' ? 'notice' : 'main';
   const ui = { view: 'home', sel: null, q: '', officer: '', officerTouched: false, type: '', state: '', board: '', sort: (() => { try { return localStorage.getItem('jh.sort') || 'end-desc'; } catch (_) { return 'end-desc'; } })() };
 
-  const CHECKLIST_VER = 12; // 12: 준공계에 정산서류 · 11: 노무비 미체불 확약서·지급 명세서 찾는 말 · 10: 준공계·준공검사원을 두 칸으로, 준공검사원 지정통보는 필수 아님 · 9: 노무비 지급확인제 → 공사 노무비 구분관리 및 지급확인 적용제외 신청서(합의서도 이 칸) // (지난 것) 4: 선금 보증서 · 5: 준공검사원 지정통보 · 6: 사업장 가입내역 확인서(4대보험 가입증명서) 등 찾는 말 추가 · 7: 하도급 계약서·계약보증서는 그 밖의 계약 서류 · 8: 구매요구에 산업안전재해율 결과·안전보건관리계획서·적격수급업체 안전보건 수준 평가표(공사·용역)
+  const CHECKLIST_VER = 13; // 13: 계약 서류에 여성기업·장애인기업 확인서 · 12: 준공계에 정산서류 · 11: 노무비 미체불 확약서·지급 명세서 찾는 말 · 10: 준공계·준공검사원을 두 칸으로, 준공검사원 지정통보는 필수 아님 · 9: 노무비 지급확인제 → 공사 노무비 구분관리 및 지급확인 적용제외 신청서(합의서도 이 칸) // (지난 것) 4: 선금 보증서 · 5: 준공검사원 지정통보 · 6: 사업장 가입내역 확인서(4대보험 가입증명서) 등 찾는 말 추가 · 7: 하도급 계약서·계약보증서는 그 밖의 계약 서류 · 8: 구매요구에 산업안전재해율 결과·안전보건관리계획서·적격수급업체 안전보건 수준 평가표(공사·용역)
   const lists = (type) => (db.checklists && db.checklists[type]) || defaults[type] || defaults.공사;
   const contracts = () => Object.values(db.contracts).filter((c) => !c.archived);
   // 계약별 서류: 화면을 그리는 동안은 한 번 만든 색인(docIndex)으로 찾음(서류 수천 개여도 계약마다 다시 훑지 않음)
@@ -626,7 +626,7 @@
         if (c && !(forced && forceItem)) { // 칸에 직접 넣은 것은 쪽마다 읽지 않음(빠르게)
           try {
             progress(`여러 양식이 든 파일인지 보는 중 ${i + 1}/${recs.length}`, i / recs.length);
-            const heads = await R.pageHeads(r.bytes, r.kind, { ocrMax: 12, onPage: (p, n) => { if (n > 2) progress(`여러 양식이 든 파일인지 보는 중 — ${p}/${n}쪽 (스캔본은 쪽마다 몇 초)`, p / n); } }); r.pages = heads ? heads.total : null; if (heads && heads.length > 1) r.pgHeads = heads.map((h) => L.maskPrivate(String(h || '').slice(0, 160)));
+            const heads = await R.pageHeads(r.bytes, r.kind, { ocrMax: 12, limit: 80, extend: (hs) => Object.keys(L.classifyPages(classList(c), hs)).length >= 2, extendTo: 60, onPage: (p, n) => { if (n > 2) progress(`여러 양식이 든 파일인지 보는 중 — ${p}/${n}쪽 (스캔본은 쪽마다 몇 초)`, p / n); } }); r.pages = heads ? heads.total : null; if (heads && heads.length > 1) { r.pgHeads = heads.map((h) => L.maskPrivate(String(h || '').slice(0, 160))); r.pgRows = heads.rows.map((ls) => (ls || []).slice(0, 8).map((x) => L.maskPrivate(String(x).slice(0, 60)))); }
             pagesOf = heads ? L.classifyPages(classList(c), heads) : r.kind === 'hwp' ? L.classifyTitleLines(classList(c), r.lines) : null;
           } catch (e) { console.warn('쪽별 서류 찾기 실패', e); }
           // 파일 이름에 서류가 여럿이면(견적서_산출내역.pdf) 그것도 함께 든 서류로
@@ -659,7 +659,7 @@
           id: r.id, key: c ? c.key : null, itemId: item ? item.id : null, path: saved.path, name: r.name, kind: r.kind,
           size: r.size, mime: r.mime, addedAt: new Date().toISOString(), ocr: r.ocr, meta: r.meta, text: r.text, title: r.title, dates: r.dates, manual: !!forced && !r.rerouted, facts: L.docFacts(r.lines),
           ...(rnd ? { pay: rnd.id } : {}), ...(!c && r.cands && r.cands.length ? { cands: r.cands } : {}), ...(!c && r.guess ? { guess: r.guess } : {}), ...(r.heads && r.heads.length ? { heads: r.heads } : {}), ...(r.unsure ? { unsure: true, alts: r.alts } : {}),
-          ...(also.length ? { also, pagesOf } : {}), ...(r.pages > 1 ? { pages: r.pages } : {}), ...(r.pgHeads ? { pgHeads: r.pgHeads } : {}),
+          ...(also.length ? { also, pagesOf } : {}), ...(r.pages > 1 ? { pages: r.pages } : {}), ...(r.pgHeads ? { pgHeads: r.pgHeads, pgRows: r.pgRows } : {}),
         });
         if (c) { byContract[c.key] = (byContract[c.key] || 0) + 1; c.updatedAt = Date.now(); } else inbox++;
         if (c && item && (AUDIT_DOC.test(item.id) || also.some((id) => AUDIT_DOC.test(id)))) (auditLines[c.key] = auditLines[c.key] || []).push(r.lines);
@@ -2216,12 +2216,13 @@
     try {
       sp.bytes = d.kind === 'image' ? await imageToPdf(await S.readBytes(d.path), d.name) : await S.readBytes(d.kind === 'pdf' && !d.pdfPath ? d.path : d.pdfPath || d.path);
       // 1) 바로 보여 줌: 글자 층에 있는 제목 + 올릴 때 읽어 둔 제목(스캔 글자 인식은 하지 않음) → 쪽 그림을 그리고 바로 고를 수 있게
-      const plan = (heads) => { sp.rows = L.splitPlan(pagesByRules(classList(c), heads || []), sp.n).map((r) => { const ps = []; for (let p = r.from; p <= r.to; p++) ps.push(p); return { pages: ps, item: r.item, sugg: r.item }; }); sp.act = sp.rows[0]; sp.lastP = null; };
+      const plan = (heads) => { sp.rows = L.splitPages(pagesByRules(classList(c), heads || []), sp.n).map((r) => { const ps = []; for (let p = r.from; p <= r.to; p++) ps.push(p); return { pages: ps, item: r.item, sugg: r.item }; }); sp.act = sp.rows[0]; sp.lastP = null; };
       const h0 = await R.pageHeads(sp.bytes, 'pdf', { max: 120, ocrMax: -1 });
       if (tok !== sp.tok) return;
       sp.n = (h0 && h0.total) || 1; sp.lines = (h0 && h0.rows) || []; sp.touched = false;
-      const cached = d.pgHeads || [];
+      const cached = d.pgHeads || [], cRows = d.pgRows || [];
       const heads = Array.from({ length: Math.min(sp.n, 120) }, (_, i) => (h0 && L.norm(h0[i] || '').length >= 4 ? h0[i] : cached[i] || ''));
+      heads.rows = heads.map((h, i) => (h0 && L.norm(h0[i] || '').length >= 4 ? h0.rows[i] : cRows[i] || null));
       plan(heads); paintSplit(); renderSplitPages(tok);
       // 2) 제목을 못 읽은 스캔 쪽은 뒤에서 글자 인식 — 그동안 바로 골라도 됨. 사람이 손대지 않았으면 다 읽은 뒤 안을 다시 만듦
       const need = heads.map((h, i) => (L.norm(h).length < 4 ? i + 1 : 0)).filter(Boolean);
@@ -2232,24 +2233,26 @@
           const full = await R.pageHeads(sp.bytes, 'pdf', { max: 120, ocrMax: 120, onPage: (p, n) => note(`스캔 쪽 제목 읽는 중 ${p}/${n}… 기다리지 않고 바로 골라도 됩니다`) }).catch(() => null);
           if (tok !== sp.tok || !full) return;
           sp.lines = full.rows || sp.lines;
-          if (!sp.touched) { plan(full.map((h, i) => (L.norm(h || '').length >= 4 ? h : heads[i]))); paintSplit(); markPages(); }
+          if (!sp.touched) { const hs = full.map((h, i) => (L.norm(h || '').length >= 4 ? h : heads[i])); hs.rows = full.map((h, i) => (L.norm(h || '').length >= 4 ? full.rows[i] : heads.rows[i])); plan(hs); paintSplit(); markPages(); }
           const el = $('#spReading'); if (el) el.remove();
           if (sp.touched) toast('스캔 쪽 제목을 다 읽었습니다(직접 고친 것은 그대로 둠).', 'ok');
         })();
       }
     } catch (e) { if (tok === sp.tok) $('#spRows').innerHTML = `<p class="warn-t small">이 파일을 읽지 못했습니다: ${esc(e.message)}</p>`; }
   }
-  // 쪽마다 서류 찾기: 배운 규칙(내가 고친 것·동료에게서 받은 것)이 먼저, 없으면 찾는 말
+  // 쪽마다 서류 찾기: 배운 규칙(내가 고친 것·동료에게서 받은 것)이 먼저, 없으면 제목 줄·서류 고유 칸 → [{ id, strong, cont }] (1쪽부터)
   function pagesByRules(list, heads) {
-    const out = {};
-    (heads || []).forEach((h, i) => {
-      const hl = L.headLines((heads.rows && heads.rows[i]) || [h]);
+    return (heads || []).map((h, i) => {
+      const rows = heads.rows && heads.rows[i];
+      const hl = L.headLines(rows || [h]);
+      const f = L.classifyPage(list, h, rows);
       const lr = L.learnedItem(db.learned, list, '', hl);
-      let id = lr ? lr.id : Object.keys(L.classifyPages(list, [h]))[0];
-      if (!id) { const fz = L.learnedFuzzy(db.learned, list, hl); if (fz) id = fz.id; } // 배운 제목과 거의 같은 쪽(글자 인식 오류 감안)
-      if (id) (out[id] = out[id] || []).push(i + 1);
+      if (lr && !(f && f.cont)) return { id: lr.id, strong: true, cont: false };
+      if (f && f.id) return f;
+      const fz = L.learnedFuzzy(db.learned, list, hl); // 배운 제목과 거의 같은 쪽(글자 인식 오류 감안)
+      if (fz) return { id: fz.id, strong: true, cont: !!(f && f.cont) };
+      return f;
     });
-    return out;
   }
   // 쪽 묶음 글: [1,2,3,5] → '1~3, 5쪽'
   function pagesText(ps) {
