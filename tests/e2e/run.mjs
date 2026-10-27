@@ -603,10 +603,13 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     await page.evaluate(() => { const a = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사'); JH.app.db.contracts.twin = { ...JSON.parse(JSON.stringify(a)), key: 'twin', name: '도서관 외벽 보수공사', nums: ['R26BK0999999900'], no: 'R26BK0999999900', pays: [], folder: '', updatedAt: 1, paidDate: '' }; });
     await upTop('업체서류.hwp', ['사업자등록증', '상호 (주)다해토건', '대표자 홍길동']);
     await page.waitForSelector('#dlgPreview[open]', { timeout: 10000 });
-    assert.match(await page.textContent('#pvWhy'), /계약이 2개라 확실하지 않습니다/);
+    assert.match(await page.textContent('#pvWhy'), /확실하지 않아 비워 두었습니다/);
     assert.equal(await page.$$eval('#pvContract optgroup[label^="추천"] option', (o) => o.length), 2, '추천 후보 2개가 맨 위');
-    assert.ok(await page.inputValue('#pvContract'), '가장 가까운 계약을 골라 둠');
-    assert.equal(await page.inputValue('#pvItem'), 'c-bizreg', '서류 종류도 골라 둠');
+    assert.equal(await page.inputValue('#pvContract'), '', '확실하지 않으면 계약은 빈칸(잘못 눌러도 엉뚱한 계약에 안 들어감)');
+    assert.match(await page.textContent('#pvSave'), /미분류로 두고/, '빈칸이면 버튼이 미분류로');
+    await page.selectOption('#pvContract', { index: 1 }); await page.dispatchEvent('#pvContract', 'change');
+    assert.equal(await page.inputValue('#pvItem'), 'c-bizreg', '계약을 고르면 서류 종류는 골라 둠');
+    assert.match(await page.textContent('#pvSave'), /맞음/);
     await page.click('#pvTrash'); await page.waitForSelector('#dlgPreview:not([open])', { state: 'attached' });
     await page.evaluate(() => { delete JH.app.db.contracts.twin; });
     // 미분류를 사람이 계약으로 정리하면 서류에 적힌 공사명을 그 계약의 다른 이름으로 배움 → 다음엔 바로 그 계약

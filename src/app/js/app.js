@@ -1264,7 +1264,9 @@
   // 사람이 미분류 서류를 계약으로 정리하면: 서류에 적힌 공사명·용역명이 나라장터 계약명과 다르게 쓰였으면 그 표기를 이 계약의 다른 이름으로 배움
   function learnAlias(d, c) {
     const nm = L.norm((d && d.meta && d.meta.name) || ''), cn = L.norm(c && c.name || '');
-    if (!c || nm.length < 4 || nm.length > 60 || cn.includes(nm) || nm.includes(cn)) return '';
+    if (!c || nm.length > 60 || !L.okAlias(nm) || !L.goodName(d.meta.name) || cn.includes(nm) || nm.includes(cn)) return '';
+    // 다른 계약 이름에도 들어 있는 말이면 배우지 않음(한 계약으로 쏠리지 않게)
+    if (contracts().some((x) => x.key !== c.key && (L.norm(x.name || '').includes(nm) || nm.includes(L.norm(x.name || '')) && L.norm(x.name || '').length >= 4))) return '';
     c.aliases = [...new Set([...(c.aliases || []), nm])].slice(-10);
     logAct(`배움: 서류의 이름 「${d.meta.name}」 → 계약 「${c.name}」`);
     return `다음부터 「${d.meta.name}」이라고 적힌 서류는 「${c.name}」으로 넣습니다.`;
@@ -2114,7 +2116,8 @@
     $('#pvTitle').textContent = pv.confirm ? `맞는지 확인해 주세요 (${pv.i + 1}/${pv.ids.length})` : d.name;
     $('#pvName').textContent = d.name;
     const cands = !d.key ? (d.cands || []).filter((k) => db.contracts[k]) : [];
-    $('#pvContract').innerHTML = contractOptions(d.key || cands[0] || '', cands).replace('<option value="">계약 고르기</option>', '<option value="">미분류(계약 모름)</option>');
+    // 계약을 확실히 못 찾았으면 아무 계약도 골라 두지 않음(빈칸) — 추천은 목록 맨 위에만. 잘못 눌러 엉뚱한 계약에 들어가지 않게
+    $('#pvContract').innerHTML = contractOptions(d.key || '', cands).replace('<option value="">계약 고르기</option>', '<option value="">미분류(계약 모름)</option>');
     $('#pvSearch').value = '';
     // 서류 종류: 그 계약 목록에서 제목으로 찾은 것을 '추천'으로 맨 위에 두고 골라 둠(사람이 확인)
     const fillItems = (key) => {
@@ -2126,7 +2129,8 @@
       $('#pvItem').innerHTML = itemOptions(classList(cc), sel, false, [g.id, ...(g.alts || []), ...(key === d.key && d.itemId ? [d.itemId] : [])].filter(Boolean)); $('#pvItem').disabled = false;
       $('#pvItemSearch').value = ''; $('#pvItemSearch').title = '';
     };
-    fillItems(d.key || cands[0]); $('#pvContract').onchange = (e) => fillItems(e.target.value);
+    const saveLabel = () => { if (!pv.confirm) return; const k = $('#pvContract').value; $('#pvSave').textContent = !k ? '미분류로 두고 다음' : !$('#pvItem').value ? '종류 없이 이 계약에 · 다음' : '맞음 · 다음'; $('#pvSave').classList.toggle('ghost', !k); };
+    fillItems(d.key || ''); $('#pvContract').onchange = (e) => { fillItems(e.target.value); saveLabel(); }; $('#pvItem').onchange = saveLabel;
     const altNames = (d.alts || []).map((id) => (c && classList(c).find((x) => x.id === id) || {}).name).filter(Boolean);
     const revPrev = d.revOf && docById(d.revOf);
     if (pv.confirm && revPrev && !d.unsure && d.key && d.itemId === revPrev.itemId) {
@@ -2135,14 +2139,14 @@
       $('#pvWhy').textContent = '이렇게 넣었습니다. 계약과 서류 종류가 맞으면 [이대로 저장], 틀리면 고르세요(고친 것은 배웁니다). 묻지 않고 바로 넣으려면 설정 → 서류 목록 → 올릴 때마다 확인을 끄세요.';
       if (d.also && d.also.length) { const nmv = (id) => (classList(db.contracts[d.key]).find((x) => x.id === id) || {}).name || id; $('#pvWhy').textContent += ` 이 파일 안에서 ${d.also.map(nmv).join(', ')}도 찾았습니다 — 잘못 찾은 게 있으면 그 칸 줄의 ✕(이 칸에서만 빼기), 서류마다 자르려면 [쪽별로 나누기].`; }
     } else
-    $('#pvWhy').textContent = pv.confirm ? (!c ? (cands.length > 1 ? `같은 업체(또는 비슷한 이름) 계약이 ${cands.length}개라 확실하지 않습니다. 가장 가까운 계약을 골라 두었으니 맞는지 확인해 주세요.` : cands.length ? '확실하지 않아 가장 가까운 계약을 골라 두었습니다.' : '어느 계약 서류인지 찾지 못했습니다.') : !d.itemId ? '어떤 서류인지 찾지 못했습니다.' : d.unsure ? (altNames.length ? `제목에 다른 서류 이름(${altNames.join(', ')})도 있어 헷갈립니다.` : '전에 배운 서류와 제목이 거의 같아 그 종류로 골라 두었습니다(글자 인식이 조금 다르게 됨).') : '') + ' 내용을 보고 맞게 골라 주세요. 고른 답은 배워서 다음부터 같은 제목이면 바로 넣습니다.' : '';
+    $('#pvWhy').textContent = pv.confirm ? (!c ? (cands.length ? `어느 계약 서류인지 확실하지 않아 비워 두었습니다. 비슷한 계약 ${cands.length}개를 목록 맨 위 '추천'에 두었으니 맞는 계약을 고르세요(비워 두고 넘기면 미분류).` : '어느 계약 서류인지 찾지 못해 비워 두었습니다. 계약을 고르세요(비워 두고 넘기면 미분류).') : !d.itemId ? '어떤 서류인지 찾지 못했습니다.' : d.unsure ? (altNames.length ? `제목에 다른 서류 이름(${altNames.join(', ')})도 있어 헷갈립니다.` : '전에 배운 서류와 제목이 거의 같아 그 종류로 골라 두었습니다(글자 인식이 조금 다르게 됨).') : '') + ' 내용을 보고 맞게 골라 주세요. 고른 답은 배워서 다음부터 같은 제목이면 바로 넣습니다.' : '';
     if (pv.confirm && !d.key && d.guess) { const gn = (defaults.공사.concat(defaults.용역, defaults.물품).find((x) => L.suffixOf(x.id) === d.guess) || {}).name; if (gn) $('#pvWhy').textContent += ` 서류 종류는 '${gn}'(으)로 보입니다 — 계약만 고르면 골라집니다.`; }
     if (pv.confirm && revPrev && d.unsure) $('#pvWhy').textContent += ` 이 칸에는 이미 「${revPrev.name}」이 있습니다(같은 서류의 수정본이면 그대로 저장).`;
     if (pv.confirm && dupSeen.has(d.id)) $('#pvWhy').textContent = `이미 올린 파일입니다 — 지금 ${whereOf(d)}에 있습니다. 맞으면 [맞음 · 다음], 다른 계약·서류면 골라서 저장하세요(넘겨도 지금 자리 그대로).`;
     $('#pvAi').hidden = true;
     if (pv.confirm && (c || cands[0]) && (!d.itemId || d.unsure)) aiGuess(d, c || db.contracts[cands[0]], tok);
     $('#pvPrev').disabled = pv.i === 0; $('#pvNext').textContent = pv.i < pv.ids.length - 1 ? '다음' : '닫기';
-    $('#pvSave').textContent = pv.confirm ? '맞음 · 다음' : '이대로 저장';
+    $('#pvSave').textContent = pv.confirm ? '맞음 · 다음' : '이대로 저장'; $('#pvSave').classList.remove('ghost'); saveLabel();
     const box = $('#pvBody'); box.innerHTML = '<p class="muted">불러오는 중…</p>';
     { const spb = $('#pvSplit'); if (spb) { spb.hidden = !splittable(d); spb.className = 'link sm'; spb.textContent = '쪽별로 나누기'; } }
     try {
@@ -3362,6 +3366,8 @@
     S.hwpSec().then((r) => { hwpSecState = r && r.state; }).catch(() => {}); // 한글 보안모듈 있는지(한글은 띄우지 않음)
     try { await reconcile(); render(); } catch (e) { console.warn('폴더 확인 실패', e); }
     try { await rereadOld(); render(); } catch (e) { console.warn('다시 읽기 실패', e); }
+    // 예전에 잘못 배운 계약 다른 이름(기관 이름·너무 짧은 말 등) 정리 — 모든 서류가 한 계약으로 쏠리던 원인
+    { let n = 0; for (const c of contracts()) { if (!c.aliases || !c.aliases.length) continue; const keep = c.aliases.filter((a) => L.okAlias(a)); n += c.aliases.length - keep.length; c.aliases = keep; } if (n) { logAct(`잘못 배운 계약 다른 이름 ${n}개 정리`); saveDb(true); } }
     try { await relayout(); } catch (e) { console.warn('폴더 정리 실패', e); }
     // 스캔 글자가 깨져 이상한 이름으로 만들어진 계약(예전 버전): 알려 주고 [정리하기]로 서류는 미분류, 계약은 지움
     try {

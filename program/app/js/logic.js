@@ -395,6 +395,11 @@
     for (let i = hay.indexOf(n); i >= 0; i = hay.indexOf(n, i + 1)) { const tail = hay.slice(i + n.length, i + n.length + 8); if (!OTHER_TAIL.test(tail) && !PART_TAIL.test(tail)) return true; }
     return false;
   }
+  // 배운 다른 이름으로 쓸 만한지: 6자 이상·한글 4자 이상, 우리 기관 이름(용인도시공사 등)이 든 것은 안 됨(모든 서류에 있어 한 계약으로 쏠림)
+  function okAlias(a) {
+    const t = norm(a);
+    return t.length >= 6 && (t.match(/[가-힣]/g) || []).length >= 4 && !OWN_ORG.some((o) => t.includes(o)) && !/^(공사|용역|물품|구매|계약)/.test(t);
+  }
   function contractScore(c, hay) {
     let s = 0;
     for (const n of c.nums || []) { const b = baseNo(n); if (b.length >= 6 && hay.includes(b)) { s += 10; break; } }
@@ -414,7 +419,7 @@
     const bz = String(c.bizno || '').replace(/\D/g, '');
     if (bz.length === 10 && hay.includes(bz)) s += 4;
     // 배운 다른 이름: 사람이 미분류 서류를 이 계약으로 정리할 때 서류에 적힌 공사명·용역명(나라장터 계약명과 다르게 쓴 것)
-    if (!(s >= 6) && (c.aliases || []).some((a) => a.length >= 4 && hay.includes(a))) s += 6;
+    if (!(s >= 6) && (c.aliases || []).some((a) => okAlias(a) && hay.includes(a))) s += 6;
     return s;
   }
   function matchContract(contracts, hay) {
@@ -1007,7 +1012,7 @@
     API_BASE, API_OPS, TYPES, apiUrl, keyParam, monthRanges, parseApiText, parseApiBody, parseCorpList, parseCorpRows, normalizeApiItem, detectExtFinance,
     G2B, g2bUrl, scanAuditFields, summarizeChanges, chgPlan, autoKind, CHG_KINDS, changesOf, ordSnap, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
     ordOf, viaParts, viaKey, viaStatus, itemsInName, isRecentItem, issuedTooEarly, isAdvBond, advBondCheck, ADV_DAYS, matchCandidates, checklistStatus, holds, hasItem, classifyPages, classifyTitleLines, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail, issueCond,
-    headLines, learnSigs, learnedItem, learnedFuzzy, similar, classifyInfo, suffixOf, shareSafe, splitPlan, checkSplit, goodName, isG2bNo, maskPrivate,
+    okAlias, headLines, learnSigs, learnedItem, learnedFuzzy, similar, classifyInfo, suffixOf, shareSafe, splitPlan, checkSplit, goodName, isG2bNo, maskPrivate,
     PAY_KINDS, typeKey, hasRounds, roundOnly, roundSteps, roundHint, roundLabel, routeRound,
   };
   root.JH = root.JH || {};
