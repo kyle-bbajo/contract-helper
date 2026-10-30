@@ -387,3 +387,20 @@ test('착공계·준공계 묶음도 쪽마다', () => {
   const segs = L.splitPages(infos, rows.length).map((s) => `${s.from}-${s.to}:${s.item}`);
   assert.deepEqual(segs, ['1-4:c-start', '5-5:c-finish', '6-6:c-finishreq', '7-8:c-photo', '9-9:c-nounpaid']);
 });
+
+test('노무비 서류 묶음: 긴 정식 제목도 쪽마다', () => {
+  const d = L.defaultChecklists();
+  const list = d.공사.concat(L.roundOnly('공사'));
+  const rows = [
+    ['[별지 제1호서식]', '공사 노무비 구분관리 및 지급확인제 적용제외 신청서'],
+    ['공사 노무비 구분관리 및 지급확인제 합의서'],
+    ['노무비 개인정보 수집·이용·제공 동의서'],
+    ['건설근로자 노무비 지급 명세서', '공사명 : 시청사'],
+    ['2 / 2'],
+    ['노무비 지급 청구서', '청구금액 : 1,234,000원'],
+    ['노무비 미체불 확약서'],
+  ];
+  const infos = rows.map((r) => L.classifyPage(list, r.join(' '), r));
+  const segs = L.splitPages(infos, rows.length).map((s) => `${s.from}-${s.to}:${s.item}`);
+  assert.deepEqual(segs, ['1-2:c-laborconfirm', '3-3:c-laborpriv', '4-5:c-laborlist', '6-6:c-laborclaim', '7-7:c-nounpaid']);
+});

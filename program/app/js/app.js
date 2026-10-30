@@ -2169,7 +2169,7 @@
         const bytes = await S.readBytes(path); const lib = await JH.lib('pdfjs');
         const doc = await lib.getDocument({ data: bytes, isEvalSupported: false, cMapUrl: 'vendor/pdfjs/cmaps/', cMapPacked: true }).promise;
         if (tok !== pv.tok) return; box.innerHTML = '';
-        const n = Math.min(doc.numPages, 12);
+        const n = Math.min(doc.numPages, 400); // 모든 쪽(보일 때 그림)
         // 앞 두 쪽만 바로 그리고 나머지는 내려서 보일 때 그림(쪽이 많은 스캔본도 빨리 뜸)
         const draw = async (p, cv) => { const page = await doc.getPage(p); const v1 = page.getViewport({ scale: 1 }); const vp = page.getViewport({ scale: Math.min(1.4, 860 / v1.width) }); cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height); cv.style.aspectRatio = ''; await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise; };
         const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting && !e.target.dataset.done) { e.target.dataset.done = '1'; io.unobserve(e.target); if (tok === pv.tok) draw(+e.target.dataset.p, e.target).catch(() => {}); } }), { root: box, rootMargin: '600px' });
@@ -2361,22 +2361,37 @@
     });
     if (scroll && sp.act && sp.act.pages.length) { const el = $(`#spView .sp-pgv[data-p="${firstPage(sp.act)}"]`); if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
   }
+  // 쪽 그림: 모든 쪽 자리를 먼저 다 만들고(번호·누르기 바로 됨), 그림은 보이는 쪽부터 그림. 한 쪽이 실패해도 나머지는 계속
   async function renderSplitPages(tok) {
     const lib = await JH.lib('pdfjs');
     const doc = await lib.getDocument({ data: sp.bytes.slice(), isEvalSupported: false, cMapUrl: 'vendor/pdfjs/cmaps/', cMapPacked: true }).promise;
-    try {
-      const n = Math.min(doc.numPages, 120);
-      for (let p = 1; p <= n; p++) {
-        if (tok !== sp.tok || !$('#dlgSplit').open) return;
-        const page = await doc.getPage(p); const v1 = page.getViewport({ scale: 1 }); const vp = page.getViewport({ scale: 240 / v1.width });
-        const cv = document.createElement('canvas'); cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height);
-        await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
-        const fig = document.createElement('div'); fig.className = 'sp-pgv'; fig.dataset.p = p;
-        fig.title = `${p}쪽 — 누르면 고른 서류 줄로 넣음(Shift+누르기 = 앞에 누른 쪽부터 여기까지), 두 번 누르면 이 쪽부터 새 서류로 자름`;
-        fig.append(cv); fig.insertAdjacentHTML('beforeend', `<b>${p}</b><button type="button" class="sp-zbtn" data-zoom="${p}" title="${p}쪽 크게 보기">🔍</button><small></small>`);
-        $('#spView').append(fig); markPages();
-      }
-    } finally { doc.destroy(); }
+    if (tok !== sp.tok || !$('#dlgSplit').open) { doc.destroy(); return; }
+    const n = Math.min(doc.numPages, 400), view = $('#spView');
+    let q = Promise.resolve(); // 한 번에 한 쪽씩(스캔본 여러 쪽을 한꺼번에 그리면 느려짐)
+    const draw = (fig) => { q = q.then(async () => {
+      if (tok !== sp.tok) return;
+      const cv = fig.querySelector('canvas');
+      try {
+        const page = await doc.getPage(+fig.dataset.p); const v1 = page.getViewport({ scale: 1 }); const vp = page.getViewport({ scale: 240 / v1.width });
+        const off = document.createElement('canvas'); off.width = Math.ceil(vp.width); off.height = Math.ceil(vp.height);
+        await page.render({ canvasContext: off.getContext('2d'), viewport: vp }).promise;
+        cv.width = off.width; cv.height = off.height; cv.getContext('2d').drawImage(off, 0, 0); fig.dataset.drawn = '1';
+      } catch (e) { console.warn('쪽 그림 실패', fig.dataset.p, e); fig.dataset.done = ''; const sm = fig.querySelector('small'); if (sm && !sm.textContent) sm.textContent = '그림을 못 그림(🔍로 보기)'; }
+    }); return q; };
+    const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting && !e.target.dataset.done) { e.target.dataset.done = '1'; draw(e.target); } }), { root: view, rootMargin: '900px' });
+    const frag = document.createDocumentFragment();
+    for (let p = 1; p <= n; p++) {
+      const fig = document.createElement('div'); fig.className = 'sp-pgv'; fig.dataset.p = p;
+      fig.title = `${p}쪽 — 누르면 고른 서류 줄로 넣음(Shift+누르기 = 앞에 누른 쪽부터 여기까지), 두 번 누르면 이 쪽부터 새 서류로 자름`;
+      const cv = document.createElement('canvas'); cv.width = 240; cv.height = 340; fig.append(cv);
+      fig.insertAdjacentHTML('beforeend', `<b>${p}</b><button type="button" class="sp-zbtn" data-zoom="${p}" title="${p}쪽 크게 보기">🔍</button><small></small>`);
+      frag.append(fig);
+    }
+    view.append(frag); markPages();
+    if (doc.numPages > n) view.insertAdjacentHTML('beforeend', `<p class="muted small">모두 ${doc.numPages}쪽 중 ${n}쪽까지만 보여 줍니다.</p>`);
+    $$('#spView .sp-pgv').forEach((f) => io.observe(f));
+    const done = () => { io.disconnect(); setTimeout(() => doc.destroy().catch(() => {}), 3000); };
+    $('#dlgSplit').addEventListener('close', done, { once: true });
   }
   // 쪽들을 고른 서류 줄로 옮김(다른 줄에서는 빠짐). 비게 된 다른 줄은 지움
   function putPages(ps) {

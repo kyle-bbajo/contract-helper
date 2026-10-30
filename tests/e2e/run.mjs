@@ -1424,6 +1424,8 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     await page.click(`[data-act="split"][data-doc="${id}"]`);
     await page.waitForSelector('#spRows .sp-row', { timeout: 60000 });
     await waitFor(async () => !(await page.$('#spReading')), 300000, '스캔 쪽 제목 다 읽음');
+    assert.equal(await page.$$eval('#spView .sp-pgv', (x) => x.length), 16, '쪽 그림 자리가 모든 쪽만큼');
+    await page.$eval('#spView', (v) => { v.scrollTop = v.scrollHeight; }); await waitFor(() => page.$eval('#spView .sp-pgv[data-p="16"]', (f) => f.dataset.drawn === '1'), 30000, '맨 끝 쪽도 그려짐');
     const rows = await page.$$eval('#spRows .sp-row', (rs) => rs.map((r) => `${r.querySelector('.sp-pin').value}:${r.querySelector('select').selectedOptions[0].textContent.trim()}`));
     const want = [/^1:.*사업자등록증/, /^2~5:.*계약이행 통합 서약서/, /^6~7:.*법인등기/, /^8:.*인감증명서/, /^9:.*사용인감계/, /^10:.*통장사본/, /^11:.*면허 등록증/, /^12~13:.*면허 등록수첩/, /^14~15:.*여성기업/, /^16:.*장애인기업/];
     assert.equal(rows.length, want.length, '서류 수 ' + JSON.stringify(rows));
