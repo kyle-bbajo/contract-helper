@@ -63,15 +63,20 @@
     if (ocrWorker) return ocrWorker;
     const abs = (p) => new URL(p, location.href).href;
     const T = await lib('tesseract');
-    ocrWorker = await withTimeout(T.createWorker('kor', 1, {
+    // 한글 + 영문(계약번호 R26TA…·업체 영문 이름). 쪽 나누기 방식은 '한 단, 줄마다'(4) — 기본값 '한 덩어리'(6)는 표가 있는 서류의 줄을 통째로 빠뜨리고,
+    // '자동'(3)은 글이 드문 쪽(사진대지 표지 등)에서 줄을 빠뜨림
+    const langs = await fetch(new URL('vendor/tesseract/lang/eng.traineddata.gz', location.href).href, { method: 'HEAD' }).then((r) => r.ok).catch(() => false) ? 'kor+eng' : 'kor';
+    ocrWorker = await withTimeout(T.createWorker(langs, 1, {
       workerPath: abs('vendor/tesseract/worker.min.js'), corePath: abs('vendor/tesseract/core'), langPath: abs('vendor/tesseract/lang'),
       workerBlobURL: false, gzip: true, logger: () => {},
     }), 90000, '글자 인식 준비');
+    try { await ocrWorker.setParameters({ tessedit_pageseg_mode: '4', preserve_interword_spaces: '1' }); } catch (_) {}
     return ocrWorker;
   }
+  const OCR_PX = 2400;
   const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, j) => setTimeout(() => j(new Error(what + ' 시간 초과')), ms))]);
   function capCanvas(src, w, h) {
-    const s = Math.min(1, 1800 / Math.max(w, h));
+    const s = Math.min(1.6, OCR_PX / Math.max(w, h));
     const c = document.createElement('canvas'); c.width = Math.round(w * s); c.height = Math.round(h * s);
     const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(src, 0, 0, c.width, c.height);
     return c;
@@ -85,7 +90,7 @@
     try {
       if (pageNo > doc.numPages) return null;
       const page = await doc.getPage(pageNo); const v1 = page.getViewport({ scale: 1 });
-      const vp = page.getViewport({ scale: Math.min(3, 1800 / Math.max(v1.width, v1.height)) }); // 1800px: 제목·계약명은 충분히 읽히고 빠름
+      const vp = page.getViewport({ scale: Math.min(4, OCR_PX / Math.max(v1.width, v1.height)) }); // 2400px(A4 약 200dpi): 표 안 작은 글자(금액·번호)까지
       const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
       const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
       await page.render({ canvasContext: g, viewport: vp }).promise;
@@ -101,6 +106,58 @@
     return c;
   }
   // 화면을 찍은 사진·망점 스캔(모아레·점무늬)은 그대로면 글자를 거의 못 읽고 아주 느림 → 흑백 + 살짝 흐리게 해서 점무늬를 지우고 읽음
+  // 흑백만(번지지 않게). 보통 스캔·팩스는 이것이 가장 잘 읽힘
+  function grayOf(src) {
+    const c = document.createElement('canvas'); c.width = src.width; c.height = src.height;
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+    g.filter = 'grayscale(1)'; g.drawImage(src, 0, 0); g.filter = 'none';
+    return c;
+  }
+  // 표 선 지우기: 어두운 점이 가로로(폭의 8% 넘게)·세로로(쪽 높이의 5% 넘게) 길게 이어진 것은 표 선 → 흰색으로.
+  // 표 칸 안 글(공사명·금액·등록번호)을 글자 인식이 통째로 빠뜨리는 것을 막음
+  function noLines(src) {
+    const c = grayOf(src), g = c.getContext('2d'), W = c.width, H = c.height;
+    const im = g.getImageData(0, 0, W, H), d = im.data, N = W * H;
+    const dark = new Uint8Array(N); for (let i = 0; i < N; i++) dark[i] = d[i * 4] < 150 ? 1 : 0;
+    const kill = new Uint8Array(N), hx = Math.max(60, Math.round(W * 0.08)), vy = Math.max(50, Math.round(W * 1.41 * 0.05)); // 큰 제목 글자의 획(폭의 4~5%)은 남김
+    for (let y = 0; y < H; y++) { let run = 0; for (let x = 0; x <= W; x++) { if (x < W && dark[y * W + x]) run++; else { if (run >= hx) for (let k = x - run; k < x; k++) kill[y * W + k] = 1; run = 0; } } }
+    for (let x = 0; x < W; x++) { let run = 0; for (let y = 0; y <= H; y++) { if (y < H && dark[y * W + x]) run++; else { if (run >= vy) for (let k = y - run; k < y; k++) kill[k * W + x] = 1; run = 0; } } }
+    for (let i = 0; i < N; i++) if (kill[i]) { d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = 255; for (const o of [-W, W, -1, 1]) { const j = i + o; if (j >= 0 && j < N && !kill[j] && d[j * 4] < 200) d[j * 4] = d[j * 4 + 1] = d[j * 4 + 2] = 255; } }
+    g.putImageData(im, 0, 0); return c;
+  }
+  // 흐리거나 바탕이 회색·얼룩진 스캔: 바탕 밝기를 빼고 흑백 두 값으로(오츠)
+  function binOf(src) {
+    const c = grayOf(src), g = c.getContext('2d'), W = c.width, H = c.height;
+    const im = g.getImageData(0, 0, W, H), d = im.data;
+    const bg = document.createElement('canvas'); bg.width = W; bg.height = H; const bgg = bg.getContext('2d');
+    bgg.filter = `blur(${Math.max(8, Math.round(W / 60))}px)`; bgg.drawImage(c, 0, 0); const bd = bgg.getImageData(0, 0, W, H).data;
+    const v = new Uint8ClampedArray(W * H), hist = new Array(256).fill(0);
+    for (let i = 0; i < W * H; i++) { const x = Math.max(0, Math.min(255, 255 - (bd[i * 4] - d[i * 4]))); v[i] = x; hist[x]++; }
+    let sum = 0; for (let i = 0; i < 256; i++) sum += i * hist[i];
+    let sb = 0, wb = 0, best = 0, th = 200; const tot = W * H;
+    for (let t = 0; t < 256; t++) { wb += hist[t]; if (!wb) continue; const wf = tot - wb; if (!wf) break; sb += t * hist[t]; const mb = sb / wb, mf = (sum - sb) / wf, bt = wb * wf * (mb - mf) ** 2; if (bt > best) { best = bt; th = t; } }
+    for (let i = 0; i < W * H; i++) { const o = v[i] > th ? 255 : 0; d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = o; }
+    g.putImageData(im, 0, 0); return c;
+  }
+  // 한 쪽 그림 읽기: 흑백 → (흐리면) 두 값 → (망점·화면 사진이면) 살짝 흐리게 → (그래도 엉망이면) 돌려서. 가장 잘 읽힌 것
+  async function readCanvas(w, raw, opt = {}) {
+    let best = await recognize(w, opt.table ? noLines(raw) : grayOf(raw)); best.cv = 'gray';
+    if (opt.table && best.conf < 75) { const r = await recognize(w, grayOf(raw)); if (r.score > best.score + 2) best = { ...r, cv: 'gray' }; }
+    if (best.conf < 70) { const r = await recognize(w, binOf(raw)); if (r.score > best.score + 2) best = { ...r, cv: 'bin' }; }
+    if (best.conf < 60) { const r = await recognize(w, cleaned(raw)); if (r.score > best.score + 2) best = { ...r, cv: 'blur' }; }
+    if (best.hangul < 12) { // 글자가 거의 안 나오면 '한 덩어리'로도 읽어 봄
+      try { await w.setParameters({ tessedit_pageseg_mode: '6' }); const r = await recognize(w, grayOf(raw)); if (r.score > best.score + 2) best = { ...r, cv: 'gray' }; } finally { await w.setParameters({ tessedit_pageseg_mode: '4' }).catch(() => {}); }
+    }
+    if (best.conf < 55) { // 스캔이 옆으로·거꾸로 들어온 경우
+      const base = best.cv === 'bin' ? binOf(raw) : best.cv === 'blur' ? cleaned(raw) : grayOf(raw);
+      for (const deg of [180, 90, 270]) {
+        const r = await recognize(w, rotated(base, deg));
+        if (r.score > best.score + 8) best = { ...r, deg };
+        if (best.conf >= 80) break;
+      }
+    }
+    return best;
+  }
   function cleaned(src) {
     const c = document.createElement('canvas'); c.width = src.width; c.height = src.height;
     const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
@@ -125,16 +182,7 @@
       const w = await getOcr();
       const readPage = async (n) => {
         const raw = await firstPageCanvas(bytes, kind, type, n); if (!raw) return null;
-        const canvas = cleaned(raw); // 점무늬 지운 그림으로 읽음(망점 스캔은 그대로면 1분 넘게 걸리고 거의 못 읽음, 지우면 몇 초)
-        let best = await recognize(w, canvas);
-        if (best.conf < 55) { // 점무늬를 지우면 바로 선 종이는 보통 60 넘음 — 그보다 낮을 때만 돌려 봄(돌릴 때마다 한 쪽을 다시 읽어 느림)
-          for (const deg of [180, 90, 270]) {
-            const r = await recognize(w, rotated(canvas, deg));
-            if (r.score > best.score + 8) best = { ...r, deg };
-            if (best.conf >= 80) break;
-          }
-        }
-        return best;
+        return readCanvas(w, raw);
       };
       let best = await readPage(1);
       // 첫 장이 빈 장·팩스 표지라 글자가 거의 없으면 둘째 장도
@@ -286,15 +334,30 @@
           // 스캔본: 쪽 위쪽 30%만 그려 글자 인식
           scanned++;
           try {
-            const v1 = page.getViewport({ scale: 1 }); const vp = page.getViewport({ scale: Math.min(2, 1600 / Math.max(v1.width, v1.height)) });
+            // 쪽 위쪽 30%만: 큰 제목은 그림을 너무 키우면(띄어 쓴 '사 업 자 등 록 증') 오히려 못 읽어 긴 변 1600px로 그리고 살짝 흐리게(점무늬·번짐 지움)
+            const v1 = page.getViewport({ scale: 1 }); const vp = page.getViewport({ scale: Math.min(2, (opt.headPx || 1600) / Math.max(v1.width, v1.height)) });
             const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
             const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
             await page.render({ canvasContext: g, viewport: vp }).promise;
             const top = document.createElement('canvas'); top.width = c.width; top.height = Math.ceil(c.height * 0.3);
             top.getContext('2d').drawImage(c, 0, 0);
             const w = await getOcr();
-            const { data } = await withTimeout(w.recognize(cleaned(top)), 60000, '글자 인식'); // 점무늬 지우고 읽음
-            lines = String(data.text || '').split(/\n+/).map((x) => x.trim()).filter(Boolean).slice(0, 8);
+            await w.setParameters({ tessedit_pageseg_mode: '6' }).catch(() => {}); // 위쪽 조각은 '한 덩어리'(크게 띄어 쓴 제목도 한 줄로)
+            let data = (await withTimeout(w.recognize(cleaned(top)), 60000, '글자 인식')).data;
+            // 같은 조각을 더 크게 흑백으로 '줄마다'(표 칸) 한 번 더 — 표 안 공사명·계약번호는 이쪽이 읽음(나눈 서류마다 계약 찾기에 씀)
+            const vb = page.getViewport({ scale: Math.min(4, 2200 / v1.width) });
+            const big = document.createElement('canvas'); big.width = Math.ceil(vb.width); big.height = Math.ceil(vb.height * 0.3);
+            const bg = big.getContext('2d'); bg.fillStyle = '#fff'; bg.fillRect(0, 0, big.width, big.height);
+            await page.render({ canvasContext: bg, viewport: vb }).promise;
+            await w.setParameters({ tessedit_pageseg_mode: '4' }).catch(() => {});
+            let d2 = (await withTimeout(w.recognize(noLines(big)), 60000, '글자 인식')).data;
+            if ((d2.confidence || 0) < 60) { const d3 = (await withTimeout(w.recognize(binOf(big)), 60000, '글자 인식')).data; if ((d3.confidence || 0) > (d2.confidence || 0) + 5) d2 = d3; }
+            // 두 결과를 한 줄씩 번갈아(제목은 둘 중 잘 읽힌 쪽이 위쪽 줄에 오게), 같은 줄은 한 번만
+            const la = String(data.text || '').split(/\n+/).map((x) => x.trim()).filter(Boolean), lb = String(d2.text || '').split(/\n+/).map((x) => x.trim()).filter(Boolean);
+            const seen = new Set(); lines = [];
+            for (let i = 0; i < Math.max(la.length, lb.length); i++) for (const x of [la[i], lb[i]]) { const n = x && JH.logic.norm(x); if (n && !seen.has(n)) { seen.add(n); lines.push(x); } }
+            lines = lines.slice(0, 16);
+            data = { text: lines.join('\n') };
             head = String(data.text || '').replace(/\s+/g, ' ').trim();
           } catch (e) { console.warn('쪽 글자 인식 실패', p, e); }
         }
@@ -302,6 +365,22 @@
       }
     } finally { doc.destroy(); }
     return heads;
+  }
+  // 한 쪽 전체 글(줄바꿈 살림): 글자 층이 있으면 그것, 없으면 쪽 전체를 글자 인식 — 세금계산서 금액·업체 읽기용
+  async function pageText(bytes, pageNo) {
+    const doc = await (await pdfjs()).getDocument({ data: bytes.slice(), ...PDFJS_OPTS }).promise;
+    try {
+      if (pageNo > doc.numPages) return '';
+      const tc = await (await doc.getPage(pageNo)).getTextContent();
+      const rows = [];
+      for (const it of tc.items) { if (!it.str || !it.str.trim()) continue; const y = it.transform[5]; let r = rows.find((q) => Math.abs(q.y - y) < 4); if (!r) rows.push(r = { y, s: [] }); r.s.push({ x: it.transform[4], t: it.str }); }
+      const t = rows.sort((a, b) => b.y - a.y).map((r) => r.s.sort((a, b) => a.x - b.x).map((x) => x.t).join(' ')).join('\n');
+      if (JH.logic.norm(t).length >= 20) return t;
+    } finally { doc.destroy(); }
+    if (ocrBroken) return '';
+    const raw = await firstPageCanvas(bytes, 'pdf', 'application/pdf', pageNo); if (!raw) return '';
+    const best = await readCanvas(await getOcr(), raw, { table: true }); // 세금계산서처럼 표가 많은 쪽: 표 선을 지우고 읽음
+    return best ? best.text : '';
   }
   // 압축 파일(.zip) 풀기 — 브라우저 안에서(밖으로 안 나감). 윈도우에서 만든 zip은 한글 이름이 CP949라 그것도 읽음
   // 돌려줌: [{ name, path(폴더 포함), bytes }] · 암호 걸린 항목은 { name, locked: true }
@@ -333,5 +412,5 @@
     }
     return out;
   }
-  root.JH.readers = { unzip, markupLines, anyLines, read, officeLines, fullLines, pdfLines, hwpLines, ocrLines, pageHeads, get ocrBroken() { return ocrBroken; } };
+  root.JH.readers = { unzip, markupLines, anyLines, read, officeLines, fullLines, pdfLines, hwpLines, ocrLines, pageHeads, pageText, get ocrBroken() { return ocrBroken; } };
 })(window);

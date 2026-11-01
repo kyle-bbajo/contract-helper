@@ -1424,7 +1424,7 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     await page.click(`[data-act="split"][data-doc="${id}"]`);
     await page.waitForSelector('#spRows .sp-row', { timeout: 60000 });
     await waitFor(async () => !(await page.$('#spReading')), 300000, '스캔 쪽 제목 다 읽음');
-    assert.equal(await page.$$eval('#spView .sp-pgv', (x) => x.length), 16, '쪽 그림 자리가 모든 쪽만큼');
+    await waitFor(() => page.$$eval('#spView .sp-pgv', (x) => x.length === 16), 30000, '쪽 그림 자리가 모든 쪽만큼');
     await page.$eval('#spView', (v) => { v.scrollTop = v.scrollHeight; }); await waitFor(() => page.$eval('#spView .sp-pgv[data-p="16"]', (f) => f.dataset.drawn === '1'), 30000, '맨 끝 쪽도 그려짐');
     const rows = await page.$$eval('#spRows .sp-row', (rs) => rs.map((r) => `${r.querySelector('.sp-pin').value}:${r.querySelector('select').selectedOptions[0].textContent.trim()}`));
     const want = [/^1:.*사업자등록증/, /^2~5:.*계약이행 통합 서약서/, /^6~7:.*법인등기/, /^8:.*인감증명서/, /^9:.*사용인감계/, /^10:.*통장사본/, /^11:.*면허 등록증/, /^12~13:.*면허 등록수첩/, /^14~15:.*여성기업/, /^16:.*장애인기업/];
@@ -1433,6 +1433,37 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     await page.click('#spCancel');
   }
   step('계약서류 묶음 스캔 PDF(16쪽 · 통합서약서 4장 · 등기 2장 · 수첩·확인서 뒷장): 쪽마다 제목 줄로 서류마다 나눔');
+
+  // 여러 계약 서류가 한 PDF에 섞인 스캔 묶음 + 세금계산서 두 장: 나눈 서류마다 계약을 찾음(공사명·세금계산서 업체·금액)
+  {
+    await page.evaluate(() => {
+      document.querySelectorAll('dialog[open]').forEach((d) => d.close());
+      const mk = (key, name, amount) => { JH.app.db.contracts[key] = { key, name, type: '공사', vendor: '(주)가나토건', amount, nums: [], originals: {}, received: {}, edited: {}, updatedAt: Date.now() }; };
+      mk('mixx', '가나동 체육관 지붕 방수공사', 48000000); mk('mixy', '다라동 주차장 도색공사', 12000000);
+    });
+    const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('#btnAdd')]);
+    await fc.setFiles([{ name: '업체서류_두계약.pdf', mimeType: 'application/pdf', buffer: readFileSync(join(ROOT, 'tests/fixtures/bundle/여러계약묶음_스캔.pdf')) }]);
+    await waitFor(() => page.evaluate(() => !!JH.app.db.docs.find((x) => x.name === '업체서류_두계약.pdf')), 180000, '묶음 올림');
+    await waitFor(async () => !(await page.isVisible('#progress')), 180000, '정리 끝');
+    const d0 = await page.evaluate(() => { const d = JH.app.db.docs.find((x) => x.name === '업체서류_두계약.pdf'); return { id: d.id, key: d.key, multi: d.multi, also: d.also }; });
+    assert.ok(d0.multi >= 2 || (d0.also && d0.also.length), '여러 서류가 든 묶음으로 봄 ' + JSON.stringify(d0));
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    if (d0.key) { await page.click('nav [data-view="contracts"]'); await page.evaluate((k) => { JH.app.ui.sel = k; JH.app.render(); }, d0.key); } else await page.click('.views [data-view="inbox"]');
+    await page.click(`[data-act="split"][data-doc="${d0.id}"]`);
+    await page.waitForSelector('#spRows .sp-row, #spRows .warn-t', { timeout: 60000 });
+    assert.ok(!(await page.$('#spRows .warn-t')), await page.textContent('#spRows'));
+    await waitFor(async () => !(await page.$('#spReading')), 300000, '스캔 쪽 제목 다 읽음');
+    await waitFor(() => page.$$eval('#spRows .sp-row', (rs) => rs.filter((r) => /세금계산서/.test(r.querySelector('select[data-spf="item"]').selectedOptions[0].textContent)).every((r) => r.querySelector('select[data-spf="key"]').value)), 120000, '세금계산서 계약 찾음');
+    const rows = await page.$$eval('#spRows .sp-row', (rs) => rs.map((r) => `${r.querySelector('.sp-pin').value}:${r.querySelector('select[data-spf="item"]').selectedOptions[0].textContent.replace(/^.*· /, '').trim()}:${r.querySelector('select[data-spf="key"]').value}`));
+    assert.deepEqual(rows, ['1~2:착공계·현장대리인계·예정공정표:mixx', '3~4:착공계·현장대리인계·예정공정표:mixy', '5:세금계산서:mixy', '6:세금계산서:mixx'], JSON.stringify(rows));
+    await page.click('#spSave');
+    await waitFor(() => page.evaluate(() => JH.app.db.docs.filter((d) => d.splitFrom === '업체서류_두계약.pdf').length === 4), 60000, '나눠 저장');
+    const got = await page.evaluate(() => JH.app.db.docs.filter((d) => d.splitFrom === '업체서류_두계약.pdf').map((d) => `${d.key}:${d.itemId}${d.inv ? ':' + d.inv.total : ''}`).sort());
+    assert.deepEqual(got, ['mixx:c-invoice:48000000', 'mixx:c-start', 'mixy:c-invoice:12000000', 'mixy:c-start'], JSON.stringify(got));
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    await page.click('nav [data-view="contracts"]'); await page.click('.citem:has-text("시청사 옥상 방수공사")'); // 다음 시험은 그 계약 화면에서
+  }
+  step('여러 계약 서류가 섞인 스캔 묶음: 나눈 서류마다 계약(공사명), 세금계산서는 업체·금액으로 계약을 찾아 각 계약으로');
 
   // 특정 쪽만 잘라 넣기: [+ 새 서류] → 종류 고르고 → 그 쪽만 누르기 → 저장(고르지 않은 쪽은 원래 칸에 남음) · 확인을 마치면 그 계약 화면으로
   {

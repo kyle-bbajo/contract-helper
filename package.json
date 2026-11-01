@@ -1,7 +1,7 @@
 {
   "name": "contract-helper",
   "productName": "계약업무 도우미",
-  "version": "1.6.42",
+  "version": "1.6.43",
   "description": "공기업 계약 담당자용: 지출 증빙서류 자동 분류·점검·인쇄, 입찰 공고문 작성 도우미 (Windows, exe 없이 bat + Edge)",
   "private": true,
   "license": "UNLICENSED",
@@ -16,6 +16,7 @@
     "demo": "node tools/build.mjs && node tools/build-demo.mjs"
   },
   "devDependencies": {
+    "@tesseract.js-data/eng": "^1.0.0",
     "@tesseract.js-data/kor": "^1.0.0",
     "cfb": "^1.2.2",
     "pdf-lib": "^1.17.1",

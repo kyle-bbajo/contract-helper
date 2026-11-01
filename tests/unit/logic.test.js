@@ -404,3 +404,37 @@ test('노무비 서류 묶음: 긴 정식 제목도 쪽마다', () => {
   const segs = L.splitPages(infos, rows.length).map((s) => `${s.from}-${s.to}:${s.item}`);
   assert.deepEqual(segs, ['1-2:c-laborconfirm', '3-3:c-laborpriv', '4-5:c-laborlist', '6-6:c-laborclaim', '7-7:c-nounpaid']);
 });
+
+test('세금계산서: 업체 등록번호·상호와 금액으로 계약 찾기(같은 업체 계약이 여럿이어도)', () => {
+  const t = '전자세금계산서 (공급받는자 보관용)\n등록번호 123-81-45678 등록번호 456-82-00011\n상호(법인명) (주)가나토건 성명 가나다 상호 용인도시공사\n작성일자 2026.10.31. 공급가액 43,636,364 세액 4,363,636\n합계금액 48,000,000';
+  const f = L.invoiceFacts(t);
+  assert.equal(f.isInv, true); assert.equal(f.bizno, '1238145678'); assert.equal(f.total, 48000000); assert.equal(f.sure, true); assert.equal(f.date, '2026-10-31');
+  const cs = [
+    { key: 'a', name: '가나동 체육관 지붕 방수공사', vendor: '(주)가나토건', amount: 48000000 },
+    { key: 'b', name: '다라동 주차장 도색공사', vendor: '주식회사 가나토건', amount: 12000000 },
+    { key: 'c', name: '마바동 화장실 보수공사', vendor: '(주)마바건설', amount: 48000000 },
+  ];
+  const hay = L.norm(t);
+  assert.equal(L.matchInvoice(cs, f, hay).c.key, 'a', '같은 업체 중 금액이 맞는 계약');
+  // 부가세 뺀 금액으로 적힌 계약
+  assert.equal(L.matchInvoice([{ key: 'x', vendor: '가나토건', amount: 43636364 }, { key: 'y', vendor: '가나토건', amount: 1000000 }], f, hay).c.key, 'x');
+  // 등록번호만 맞아도(상호가 깨져 읽혀도)
+  assert.equal(L.matchInvoice([{ key: 'z', vendor: '전혀다른이름', bizno: '123-81-45678', amount: 48000000 }], f, 'xx').c.key, 'z');
+  // 업체가 안 맞으면 금액이 같아도 아님
+  assert.equal(L.matchInvoice([{ key: 'c', vendor: '(주)마바건설', amount: 48000000 }], f, hay).c, null);
+  // 금액이 안 맞고 같은 업체 계약이 둘이면 정하지 않음(후보만) — 단, 덤 점수(아직 세금계산서 없는 계약 등)로 가름
+  const g = L.invoiceFacts('세금계산서 등록번호 123-81-45678 (주)가나토건 공급가액 1,000,000 세액 100,000');
+  const two = L.matchInvoice(cs.slice(0, 2), g, L.norm('(주)가나토건'));
+  assert.equal(two.c, null); assert.equal(two.top.length, 2);
+  assert.equal(L.matchInvoice(cs.slice(0, 2), g, L.norm('(주)가나토건'), (c) => (c.key === 'b' ? 2 : 0)).c.key, 'b');
+});
+
+test('여러 계약 서류가 섞인 묶음: 같은 종류가 이어져도 계약이 다르면·세금계산서는 한 장씩', () => {
+  const infos = [
+    { id: 'c-start', strong: true, ck: 'A' }, null, { id: 'c-start', strong: true, ck: 'B' }, null,
+    { id: 'c-invoice', strong: true }, { id: 'c-invoice', strong: true }, { id: 'c-invoice', strong: true },
+    { id: 'c-bizreg', strong: true, ck: 'A' }, { id: 'c-bizreg', strong: true, ck: 'A', cont: true },
+  ];
+  const segs = L.splitPages(infos, 9).map((s) => `${s.from}-${s.to}:${s.item}`);
+  assert.deepEqual(segs, ['1-2:c-start', '3-4:c-start', '5-5:c-invoice', '6-6:c-invoice', '7-7:c-invoice', '8-9:c-bizreg']);
+});

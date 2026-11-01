@@ -329,6 +329,7 @@
   // - 같은 서류가 이어진 쪽은 한 서류. 긴 문장 속에서만 나온 이름(약한 것)은 앞 서류를 끊지 않음
   // - 통합서약서 안의 청렴계약 이행서약서 등은 통합서약서의 한 장으로
   const PART_OF = { pledge: ['related'] };
+  const ONE_PAGE = new Set(['invoice']); // 한 장에 한 건인 서류(세금계산서)
   const partOf = (a, b) => !!(a && b && (PART_OF[suffixOf(a)] || []).includes(suffixOf(b)));
   function splitPages(infos, n) {
     n = Math.max(1, n | 0);
@@ -336,8 +337,10 @@
     for (let p = 1; p <= n; p++) {
       const f = infos[p - 1] || null, cur = segs[segs.length - 1];
       const id = f && f.id;
-      const fresh = !cur || (id && id !== cur.item && !f.cont && (f.strong || !cur.item) && !partOf(cur.item, id));
-      if (fresh) segs.push({ from: p, to: p, item: id || null }); else cur.to = p;
+      // 같은 서류가 이어져도 새 서류: 한 장짜리(세금계산서 여러 장)이거나, 쪽에서 찾은 계약(ck)이 앞 서류와 다를 때(여러 계약 서류가 섞인 묶음)
+      const again = cur && id && id === cur.item && f.strong && !f.cont && (ONE_PAGE.has(suffixOf(id)) || (f.ck && cur.ck && f.ck !== cur.ck));
+      const fresh = !cur || again || (id && id !== cur.item && !f.cont && (f.strong || !cur.item) && !partOf(cur.item, id));
+      if (fresh) segs.push({ from: p, to: p, item: id || null, ck: (f && f.ck) || null }); else { cur.to = p; if (!cur.ck && f && f.ck) cur.ck = f.ck; }
     }
     // 첫 쪽들이 종류 모름이고 바로 뒤가 제목 없이 이어진 것이면 그대로(사람이 고름)
     return segs.map((x) => ({ from: x.from, to: x.to, item: x.item }));
@@ -492,6 +495,57 @@
     // 배운 다른 이름: 사람이 미분류 서류를 이 계약으로 정리할 때 서류에 적힌 공사명·용역명(나라장터 계약명과 다르게 쓴 것)
     if (!(s >= 6) && (c.aliases || []).some((a) => okAlias(a) && hay.includes(a))) s += 6;
     return s;
+  }
+  // ---------- 세금계산서: 업체(공급자) 등록번호·상호와 금액으로 계약 찾기 ----------
+  // 세금계산서는 다른 서류가 다 갖춰진 뒤 마지막에 발급 → 같은 업체 계약이 여럿이면 금액이 맞는 계약, 그다음 아직 세금계산서가 없는 계약
+  // text: 줄바꿈·띄어쓰기가 살아 있는 글(쉼표 있는 금액을 읽어야 해서 norm 하지 않은 것)
+  function invoiceFacts(text) {
+    const n = String(text || '').replace(/[ \t]+/g, ' ');
+    const isInv = /세\s*금\s*계\s*산\s*서|전\s*자\s*계\s*산\s*서|계\s*산\s*서\s*\(\s*공\s*급/.test(n);
+    const biznos = [...n.matchAll(/(?<!\d)(\d{3})\s*[-–~]\s*(\d{2})\s*[-–~]\s*(\d{5})(?!\d)/g)].map((m) => m[1] + m[2] + m[3]);
+    const nums = [...n.matchAll(/(?<![\d,.])(\d{1,3}(?:\s?[,.]\s?\d{3})+|\d{4,12})(?![\d,]*\d)/g)]
+      .map((m) => Number(m[1].replace(/\D/g, ''))).filter((x) => x >= 1000 && x < 1e12);
+    // 공급가액·세액: 세액 = 공급가액의 10%(원 단위 버림·반올림 차이) 짝 중 가장 큰 것
+    let supply = 0, tax = 0;
+    for (const a of nums) for (const b of nums) if (b < a && Math.abs(b - a / 10) <= 10 && a > supply) { supply = a; tax = b; }
+    const total = supply ? supply + tax : 0;
+    // 합계금액 칸이 있으면 그 수(공급가액+세액과 같으면 확실)
+    const tm = n.match(/합\s*계\s*금\s*액[^\d]{0,20}([\d,.\s]{4,20})/);
+    const said = tm ? Number(tm[1].replace(/\D/g, '')) : 0;
+    const dm = n.match(/작\s*성\s*일\s*자?[^\d]{0,12}(20\d{2})\s*[-./년]\s*(\d{1,2})\s*[-./월]\s*(\d{1,2})/) || n.match(/(20\d{2})\s*[-./년]\s*(\d{1,2})\s*[-./월]\s*(\d{1,2})/);
+    const date = dm ? `${dm[1]}-${String(dm[2]).padStart(2, '0')}-${String(dm[3]).padStart(2, '0')}` : '';
+    return { isInv, bizno: biznos[0] || '', biznos, supply, tax, total: total || said, sure: !!(total && said && Math.abs(total - said) <= 10), date };
+  }
+  // 세금계산서 한 장과 계약: 업체가 맞아야 하고(등록번호 또는 상호), 금액이 계약금액(또는 부가세 빼고)과 같으면 크게
+  function invoiceScore(c, f, hay, bonus) {
+    if (!c || c.archived || !f) return 0;
+    let s = 0;
+    const bz = String(c.bizno || (c.g2b && c.g2b.bizno) || '').replace(/\D/g, '');
+    if (bz.length === 10 && (f.biznos || []).includes(bz)) s += 5;
+    const v = vendorCore(c.vendor);
+    if (v.length >= 2 && hay.includes(v)) s += 3;
+    if (!s) return 0;
+    const amts = [c.amount, c.g2b && c.g2b.origAmount, ...((c.g2b && c.g2b.amtChanges) || []).map((x) => x.amount)].filter((x) => x > 0);
+    const near = (a, b) => a && b && Math.abs(a - b) <= 10;
+    if (f.total && amts.some((a) => near(a, f.total))) s += 10;
+    else if (f.supply && amts.some((a) => near(a, f.supply))) s += 8; // 계약금액을 부가세 빼고 적은 경우
+    const n = norm(c.name || '');
+    if (n.length >= 4 && hay.includes(n)) s += 6; // 품목·비고에 공사명
+    if (c.paidDate) s -= 4; // 이미 지출한 계약은 뒤로
+    return s + (bonus ? bonus(c) || 0 : 0);
+  }
+  function matchInvoice(contracts, f, hay, bonus) {
+    const rank = contracts.map((c) => ({ c, s: invoiceScore(c, f, hay, bonus) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s);
+    if (!rank.length) return { c: null, top: [] };
+    const top = rank.filter((x) => x.s === rank[0].s).map((x) => x.c);
+    return { c: top.length === 1 ? top[0] : null, top, score: rank[0].s, amount: rank[0].s >= 10 };
+  }
+  // 묶음 PDF를 나눈 한 서류(쪽 글)의 계약: 계약번호·계약명이 맞는 한 계약이면 그 계약(업체 이름만 맞으면 그 업체 계약이 하나뿐일 때만)
+  function segmentContract(contracts, hay) {
+    const m = matchCandidates(contracts, hay);
+    if (m.top.length === 1 && m.score >= 6) return { c: m.top[0], sure: true };
+    if (m.top.length === 1 && m.score >= 3) return { c: m.top[0], sure: false };
+    return { c: null, top: m.top };
   }
   function matchContract(contracts, hay) {
     let best = null, bs = 0, tie = false;
@@ -992,7 +1046,7 @@
     const pick = (suf, over = {}) => { const x = (list || []).find((y) => y.id === `${k}-${suf}`) || only.find((y) => y.id === `${k}-${suf}`); return x ? { ...x, ...over } : null; };
     const opt = (note) => ({ required: false, note });
     const claim = (step) => [pick('claim', { group: step }), pick('tax', { group: step }), pick('ltax', { group: step }), pick('inspaid', { group: step }),
-      pick('emppaid', { group: step, ...(k === 's' ? opt('해당 시') : {}) }), pick('bond', { group: step, ...opt('해당 시') }), pick('invoice', { group: step }), pick('laborlist', { group: step, ...opt('노무비 구분관리 대상') })];
+      pick('emppaid', { group: step, ...(k === 's' ? opt('해당 시') : {}) }), pick('bond', { group: step, ...opt('해당 시') }), pick('laborlist', { group: step, ...opt('노무비 구분관리 대상') }), pick('invoice', { group: step, note: '다른 서류가 다 갖춰진 뒤 마지막에' })];
     const pay = (step) => [pick('pay', { group: step })];
     const st = (name, items) => ({ name, items: items.filter(Boolean).map((x) => ({ ...x, group: name })) });
     if (kind === 'prog') return [
@@ -1083,6 +1137,7 @@
     API_BASE, API_OPS, TYPES, apiUrl, keyParam, monthRanges, parseApiText, parseApiBody, parseCorpList, parseCorpRows, normalizeApiItem, detectExtFinance,
     G2B, g2bUrl, scanAuditFields, summarizeChanges, chgPlan, autoKind, CHG_KINDS, changesOf, ordSnap, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
     ordOf, viaParts, viaKey, viaStatus, itemsInName, isRecentItem, issuedTooEarly, isAdvBond, advBondCheck, ADV_DAYS, matchCandidates, checklistStatus, holds, hasItem, classifyPages, classifyPage, splitPages, classifyTitleLines, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail, issueCond,
+    invoiceFacts, invoiceScore, matchInvoice, segmentContract,
     searchHit, okAlias, headLines, learnSigs, learnedItem, learnedFuzzy, similar, classifyInfo, suffixOf, shareSafe, splitPlan, checkSplit, goodName, isG2bNo, maskPrivate,
     PAY_KINDS, typeKey, hasRounds, roundOnly, roundSteps, roundHint, roundLabel, routeRound,
   };

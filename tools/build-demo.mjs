@@ -85,6 +85,7 @@ for (const f of readdirSync(join(ROOT, 'tests/fixtures/bundle'))) cpSync(join(RO
   writeFileSync(join(OUT, 'vendor/pdfjs/cmaps.json'), JSON.stringify(m)); rmSync(cmd, { recursive: true });
   const lang = join(OUT, 'vendor/tesseract/lang/kor.traineddata.gz');
   writeFileSync(join(OUT, 'vendor/tesseract/lang/kor.b64.txt'), readFileSync(lang).toString('base64')); rmSync(lang);
+  rmSync(join(OUT, 'vendor/tesseract/lang/eng.traineddata.gz'), { force: true }); // 시연판은 한국어만(파일 크기)
   const p = join(OUT, 'js/readers.js'); let r = readFileSync(p, 'utf8');
   const rep = (a, b) => { if (!r.includes(a)) throw new Error('readers 바꿀 곳 없음: ' + a.slice(0, 50)); r = r.replace(a, b); };
   rep("  const PDFJS_OPTS = { cMapUrl: 'vendor/pdfjs/cmaps/', cMapPacked: true,", `  const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
@@ -96,11 +97,12 @@ for (const f of readdirSync(join(ROOT, 'tests/fixtures/bundle'))) cpSync(join(RO
   root.JH_DemoCMapFactory = DemoCMapFactory;
   const PDFJS_OPTS = { CMapReaderFactory: DemoCMapFactory, cMapPacked: true,`);
   // 글자 인식 엔진은 브라우저 저장소(keyval-store)를 먼저 보므로 한국어 데이터를 거기에 넣어 둠
-  rep("    ocrWorker = await withTimeout(T.createWorker('kor', 1, {", `    const kor = b64(await (await fetch('vendor/tesseract/lang/kor.b64.txt')).text());
+  rep("    const langs = await fetch(new URL('vendor/tesseract/lang/eng.traineddata.gz', location.href).href, { method: 'HEAD' }).then((r) => r.ok).catch(() => false) ? 'kor+eng' : 'kor';", "    const langs = 'kor';");
+  rep("    ocrWorker = await withTimeout(T.createWorker(langs, 1, {", `    const kor = b64(await (await fetch('vendor/tesseract/lang/kor.b64.txt')).text());
     await new Promise((ok, no) => { const rq = indexedDB.open('keyval-store'); rq.onupgradeneeded = () => rq.result.createObjectStore('keyval');
       rq.onerror = () => no(rq.error); rq.onsuccess = () => { const tx = rq.result.transaction('keyval', 'readwrite'); tx.objectStore('keyval').put(kor, './kor.traineddata');
         tx.oncomplete = () => { rq.result.close(); ok(); }; tx.onerror = () => no(tx.error); }; });
-    ocrWorker = await withTimeout(T.createWorker('kor', 1, {`);
+    ocrWorker = await withTimeout(T.createWorker(langs, 1, {`);
   writeFileSync(p, r);
   // 게시 규칙: 글자 파일에 U+FFFD 문자를 그대로 두지 않음
   for (const f of ['vendor/pdf-lib.min.js']) { const q = join(OUT, f); writeFileSync(q, readFileSync(q, 'utf8').replaceAll('\uFFFD', '\\uFFFD')); }

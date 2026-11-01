@@ -42,6 +42,7 @@ cp(join(NM, 'tesseract.js/dist/tesseract.min.js'), join(V, 'tesseract/tesseract.
 cp(join(NM, 'tesseract.js/dist/worker.min.js'), join(V, 'tesseract/worker.min.js'));
 for (const f of ['tesseract-core-lstm.wasm.js', 'tesseract-core-simd-lstm.wasm.js']) cp(join(NM, 'tesseract.js-core', f), join(V, 'tesseract/core', f));
 cp(join(NM, '@tesseract.js-data/kor/4.0.0_best_int/kor.traineddata.gz'), join(V, 'tesseract/lang/kor.traineddata.gz'));
+cp(join(NM, '@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz'), join(V, 'tesseract/lang/eng.traineddata.gz')); // 계약번호(R26TA…)·영문 업체 이름
 cp(join(NM, 'pretendard/dist/web/variable/woff2/PretendardVariable.woff2'), join(V, 'fonts/PretendardVariable.woff2'));
 // 라이선스 고지
 const lic = [
