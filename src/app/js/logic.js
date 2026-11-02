@@ -501,10 +501,13 @@
   // text: 줄바꿈·띄어쓰기가 살아 있는 글(쉼표 있는 금액을 읽어야 해서 norm 하지 않은 것)
   function invoiceFacts(text) {
     const n = String(text || '').replace(/[ \t]+/g, ' ');
-    const isInv = /세\s*금\s*계\s*산\s*서|전\s*자\s*계\s*산\s*서|계\s*산\s*서\s*\(\s*공\s*급/.test(n);
+    // 세금계산서인지: 제목(띄어 쓰거나 일부 깨져도)·공급가액과 세액 칸
+    const isInv = /세\s*금\s*계\s*산\s*서|전\s*자\s*계\s*산\s*서|계\s*산\s*서\s*\(\s*공\s*급/.test(n) || (/공\s*급\s*가\s*액/.test(n) && /세\s*액/.test(n) && /(공\s*급\s*받|공\s*급\s*자|등\s*록\s*번\s*호)/.test(n));
     const biznos = [...n.matchAll(/(?<!\d)(\d{3})\s*[-–~]\s*(\d{2})\s*[-–~]\s*(\d{5})(?!\d)/g)].map((m) => m[1] + m[2] + m[3]);
-    const nums = [...n.matchAll(/(?<![\d,.])(\d{1,3}(?:\s?[,.]\s?\d{3})+|\d{4,12})(?![\d,]*\d)/g)]
-      .map((m) => Number(m[1].replace(/\D/g, ''))).filter((x) => x >= 1000 && x < 1e12);
+    // 금액 후보: '43,636,364'·'43636364'·'43.636.364', 종이 세금계산서처럼 한 칸에 한 자리('4 3 6 3 6 3 6 4')
+    const nums = [...n.matchAll(/(?<![\d,.])(\d{1,3}(?:\s?[,.]\s?\d{3})+|\d{4,12})(?![\d,]*\d)/g)].map((m) => Number(m[1].replace(/\D/g, '')))
+      .concat([...n.matchAll(/(?<!\d)\d(?:[ \t|]\d){4,11}(?!\d)/g)].map((m) => Number(m[0].replace(/\D/g, ''))))
+      .filter((x) => x >= 1000 && x < 1e12);
     // 공급가액·세액: 세액 = 공급가액의 10%(원 단위 버림·반올림 차이) 짝 중 가장 큰 것
     let supply = 0, tax = 0;
     for (const a of nums) for (const b of nums) if (b < a && Math.abs(b - a / 10) <= 10 && a > supply) { supply = a; tax = b; }
@@ -514,31 +517,45 @@
     const said = tm ? Number(tm[1].replace(/\D/g, '')) : 0;
     const dm = n.match(/작\s*성\s*일\s*자?[^\d]{0,12}(20\d{2})\s*[-./년]\s*(\d{1,2})\s*[-./월]\s*(\d{1,2})/) || n.match(/(20\d{2})\s*[-./년]\s*(\d{1,2})\s*[-./월]\s*(\d{1,2})/);
     const date = dm ? `${dm[1]}-${String(dm[2]).padStart(2, '0')}-${String(dm[3]).padStart(2, '0')}` : '';
-    return { isInv, bizno: biznos[0] || '', biznos, supply, tax, total: total || said, sure: !!(total && said && Math.abs(total - said) <= 10), date };
+    // 줄마다 숫자 사이 쉼표·점·띄어쓰기를 지운 글(글자 인식이 금액을 쪼개 읽어도 계약금액을 찾을 수 있게)
+    const digits = n.split(/\n/).map((l) => l.replace(/(\d)[\s,.|]+(?=\d)/g, '$1')).join('\n');
+    return { isInv, bizno: biznos[0] || '', biznos, supply, tax, total: total || said, sure: !!(total && said && Math.abs(total - said) <= 10), date, nums: [...new Set(nums)].slice(0, 60), digits: digits.slice(0, 8000) };
   }
-  // 세금계산서 한 장과 계약: 업체가 맞아야 하고(등록번호 또는 상호), 금액이 계약금액(또는 부가세 빼고)과 같으면 크게
+  // 계약금액(당초·변경 포함)과 그 금액의 공급가액(부가세 뺀 것: 반올림·버림·올림)
+  const amountsOf = (c) => [c.amount, c.g2b && c.g2b.origAmount, ...((c.g2b && c.g2b.amtChanges) || []).map((x) => x.amount)].filter((x) => x > 0);
+  const supplyOf = (a) => [Math.round(a / 1.1), Math.floor(a / 1.1), Math.ceil(a / 1.1)];
+  // 세금계산서 한 장과 계약: 업체(등록번호·상호) 또는 계약금액이 맞아야 함. 금액이 계약금액(또는 부가세 뺀 금액)과 같으면 크게
   function invoiceScore(c, f, hay, bonus) {
     if (!c || c.archived || !f) return 0;
-    let s = 0;
+    let v = 0;
     const bz = String(c.bizno || (c.g2b && c.g2b.bizno) || '').replace(/\D/g, '');
-    if (bz.length === 10 && (f.biznos || []).includes(bz)) s += 5;
-    const v = vendorCore(c.vendor);
-    if (v.length >= 2 && hay.includes(v)) s += 3;
-    if (!s) return 0;
-    const amts = [c.amount, c.g2b && c.g2b.origAmount, ...((c.g2b && c.g2b.amtChanges) || []).map((x) => x.amount)].filter((x) => x > 0);
-    const near = (a, b) => a && b && Math.abs(a - b) <= 10;
-    if (f.total && amts.some((a) => near(a, f.total))) s += 10;
-    else if (f.supply && amts.some((a) => near(a, f.supply))) s += 8; // 계약금액을 부가세 빼고 적은 경우
-    const n = norm(c.name || '');
-    if (n.length >= 4 && hay.includes(n)) s += 6; // 품목·비고에 공사명
+    if (bz.length === 10 && ((f.biznos || []).includes(bz) || (f.digits || '').includes(bz))) v += 5;
+    const vc = vendorCore(c.vendor);
+    if (vc.length >= 2 && hay.includes(vc)) v += 3;
+    const amts = amountsOf(c), near = (a, b) => a && b && Math.abs(a - b) <= 10;
+    const nums = f.nums || [];
+    // 1) 읽은 합계·공급가액이 계약금액과 같음 2) 읽은 숫자 중에 계약금액(또는 부가세 뺀 금액)이 있음 3) 숫자를 이어 붙인 글 속에 있음(글자 인식이 쪼갠 경우)
+    let amt = 0;
+    if (amts.some((a) => near(a, f.total) || supplyOf(a).some((x) => near(x, f.supply)) || near(a, f.supply))) amt = 10;
+    else if (amts.some((a) => nums.includes(a) || supplyOf(a).some((x) => nums.includes(x)))) amt = 9;
+    else if (amts.some((a) => a >= 100000 && new RegExp(`(?<!\\d)(${a}|${supplyOf(a).join('|')})(?!\\d)`).test(f.digits || ''))) amt = 7;
+    const n = norm(c.name || ''), nameHit = n.length >= 4 && hay.includes(n);
+    if (!v && !amt && !nameHit) return 0;
+    if (!v && amt < 9 && !nameHit) return 0; // 업체도 안 맞고 금액도 애매하면 아님
+    let s = v + amt + (nameHit ? 6 : 0);
     if (c.paidDate) s -= 4; // 이미 지출한 계약은 뒤로
     return s + (bonus ? bonus(c) || 0 : 0);
   }
+  const vendorHit = (c, f, hay) => { const bz = String(c.bizno || (c.g2b && c.g2b.bizno) || '').replace(/\D/g, ''); const vc = vendorCore(c.vendor); return (bz.length === 10 && (f.biznos || []).includes(bz)) || (vc.length >= 2 && hay.includes(vc)); };
   function matchInvoice(contracts, f, hay, bonus) {
-    const rank = contracts.map((c) => ({ c, s: invoiceScore(c, f, hay, bonus) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s);
+    // 세금계산서에 우리가 아는 다른 업체가 적혀 있으면, 업체가 안 맞는 계약은 금액만 같아도 빼냄
+    const seen = contracts.some((c) => !c.archived && vendorHit(c, f, hay));
+    const rank = contracts.filter((c) => !seen || vendorHit(c, f, hay)).map((c) => ({ c, s: invoiceScore(c, f, hay, bonus) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s);
     if (!rank.length) return { c: null, top: [] };
     const top = rank.filter((x) => x.s === rank[0].s).map((x) => x.c);
-    return { c: top.length === 1 ? top[0] : null, top, score: rank[0].s, amount: rank[0].s >= 10 };
+    const best = top.length === 1 ? top[0] : null;
+    const amtOk = !!best && amountsOf(best).some((a) => (f.nums || []).includes(a) || supplyOf(a).some((x) => (f.nums || []).includes(x)) || Math.abs(a - (f.total || 0)) <= 10 || new RegExp(`(?<!\\d)${a}(?!\\d)`).test(f.digits || ''));
+    return { c: best, top, score: rank[0].s, amount: amtOk };
   }
   // 묶음 PDF를 나눈 한 서류(쪽 글)의 계약: 계약번호·계약명이 맞는 한 계약이면 그 계약(업체 이름만 맞으면 그 업체 계약이 하나뿐일 때만)
   function segmentContract(contracts, hay) {

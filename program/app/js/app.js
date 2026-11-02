@@ -472,7 +472,7 @@
   //  ① 함께 올린 다른 서류가 한 계약으로 갔으면 그 계약 ② 아직 지출 안 했고 준공이 지난 계약이 하나면 그 계약 ③ 아니면 미분류
   let batchKeys = new Set();
   // 세금계산서에서 읽은 값(업체 등록번호·금액·작성일자)만 남김 — 업체(법인) 정보라 개인정보 아님
-  const invSnap = (f) => ({ bizno: f.bizno, biznos: (f.biznos || []).slice(0, 3), supply: f.supply, tax: f.tax, total: f.total, sure: f.sure, date: f.date });
+  const invSnap = (f) => ({ bizno: f.bizno, biznos: (f.biznos || []).slice(0, 3), supply: f.supply, tax: f.tax, total: f.total, sure: f.sure, date: f.date, nums: (f.nums || []).filter((x) => x >= 100000).slice(0, 20) });
   // 세금계산서는 다른 서류가 다 갖춰진 뒤 마지막에 옴 → 아직 세금계산서가 없는 계약, 청구서가 이미 들어온 계약을 앞으로
   function invBonus(c) {
     const ds = docsOf(c.key), inv = ds.filter((d) => /-invoice$/.test(d.itemId || '')).length;
@@ -592,7 +592,7 @@
           id: L.uid(), name: f.name, kind, size: f.size, mime: f.type, bytes, ocr, lines,
           meta: L.findMeta(lines), text: L.maskPrivate(L.norm(lines.join(' ')).slice(0, 6000)), title: L.maskPrivate(L.norm(lines.slice(0, 8).join(' ')).slice(0, 300)), heads: L.headLines(lines),
           dates: L.extractDates(lines),
-          ...(() => { const f = L.invoiceFacts(lines.join('\n')); return f.isInv && (f.total || f.bizno) ? { inv: invSnap(f) } : {}; })(),
+          ...(() => { const iv = L.invoiceFacts(lines.join('\n')); return iv.isInv || /계산서/.test(f.name) ? { invF: iv, inv: invSnap(iv) } : {}; })(),
         });
       }
       // 2) 계약서가 있으면 먼저 계약을 찾거나 만듦
@@ -624,7 +624,21 @@
         progress(`정리하는 중 ${i + 1}/${recs.length}`, i / recs.length);
         let c = forced || (r.key && db.contracts[r.key]) || null;
         // 세금계산서: 업체(등록번호·상호)와 금액으로 계약을 찾음 — 같은 업체 계약이 여럿이어도 금액이 맞는 계약, 그다음 세금계산서가 아직 없는 계약
-        if (!c && r.inv) { const m = L.matchInvoice(contracts(), r.inv, L.norm(L.stem(r.name)) + '|' + r.text, invBonus); if (m.c) { c = m.c; r.invHit = m.amount ? 'amount' : 'vendor'; } else if (m.top.length) r.invCands = m.top.map((x) => x.key); }
+        if (!c && r.invF) {
+          const hay = L.norm(L.stem(r.name)) + '|' + r.text;
+          let m = L.matchInvoice(contracts(), r.invF, hay, invBonus);
+          // 스캔 세금계산서인데 계약금액이 안 보이면: 표 선을 지우고 다시 읽어 봄(표 칸 안 금액·등록번호를 빠뜨리는 경우가 많음)
+          if (r.ocr && !(m.c && m.amount) && (r.kind === 'pdf' || r.kind === 'image')) {
+            progress(`세금계산서 금액 다시 읽는 중 ${i + 1}/${recs.length}`, i / recs.length);
+            const t2 = await R.readTable(r.bytes, r.kind, r.mime).catch(() => '');
+            if (t2) {
+              const f2 = L.invoiceFacts(r.lines.join('\n') + '\n' + t2), m2 = L.matchInvoice(contracts(), f2, hay + '|' + L.norm(t2), invBonus);
+              if ((m2.c && m2.amount) || (m2.c && !m.c)) { m = m2; r.invF = f2; r.inv = invSnap(f2); }
+              else if (!r.inv.total && f2.total) { r.invF = f2; r.inv = invSnap(f2); }
+            }
+          }
+          if (m.c) { c = m.c; r.invHit = m.amount ? 'amount' : 'vendor'; } else if (m.top.length) r.invCands = m.top.map((x) => x.key);
+        }
         if (!c) c = pickContract(L.norm(L.stem(r.name)) + '|' + r.text, r);
         // 계약을 정하지 못했으면 점수가 같은 후보(같은 업체 계약 등)를 남겨 두고 팝업에서 '추천'으로 먼저 보여 줌
         if (!c) { const g0 = L.classifyInfo(defaults.공사, r.name, r.title).id || L.classifyInfo(defaults.용역, r.name, r.title).id || L.classifyInfo(defaults.물품, r.name, r.title).id; if (g0) r.guess = L.suffixOf(g0); }
@@ -633,6 +647,7 @@
         // 계약 화면 안에서 올린 서류는 그 계약으로(다른 계약으로 보내지 않음). 오른쪽 위 [업로드]는 전체 계약에서 찾아 정리
         const info = c && !(forced && forceItem) ? classifyDoc(c, r.name, r.title, r.heads) : null;
         let itemId = c ? (forced && forceItem ? forceItem : info.id) : null;
+        if (c && !itemId && r.invF && r.invF.isInv) itemId = (classList(c).find((x) => /-invoice$/.test(x.id)) || {}).id || null; // 제목이 깨져도 공급가액·세액 칸이 있으면 세금계산서
         r.unsure = !!(info && info.id && ((info.alts && info.alts.length) || info.fuzzy)); r.alts = r.unsure ? info.alts : null; r.learned = !!(info && info.by === 'learned');
         // 한 파일에 여러 양식(착공계 묶음 등): 쪽마다 서류 이름을 찾아 함께 든 서류로 표시
         let also = [], pagesOf = null;
@@ -2173,7 +2188,7 @@
     if (pv.confirm && revPrev && d.unsure) $('#pvWhy').textContent += ` 이 칸에는 이미 「${revPrev.name}」이 있습니다(같은 서류의 수정본이면 그대로 저장).`;
     if (d.inv) { // 세금계산서에서 읽은 업체·금액
       const ci = d.key && db.contracts[d.key], amts = ci ? [ci.amount, ci.g2b && ci.g2b.origAmount].filter(Boolean) : [];
-      const same = ci && d.inv.total && amts.some((a) => Math.abs(a - d.inv.total) <= 10 || Math.abs(a - d.inv.supply) <= 10);
+      const same = ci && amts.some((a) => (d.inv.total && Math.abs(a - d.inv.total) <= 10) || (d.inv.supply && Math.abs(a - d.inv.supply) <= 10) || (d.inv.nums || []).some((x) => Math.abs(x - a) <= 10 || Math.abs(x - a / 1.1) <= 1));
       const cb = ci && String(ci.bizno || (ci.g2b && ci.g2b.bizno) || '').replace(/\D/g, ''), b0 = cb && (d.inv.biznos || []).includes(cb) ? cb : d.inv.bizno; // 공급받는자(우리) 번호가 먼저 읽힐 수도 있어 계약 업체 번호를 우선
       const bz = b0 ? `${b0.slice(0, 3)}-${b0.slice(3, 5)}-${b0.slice(5)}` : '';
       $('#pvWhy').textContent += ` 세금계산서에서 읽은 값: ${bz ? `공급자 ${bz}` : ''}${d.inv.total ? ` · 합계 ${L.won(d.inv.total)}` : ''}${d.inv.date ? ` · 작성 ${d.inv.date}` : ''}${ci && ci.amount ? (same ? ' — 계약금액과 같음' : ` — 계약금액(${L.won(ci.amount)})과 다름(기성·부분 지급이면 그럴 수 있음)`) : ''}.`;
@@ -2247,7 +2262,7 @@
       const raw = rowRaw(r), hay = L.norm(raw);
       let k = null, sure = false, cands = [];
       const f = /-invoice$/.test(r.item || '') || /계산서/.test(raw) ? L.invoiceFacts(raw) : null;
-      if (f && (f.bizno || f.total)) { const m = L.matchInvoice(contracts(), f, hay, invBonus); if (m.c) { k = m.c; sure = m.amount; } cands = m.top.map((x) => x.key); r.inv = invSnap(f); }
+      if (f && (f.bizno || f.total || (f.nums || []).length)) { const m = L.matchInvoice(contracts(), f, hay, invBonus); if (m.c) { k = m.c; sure = m.amount; } cands = m.top.map((x) => x.key); r.inv = invSnap(f); }
       if (!k) { const m = L.segmentContract(contracts(), hay); if (m.c) { k = m.c; sure = m.sure; } else cands = cands.concat((m.top || []).map((x) => x.key)); }
       // 확실하지 않으면: 원래 파일 계약 > 바로 앞 서류 계약(같은 계약 서류는 붙어 있음) > 하나뿐인 후보
       if (!sure) k = base || prev || k;
@@ -2262,7 +2277,7 @@
     for (const r of todo) {
       const t = await R.pageText(sp.bytes, Math.min(...r.pages)).catch(() => '');
       if (tok !== sp.tok || !t) continue;
-      const f = L.invoiceFacts(t); if (!(f.bizno || f.total)) continue;
+      const f = L.invoiceFacts(t); if (!(f.bizno || f.total || (f.nums || []).length)) continue;
       r.inv = invSnap(f);
       const m = L.matchInvoice(contracts(), f, L.norm(t), invBonus);
       if (m.c && !r.keyManual) { r.key = m.c.key; r.keySure = m.amount; r.item = mapItem(r.item, m.c); }

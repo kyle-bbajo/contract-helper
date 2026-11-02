@@ -366,6 +366,13 @@
     } finally { doc.destroy(); }
     return heads;
   }
+  // 표가 많은 서류(세금계산서)를 표 선을 지우고 다시 읽음: 그림·스캔 PDF의 첫 장(또는 pageNo)
+  async function readTable(bytes, kind, type, pageNo = 1) {
+    if (ocrBroken) return '';
+    const raw = await firstPageCanvas(bytes, kind, type, pageNo); if (!raw) return '';
+    const best = await readCanvas(await getOcr(), raw, { table: true });
+    return best ? best.text : '';
+  }
   // 한 쪽 전체 글(줄바꿈 살림): 글자 층이 있으면 그것, 없으면 쪽 전체를 글자 인식 — 세금계산서 금액·업체 읽기용
   async function pageText(bytes, pageNo) {
     const doc = await (await pdfjs()).getDocument({ data: bytes.slice(), ...PDFJS_OPTS }).promise;
@@ -412,5 +419,5 @@
     }
     return out;
   }
-  root.JH.readers = { unzip, markupLines, anyLines, read, officeLines, fullLines, pdfLines, hwpLines, ocrLines, pageHeads, pageText, get ocrBroken() { return ocrBroken; } };
+  root.JH.readers = { unzip, markupLines, anyLines, read, officeLines, fullLines, pdfLines, hwpLines, ocrLines, pageHeads, pageText, readTable, get ocrBroken() { return ocrBroken; } };
 })(window);

@@ -464,7 +464,7 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   assert.ok(ho.t.includes('지방계약법 시행령 제25조 제1항 제5호 가목 (추정가격 2억원 이하 종합공사)'));
   // 현황판에서 한 번에 받기(지난번 고른 기간으로, 나라장터·서류에서 채워 바로 파일)
   await page.click('[data-act="quickform"][data-fk="audit"]');
-  await waitFor(() => readdirSync(xdir).filter((f) => f.endsWith('.hwpx')).length >= 2, 20000, '행정사무감사 바로 받기');
+  await waitFor(() => readdirSync(xdir).filter((f) => f.endsWith('.hwpx')).length >= 2, 60000, '행정사무감사 바로 받기'); // 스캔 서류에서 빈칸 채우기(글자 인식)가 들어 있어 넉넉히
   await page.click('[data-act="quickform"][data-fk="inspect"]');
   await waitFor(() => readdirSync(xdir).filter((f) => f.endsWith('.xlsx')).length >= 2, 20000, '종합감사 바로 받기');
   step('현황판 [행정사무감사 서식]·[종합감사 서식] 누르면 나라장터·서류에서 채운 파일을 바로 받음');
@@ -1461,6 +1461,20 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     const got = await page.evaluate(() => JH.app.db.docs.filter((d) => d.splitFrom === '업체서류_두계약.pdf').map((d) => `${d.key}:${d.itemId}${d.inv ? ':' + d.inv.total : ''}`).sort());
     assert.deepEqual(got, ['mixx:c-invoice:48000000', 'mixx:c-start', 'mixy:c-invoice:12000000', 'mixy:c-start'], JSON.stringify(got));
     await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    // 세금계산서 한 장(스캔)만 올려도: 같은 업체 계약 둘 중 금액이 맞는 계약·세금계산서 칸으로
+    {
+      const src = await PDFDocument.load(readFileSync(join(ROOT, 'tests/fixtures/bundle/여러계약묶음_스캔.pdf')));
+      const one = await PDFDocument.create(); (await one.copyPages(src, [4])).forEach((pg) => one.addPage(pg));
+      const [fc2] = await Promise.all([page.waitForEvent('filechooser'), page.click('#btnAdd')]);
+      await fc2.setFiles([{ name: 'scan_0001.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await one.save()) }]);
+      await waitFor(() => page.evaluate(() => !!JH.app.db.docs.find((x) => x.name === 'scan_0001.pdf')), 180000, '세금계산서 올림');
+      await waitFor(async () => !(await page.isVisible('#progress')), 180000, '정리 끝');
+      const iv = await page.evaluate(() => { const d = JH.app.db.docs.find((x) => x.name === 'scan_0001.pdf'); return `${d.key}:${d.itemId}`; });
+      assert.equal(iv, 'mixy:c-invoice', '세금계산서 금액(12,000,000원)으로 계약 찾음');
+      await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    }
+    // 뒤 시험(감사 서식 등)에 섞이지 않게 이 시험용 계약·서류는 지움
+    await page.evaluate(async () => { const db = JH.app.db; db.docs = db.docs.filter((d) => d.key !== 'mixx' && d.key !== 'mixy'); delete db.contracts.mixx; delete db.contracts.mixy; await JH.app.saveDb(true); JH.app.render(); });
     await page.click('nav [data-view="contracts"]'); await page.click('.citem:has-text("시청사 옥상 방수공사")'); // 다음 시험은 그 계약 화면에서
   }
   step('여러 계약 서류가 섞인 스캔 묶음: 나눈 서류마다 계약(공사명), 세금계산서는 업체·금액으로 계약을 찾아 각 계약으로');

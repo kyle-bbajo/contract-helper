@@ -421,7 +421,7 @@ test('세금계산서: 업체 등록번호·상호와 금액으로 계약 찾기
   // 등록번호만 맞아도(상호가 깨져 읽혀도)
   assert.equal(L.matchInvoice([{ key: 'z', vendor: '전혀다른이름', bizno: '123-81-45678', amount: 48000000 }], f, 'xx').c.key, 'z');
   // 업체가 안 맞으면 금액이 같아도 아님
-  assert.equal(L.matchInvoice([{ key: 'c', vendor: '(주)마바건설', amount: 48000000 }], f, hay).c, null);
+  assert.equal(L.matchInvoice([{ key: 'c', vendor: '(주)마바건설', amount: 48000000 }, { key: 'd', vendor: '(주)가나토건', amount: 5000000 }], f, hay).c.key, 'd', '세금계산서의 업체가 다른 계약 업체면 금액이 같아도 그 계약 아님');
   // 금액이 안 맞고 같은 업체 계약이 둘이면 정하지 않음(후보만) — 단, 덤 점수(아직 세금계산서 없는 계약 등)로 가름
   const g = L.invoiceFacts('세금계산서 등록번호 123-81-45678 (주)가나토건 공급가액 1,000,000 세액 100,000');
   const two = L.matchInvoice(cs.slice(0, 2), g, L.norm('(주)가나토건'));
@@ -437,4 +437,25 @@ test('여러 계약 서류가 섞인 묶음: 같은 종류가 이어져도 계�
   ];
   const segs = L.splitPages(infos, 9).map((s) => `${s.from}-${s.to}:${s.item}`);
   assert.deepEqual(segs, ['1-2:c-start', '3-4:c-start', '5-5:c-invoice', '6-6:c-invoice', '7-7:c-invoice', '8-9:c-bizreg']);
+});
+
+test('세금계산서: 업체 이름이 깨져 읽혀도 계약금액으로 찾음 · 한 칸에 한 자리 금액·쪼개 읽은 금액', () => {
+  const cs = [
+    { key: 'a', name: '가나동 체육관 지붕 방수공사', vendor: '(주)가나토건', amount: 48000000 },
+    { key: 'b', name: '다라동 주차장 도색공사', vendor: '(주)마바건설', amount: 12000000 },
+  ];
+  // 상호가 깨짐, 등록번호 없음, 금액만 읽힘
+  const f1 = L.invoiceFacts('세 금 계 산 서\n상호 (주)가L+토 건\n공급가액 43,636,364 세액 4,363,636');
+  assert.equal(L.matchInvoice(cs, f1, L.norm('상호 (주)가L+토 건')).c.key, 'a');
+  // 종이 세금계산서: 한 칸에 한 자리
+  const f2 = L.invoiceFacts('세금계산서 공급받는자\n공급가액 1 0 9 0 9 0 9 1 세액 1 0 9 0 9 0 9');
+  assert.equal(f2.supply, 10909091); assert.equal(L.matchInvoice(cs, f2, 'xx').c.key, 'b');
+  // 금액이 쪼개져 읽힘(48, 000, 000) + 업체 맞음
+  const f3 = L.invoiceFacts('세금계산서 (주)가나토건\n합계금액 48 , 000 , 000');
+  assert.equal(L.matchInvoice(cs, f3, L.norm('(주)가나토건')).c.key, 'a');
+  // 금액도 업체도 안 맞으면 없음
+  assert.equal(L.matchInvoice(cs, L.invoiceFacts('세금계산서 (주)아무개 공급가액 1,000,000 세액 100,000'), L.norm('(주)아무개')).c, null);
+  // 같은 금액 계약이 둘이면(업체 모름) 정하지 않음
+  const two = [{ key: 'x', vendor: '갑', amount: 48000000 }, { key: 'y', vendor: '을', amount: 48000000 }];
+  assert.equal(L.matchInvoice(two, f1, 'zz').c, null);
 });
