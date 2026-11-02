@@ -34,7 +34,7 @@
   const WIN = Math.random().toString(36).slice(2, 10), ROLE = ONLY === 'notice' ? 'notice' : 'main';
   const ui = { view: 'home', sel: null, q: '', officer: '', officerTouched: false, type: '', state: '', board: '', sort: (() => { try { return localStorage.getItem('jh.sort') || 'end-desc'; } catch (_) { return 'end-desc'; } })() };
 
-  const CHECKLIST_VER = 13; // 13: 계약 서류에 여성기업·장애인기업 확인서 · 12: 준공계에 정산서류 · 11: 노무비 미체불 확약서·지급 명세서 찾는 말 · 10: 준공계·준공검사원을 두 칸으로, 준공검사원 지정통보는 필수 아님 · 9: 노무비 지급확인제 → 공사 노무비 구분관리 및 지급확인 적용제외 신청서(합의서도 이 칸) // (지난 것) 4: 선금 보증서 · 5: 준공검사원 지정통보 · 6: 사업장 가입내역 확인서(4대보험 가입증명서) 등 찾는 말 추가 · 7: 하도급 계약서·계약보증서는 그 밖의 계약 서류 · 8: 구매요구에 산업안전재해율 결과·안전보건관리계획서·적격수급업체 안전보건 수준 평가표(공사·용역)
+  const CHECKLIST_VER = 14; // 14: 준공계에 사회보험료 납부내역서(보험료 정산) · 13: 계약 서류에 여성기업·장애인기업 확인서 · 12: 준공계에 정산서류 · 11: 노무비 미체불 확약서·지급 명세서 찾는 말 · 10: 준공계·준공검사원을 두 칸으로, 준공검사원 지정통보는 필수 아님 · 9: 노무비 지급확인제 → 공사 노무비 구분관리 및 지급확인 적용제외 신청서(합의서도 이 칸) // (지난 것) 4: 선금 보증서 · 5: 준공검사원 지정통보 · 6: 사업장 가입내역 확인서(4대보험 가입증명서) 등 찾는 말 추가 · 7: 하도급 계약서·계약보증서는 그 밖의 계약 서류 · 8: 구매요구에 산업안전재해율 결과·안전보건관리계획서·적격수급업체 안전보건 수준 평가표(공사·용역)
   const lists = (type) => (db.checklists && db.checklists[type]) || defaults[type] || defaults.공사;
   const contracts = () => Object.values(db.contracts).filter((c) => !c.archived);
   // 계약별 서류: 화면을 그리는 동안은 한 번 만든 색인(docIndex)으로 찾음(서류 수천 개여도 계약마다 다시 훑지 않음)
@@ -519,7 +519,7 @@
   }
   document.addEventListener('close', (e) => { if (e.target && e.target.tagName === 'DIALOG') setTimeout(flushAsk, 150); }, true);
   // 파일이 여러 개인 게 보통인 칸(수정본을 묻지 않음)
-  const MULTI_ITEM = /-(related|agent|photo|result|roster|laborlist|bizreg|license|licbook)$/;
+  const MULTI_ITEM = /-(related|agent|photo|result|roster|laborlist|bizreg|license|licbook|insdetail|settle)$/; // 여러 장이 함께 드는 칸(보험료 내역서·정산서류 등)
   // 압축 파일(.zip)은 풀어서 안에 든 파일을 하나씩 넣음(압축 안의 압축도 한 번 더). 원래 zip은 넣지 않음
   async function hwpViaHangul(name, bytes) {
     let tmp = null, pdf = null;
@@ -1562,6 +1562,7 @@
             <button class="btn" data-act="folder">폴더 열기</button>
             ${c.url ? `<a class="btn ghost" href="${esc(c.url)}" target="_blank" rel="noopener">나라장터에서 보기</a>` : ''}
             <span class="spacer"></span>
+            ${c.type !== '물품' ? `<button class="btn" data-act="ins" title="국민연금·건강·장기요양 납부내역서에서 보험료 합계 → 계상액과 비교해 정산 금액">보험료 정산${c.insCalc && c.insCalc.docs && Object.keys(c.insCalc.docs).length ? ' ✓' : ''}</button>` : ''}
             <button class="btn" data-act="pay">${c.paidDate ? '지출 정보 수정' : '지출 처리'}</button>
             <button class="btn ghost" data-act="edit">계약 수정</button>
           </div>
@@ -2978,6 +2979,7 @@
       else if (act === 'save') await printContract(c, 'save');
       else if (act === 'folder') await S.open(folderOf(c));
       else if (act === 'pay') openPay(c);
+      else if (act === 'ins') openIns(c);
       else if (act === 'edit') openContract(c);
       else if (act === 'confirmdoc') openPreview([t.dataset.doc], 0, true);
       else if (act === 'view') { const d = docById(t.dataset.doc); openPreview([d.id], 0); }
@@ -3191,6 +3193,87 @@
     editing.archived = true; await saveDb(true); $('#dlgContract').close(); ui.sel = null; render();
   };
   // 지출 처리
+  // ---------- 보험료 정산(국민연금·건강보험·노인장기요양 사후정산) ----------
+  // 이 계약의 '사회보험료 납부내역서' 칸 서류(없으면 글에 연금·건강보험료가 든 서류)를 끝까지 읽어 종류별 합계 → 사람이 확인·고침 → 계상액과 비교
+  const INS_K = [['pension', '국민연금'], ['health', '건강보험'], ['ltc', '노인장기요양']];
+  const ins = { key: null, tok: 0 };
+  const insDocs = (c) => {
+    const ds = docsOf(c.key).filter((d) => !d.deleted);
+    const own = ds.filter((d) => /-insdetail$/.test(d.itemId || ''));
+    return own.length ? own : ds.filter((d) => /(연금|건강|장기요양)보험료/.test(d.text || '') && /(납부|부과|결정|고지)(내역|확인)/.test(d.text || ''));
+  };
+  async function insRead(c, d, tok) {
+    const bytes = await S.readBytes(d.path);
+    const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    const lines = await R.docLines(u8, d.kind, d.mime || '', d.name, (p, n) => { if (tok === ins.tok) { const el = document.querySelector(`#insBody [data-insdoc="${CSS.escape(d.id)}"] .ins-st`); if (el) el.textContent = `읽는 중 ${p}/${n}쪽`; } });
+    const t = L.insuranceTotals(lines);
+    return { pension: t.pension, health: t.health, ltc: t.ltc, by: t.by, rows: t.rows, warn: t.warn, at: Date.now() };
+  }
+  function openIns(c) {
+    ins.key = c.key; c.insCalc = c.insCalc || { docs: {}, plan: {} };
+    $('#insTitle').textContent = `보험료 정산 — ${c.name}`;
+    $('#insHalf').checked = !!c.insCalc.half;
+    paintIns(); $('#dlgIns').showModal();
+    insReadAll(false);
+  }
+  async function insReadAll(force) {
+    const c = db.contracts[ins.key]; if (!c) return; const tok = ++ins.tok;
+    for (const d of insDocs(c)) {
+      const cur = c.insCalc.docs[d.id];
+      if (cur && !force && (cur.manual || cur.at)) continue;
+      try { const r = await insRead(c, d, tok); if (tok !== ins.tok) return; c.insCalc.docs[d.id] = r; }
+      catch (e) { c.insCalc.docs[d.id] = { pension: 0, health: 0, ltc: 0, warn: ['읽지 못했습니다: ' + e.message], at: Date.now() }; }
+      if (tok === ins.tok && $('#dlgIns').open) paintIns();
+    }
+    if (tok === ins.tok) { c.updatedAt = Date.now(); saveDb(); }
+  }
+  const wonIn = (v) => (v ? Number(v).toLocaleString('ko-KR') : '');
+  const numOf = (v) => Number(String(v || '').replace(/[^\d]/g, '')) || 0;
+  function insSums(c) {
+    const ds = insDocs(c), tot = { pension: 0, health: 0, ltc: 0 };
+    for (const d of ds) { const r = c.insCalc.docs[d.id]; if (r) for (const [k] of INS_K) tot[k] += r[k] || 0; }
+    const half = !!c.insCalc.half, paid = {}, plan = c.insCalc.plan || {}, settle = {}, cut = {};
+    for (const [k] of INS_K) { paid[k] = half ? Math.floor(tot[k] / 2) : tot[k]; settle[k] = plan[k] ? Math.min(plan[k], paid[k]) : paid[k]; cut[k] = plan[k] ? Math.max(0, plan[k] - paid[k]) : 0; }
+    return { ds, tot, paid, plan, settle, cut, half };
+  }
+  function paintIns() {
+    const c = db.contracts[ins.key]; if (!c) return;
+    const z = insSums(c);
+    const cell = (d, k) => { const r = c.insCalc.docs[d.id] || {}; return `<td class="r"><input type="text" inputmode="numeric" class="ins-in" data-insdoc-k="${k}" data-doc="${esc(d.id)}" value="${esc(wonIn(r[k]))}" aria-label="${esc(d.name)} ${k}"></td>`; };
+    const BY = { 'sum-row': '합계 줄', rows: '금액 줄 더함', ratio: '건강·요양 짝으로 찾음', 'ratio-sum': '합계 줄(건강·요양 짝)' };
+    $('#insBody').innerHTML = !z.ds.length ? `<div class="empty-line">이 계약에 보험료 납부내역서가 없습니다. [내역서 올리기]로 국민연금·건강보험(장기요양) 내역서를 넣으세요(PDF·스캔·엑셀·한글).</div>` : `
+      <div class="tbl-wrap"><table class="grid ins-tbl"><thead><tr><th>내역서</th>${INS_K.map(([, n]) => `<th class="r">${n}</th>`).join('')}<th>읽은 방법</th></tr></thead><tbody>
+      ${z.ds.map((d) => { const r = c.insCalc.docs[d.id]; return `<tr data-insdoc="${esc(d.id)}"><td><button type="button" class="link" data-act="view" data-doc="${esc(d.id)}">${esc(d.name)}</button></td>${INS_K.map(([k]) => cell(d, k)).join('')}<td class="sub"><span class="ins-st">${!r ? '읽는 중…' : r.manual ? '직접 고침' : esc(BY[r.by] || '')}${r && r.rows ? ` ${r.rows}줄` : ''}</span>${r && r.warn && r.warn.length ? `<div class="warn-t small">${esc(r.warn.join(' · '))}</div>` : ''}</td></tr>`; }).join('')}
+      </tbody><tfoot>
+        <tr><th>납부 합계</th>${INS_K.map(([k]) => `<th class="r num">${esc(L.won(z.tot[k]))}</th>`).join('')}<th class="sub">${esc(L.won(z.tot.pension + z.tot.health + z.tot.ltc))}</th></tr>
+        ${z.half ? `<tr><th>사업주 부담분(절반)</th>${INS_K.map(([k]) => `<td class="r num">${esc(L.won(z.paid[k]))}</td>`).join('')}<td></td></tr>` : ''}
+        <tr><th>계상액(산출내역서)</th>${INS_K.map(([k]) => `<td class="r"><input type="text" inputmode="numeric" class="ins-in" data-insplan="${k}" value="${esc(wonIn(z.plan[k]))}" placeholder="넣으면 비교"></td>`).join('')}<td class="sub">비우면 납부액 그대로</td></tr>
+        <tr class="ins-res"><th>정산 금액</th>${INS_K.map(([k]) => `<th class="r num">${esc(L.won(z.settle[k]))}</th>`).join('')}<th class="num">${esc(L.won(z.settle.pension + z.settle.health + z.settle.ltc))}</th></tr>
+        ${INS_K.some(([k]) => z.cut[k]) ? `<tr><th>감액(계상 − 납부)</th>${INS_K.map(([k]) => `<td class="r num warn-t">${z.cut[k] ? esc(L.won(z.cut[k])) : ''}</td>`).join('')}<td class="num warn-t">${esc(L.won(z.cut.pension + z.cut.health + z.cut.ltc))}</td></tr>` : ''}
+      </tfoot></table></div>`;
+  }
+  $('#insBody').addEventListener('change', (e) => {
+    const c = db.contracts[ins.key]; if (!c) return; const t = e.target;
+    if (t.dataset.insplan) { c.insCalc.plan = c.insCalc.plan || {}; c.insCalc.plan[t.dataset.insplan] = numOf(t.value); }
+    else if (t.dataset.insdocK) { const r = c.insCalc.docs[t.dataset.doc] = c.insCalc.docs[t.dataset.doc] || {}; r[t.dataset.insdocK] = numOf(t.value); r.manual = true; }
+    else return;
+    c.updatedAt = Date.now(); saveDb(); paintIns();
+  });
+  $('#insHalf').addEventListener('change', () => { const c = db.contracts[ins.key]; if (!c) return; c.insCalc.half = $('#insHalf').checked; saveDb(); paintIns(); });
+  $('#insReread').onclick = () => { const c = db.contracts[ins.key]; if (!c) return; for (const k of Object.keys(c.insCalc.docs)) delete c.insCalc.docs[k]; paintIns(); insReadAll(true); };
+  $('#insAdd').onclick = () => {
+    const c = db.contracts[ins.key]; if (!c) return;
+    const item = classList(c).find((x) => /-insdetail$/.test(x.id)); const inp = document.createElement('input'); inp.type = 'file'; inp.multiple = true;
+    inp.onchange = async () => { if (!inp.files.length) return; await ingest([...inp.files], c.key, item ? item.id : null); if ($('#dlgIns').open) { paintIns(); insReadAll(false); } };
+    inp.click();
+  };
+  $('#insSave').onclick = async () => { const c = db.contracts[ins.key]; if (c) { c.updatedAt = Date.now(); await saveDb(true); } $('#dlgIns').close(); render(); toast('보험료 정산을 저장했습니다.', 'ok'); };
+  $('#insCopy').onclick = async () => {
+    const c = db.contracts[ins.key]; if (!c) return; const z = insSums(c);
+    const line = (lab, o) => `${lab}\t${INS_K.map(([k]) => (o[k] || 0).toLocaleString('ko-KR')).join('\t')}\t${(INS_K.reduce((s, [k]) => s + (o[k] || 0), 0)).toLocaleString('ko-KR')}`;
+    const text = [`보험료 정산 — ${c.name}`, `구분\t${INS_K.map(([, n]) => n).join('\t')}\t계`, line('납부 합계', z.tot), ...(z.half ? [line('사업주 부담분', z.paid)] : []), ...(Object.keys(z.plan).some((k) => z.plan[k]) ? [line('계상액', z.plan)] : []), line('정산 금액', z.settle), ...(INS_K.some(([k]) => z.cut[k]) ? [line('감액', z.cut)] : [])].join('\n');
+    try { await navigator.clipboard.writeText(text); toast('정산 결과를 복사했습니다(엑셀·한글 표에 붙여 넣기).', 'ok'); } catch (_) { toast('복사하지 못했습니다.', 'err'); }
+  };
   function openPay(c, title) {
     editing = c; $('#payTitle').textContent = title || '지출 처리';
     $('#payDate').value = c.paidDate ? L.fmtDate(c.paidDate).replace(/\./g, '-') : new Date(Date.now() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 10);

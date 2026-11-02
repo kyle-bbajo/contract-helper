@@ -308,17 +308,23 @@
     sync();
     chkFit.addEventListener('change', async () => { JH.app.cfg.autoFit = chkFit.checked; await JH.app.saveCfg(); JH.app.fitWindow(); JH.app.toast(chkFit.checked ? '좁은 창에서는 화면을 줄여 맞춥니다.' : '화면 맞춤을 껐습니다(좁으면 위아래로 쌓여 보임).', 'ok'); });
   }
-  const btnUpd = document.getElementById('btnUpdate');
-  if (btnUpd) btnUpd.onclick = async () => {
-    const app = root.JH.app; btnUpd.disabled = true; btnUpd.textContent = '확인 중…';
+  // 지금 업데이트 확인: 설정 안 버튼과 위쪽 막대 [업데이트] 버튼이 같은 일
+  async function runUpdate(btn, label) {
+    const app = root.JH.app; if (btn.disabled) return;
+    if (info && info.canUpdate === false) { app.toast('자동 업데이트가 꺼져 있습니다(공용 설정에 GitHub 토큰이 없거나, 설치하지 않고 바로 실행 중). 설정 → 정보를 보세요.', 'err'); return; }
+    btn.disabled = true; const sp = btn.querySelector('span') || btn; sp.textContent = '확인 중…';
     try {
       const r = await root.JH.server.update();
       if (r.skipped) app.toast(r.skipped, 'err');
       else if (r.updated) { app.ui.restarting = true; app.toast(`새 버전을 받았습니다(${(r.info && r.info.message) || ''}). 잠시 뒤 새 창이 열리면 이 창은 닫으세요.`, 'ok'); setTimeout(() => { try { window.close(); } catch (_) {} }, 6000); }
-      else app.toast('이미 최신입니다.', 'ok');
+      else app.toast(`이미 최신입니다(${(info && info.version) || ''}).`, 'ok');
     } catch (e) { app.toast(e.message, 'err'); }
-    finally { btnUpd.disabled = false; btnUpd.textContent = '지금 업데이트 확인'; }
-  };
+    finally { btn.disabled = false; sp.textContent = label; }
+  }
+  const btnUpd = document.getElementById('btnUpdate');
+  if (btnUpd) btnUpd.onclick = () => runUpdate(btnUpd, '지금 업데이트 확인');
+  const btnUpdTop = document.getElementById('btnUpdateTop');
+  if (btnUpdTop) btnUpdTop.onclick = () => runUpdate(btnUpdTop, '업데이트');
   root.JH.settings = {
     open, showWatch,
     setInfo(i) {

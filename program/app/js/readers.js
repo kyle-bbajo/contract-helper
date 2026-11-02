@@ -267,7 +267,7 @@
     if (!(bytes[0] === 0x50 && bytes[1] === 0x4b)) return [];
     const z = root.CFB.read(bytes, { type: 'array' });
     const txt = (re) => z.FullPaths.map((p, i) => [p, i]).filter(([p]) => re.test(p)).map(([, i]) => new TextDecoder('utf-8').decode(new Uint8Array(z.FileIndex[i].content || [])));
-    const un = (x) => x.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, '&');
+    const un = (x) => x.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&#(\d+);/g, (m, n) => String.fromCodePoint(+n)).replace(/&#x([0-9a-f]+);/gi, (m, n) => String.fromCodePoint(parseInt(n, 16))).replace(/&amp;/g, '&');
     const out = [];
     // 엑셀: 공유 문자열 + 칸에 바로 든 글자, 숫자는 시트에서
     for (const x of txt(/\/xl\/sharedStrings\.xml$/i)) for (const m of x.matchAll(/<si>([\s\S]*?)<\/si>/g)) { const t = un([...m[1].matchAll(/<t[^>]*>([^<]*)<\/t>/g)].map((y) => y[1]).join('')).trim(); if (t) out.push(t); }
@@ -278,6 +278,39 @@
     // 워드: 문단마다
     for (const x of txt(/\/word\/document\.xml$/i)) for (const p of x.split(/<\/w:p>/)) { const t = un([...p.matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g)].map((y) => y[1]).join('')).trim(); if (t) out.push(t); }
     return out.slice(0, 2000);
+  }
+  // 엑셀(.xlsx) 표를 행마다 칸 순서대로: '가나다 | 3000000 | 285000' (보험료 내역서처럼 칸이 중요한 표). 옛 .xls는 줄 글자
+  function sheetRows(bytes) {
+    if (bytes[0] === 0xd0 && bytes[1] === 0xcf) { try { return oldOfficeLines(bytes); } catch (_) { return []; } }
+    if (!(bytes[0] === 0x50 && bytes[1] === 0x4b)) return [];
+    const z = root.CFB.read(bytes, { type: 'array' });
+    const txt = (re) => z.FullPaths.map((p, i) => [p, i]).filter(([p]) => re.test(p)).sort().map(([, i]) => new TextDecoder('utf-8').decode(new Uint8Array(z.FileIndex[i].content || [])));
+    const un = (x) => x.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&#(\d+);/g, (m, n) => String.fromCodePoint(+n)).replace(/&#x([0-9a-f]+);/gi, (m, n) => String.fromCodePoint(parseInt(n, 16))).replace(/&amp;/g, '&');
+    const ss = []; for (const x of txt(/\/xl\/sharedStrings\.xml$/i)) for (const m of x.matchAll(/<si>([\s\S]*?)<\/si>/g)) ss.push(un([...m[1].matchAll(/<t[^>]*>([^<]*)<\/t>/g)].map((y) => y[1]).join('')).trim());
+    const out = [];
+    for (const x of txt(/\/xl\/worksheets\/sheet\d+\.xml$/i).slice(0, 10)) for (const row of x.matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)) {
+      const cells = [];
+      for (const c of row[1].matchAll(/<c([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
+        const t = (c[1].match(/t="(\w+)"/) || [])[1], v = ((c[2] || '').match(/<v>([^<]*)<\/v>/) || [])[1], is = ((c[2] || '').match(/<t[^>]*>([^<]*)<\/t>/) || [])[1];
+        let val = t === 's' ? ss[+v] || '' : t === 'inlineStr' ? un(is || '') : un(v || '');
+        if (/^-?\d+(\.\d+)?$/.test(val) && Math.abs(+val) >= 1000) val = Math.round(+val).toLocaleString('en-US'); // 금액은 쉼표
+        if (String(val).trim()) cells.push(String(val).trim());
+      }
+      if (cells.length) out.push(cells.join(' | '));
+    }
+    return out.slice(0, 5000);
+  }
+  // 서류 전체를 쪽마다 읽은 줄(보험료 내역서 합계 내기): PDF는 쪽마다(스캔은 표 선 지우고 글자 인식), 엑셀은 행마다, 한글은 본문
+  async function docLines(bytes, kind, type, name, onPage) {
+    if (kind === 'pdf') {
+      const doc = await (await pdfjs()).getDocument({ data: bytes.slice(), ...PDFJS_OPTS }).promise; const n = Math.min(doc.numPages, 40); doc.destroy();
+      const out = []; for (let p = 1; p <= n; p++) { if (onPage) onPage(p, n); out.push(...String(await pageText(bytes, p)).split(/\n+/)); }
+      return out.map((x) => x.trim()).filter(Boolean);
+    }
+    if (kind === 'image') return String(await readTable(bytes, kind, type)).split(/\n+/).map((x) => x.trim()).filter(Boolean);
+    if (kind === 'hwp') { try { return await JH.hwp.fullLines(root.CFB, bytes); } catch (_) { return hwpLines(bytes); } }
+    if (/\.xlsx?$/i.test(name || '')) { const r = sheetRows(bytes); if (r.length) return r; }
+    return (await read(bytes, kind, type)).lines;
   }
   async function read(bytes, kind, type) {
     let lines = [], ocr = false;
@@ -380,8 +413,9 @@
       if (pageNo > doc.numPages) return '';
       const tc = await (await doc.getPage(pageNo)).getTextContent();
       const rows = [];
-      for (const it of tc.items) { if (!it.str || !it.str.trim()) continue; const y = it.transform[5]; let r = rows.find((q) => Math.abs(q.y - y) < 4); if (!r) rows.push(r = { y, s: [] }); r.s.push({ x: it.transform[4], t: it.str }); }
-      const t = rows.sort((a, b) => b.y - a.y).map((r) => r.s.sort((a, b) => a.x - b.x).map((x) => x.t).join(' ')).join('\n');
+      for (const it of tc.items) { if (!it.str || !it.str.trim()) continue; const y = it.transform[5]; let r = rows.find((q) => Math.abs(q.y - y) < 4); if (!r) rows.push(r = { y, s: [] }); r.s.push({ x: it.transform[4], w: it.width || 0, h: Math.abs(it.transform[3]) || 10, t: it.str }); }
+      // 글자 사이가 벌어진 곳만 띄움(글자마다 따로 든 PDF에서 '4 5 0 , 0 0 0'이 되지 않게), 칸 사이(넓은 틈)는 ' | '
+      const t = rows.sort((a, b) => b.y - a.y).map((r) => { let out = '', end = null; for (const i of r.s.sort((a, b) => a.x - b.x)) { const gap = end === null ? 0 : i.x - end; out += end === null ? '' : gap > i.h * 1.6 ? ' | ' : gap > i.h * 0.15 ? ' ' : ''; out += i.t; end = i.x + i.w; } return out; }).join('\n');
       if (JH.logic.norm(t).length >= 20) return t;
     } finally { doc.destroy(); }
     if (ocrBroken) return '';
@@ -419,5 +453,5 @@
     }
     return out;
   }
-  root.JH.readers = { unzip, markupLines, anyLines, read, officeLines, fullLines, pdfLines, hwpLines, ocrLines, pageHeads, pageText, readTable, get ocrBroken() { return ocrBroken; } };
+  root.JH.readers = { unzip, markupLines, anyLines, read, officeLines, fullLines, pdfLines, hwpLines, ocrLines, pageHeads, pageText, readTable, sheetRows, docLines, get ocrBroken() { return ocrBroken; } };
 })(window);

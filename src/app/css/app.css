@@ -936,3 +936,10 @@ body.only-notice .bar .btn.back { display: none; }
 .sp-row .sp-pg .link.sm { margin-left: auto; font-size: 12px; }
 .sp-row .sp-pg .link.sm + .x { margin-left: 4px; }
 .sp-zbar .btn:not(.ghost) { color: var(--ink); background: #fff; }
+/* 보험료 정산 */
+.ins-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 10px; }
+.ins-tbl input.ins-in { width: 9.5em; text-align: right; font-variant-numeric: tabular-nums; }
+.ins-tbl td.r, .ins-tbl th.r { text-align: right; }
+.ins-tbl tfoot th, .ins-tbl tfoot td { border-top: 1px solid var(--rule-soft); }
+.ins-tbl tr.ins-res th { font-weight: 700; }
+.tbl-wrap { overflow-x: auto; }

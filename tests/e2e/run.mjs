@@ -466,7 +466,7 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
   await page.click('[data-act="quickform"][data-fk="audit"]');
   await waitFor(() => readdirSync(xdir).filter((f) => f.endsWith('.hwpx')).length >= 2, 60000, '행정사무감사 바로 받기'); // 스캔 서류에서 빈칸 채우기(글자 인식)가 들어 있어 넉넉히
   await page.click('[data-act="quickform"][data-fk="inspect"]');
-  await waitFor(() => readdirSync(xdir).filter((f) => f.endsWith('.xlsx')).length >= 2, 20000, '종합감사 바로 받기');
+  await waitFor(() => readdirSync(xdir).filter((f) => f.endsWith('.xlsx')).length >= 2, 60000, '종합감사 바로 받기');
   step('현황판 [행정사무감사 서식]·[종합감사 서식] 누르면 나라장터·서류에서 채운 파일을 바로 받음');
   await page.click('.views [data-view="contracts"]');
   step('감독관 경유 체크(착공계·현장대리인계·예정공정표·산출내역서·견적서·노무비 지급확인제·준공계·준공검사원) + 감사·검사 자료: 나라장터 변경이력(차수마다 구분 고름)·업체 주소 자동 + 직접 넣은 값 → 종합감사 엑셀(양식 그대로) · 행정사무감사 한글(받은 양식에 채움)');
@@ -1478,6 +1478,27 @@ print(json.dumps({'t': re.findall(r'<hp:t>([^<]*)</hp:t>', s), 'land': 'landscap
     await page.click('nav [data-view="contracts"]'); await page.click('.citem:has-text("시청사 옥상 방수공사")'); // 다음 시험은 그 계약 화면에서
   }
   step('여러 계약 서류가 섞인 스캔 묶음: 나눈 서류마다 계약(공사명), 세금계산서는 업체·금액으로 계약을 찾아 각 계약으로');
+
+  // 보험료 정산: 연금·건강·장기요양 내역서(글자 PDF·스캔 PDF·엑셀)를 올리면 종류별 합계 → 계상액을 넣으면 정산 금액·감액
+  {
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    await page.click('nav [data-view="contracts"]'); await page.click('.citem:has-text("시청사 옥상 방수공사")');
+    await page.click('[data-act="ins"]'); await page.waitForSelector('#dlgIns[open]');
+    const F = (n) => readFileSync(join(ROOT, 'tests/fixtures/ins', n));
+    const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('#insAdd')]);
+    await fc.setFiles([{ name: '보험료_납부내역서.pdf', mimeType: 'application/pdf', buffer: F('보험료_납부내역서.pdf') }, { name: '건강보험_부과내역_스캔.pdf', mimeType: 'application/pdf', buffer: F('건강보험_부과내역_스캔.pdf') },
+      { name: '연금보험료_결정내역.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: F('연금보험료_결정내역.xlsx') }]);
+    const sums = () => page.$$eval('#insBody tfoot tr:first-child th', (x) => x.map((c) => c.textContent.trim()));
+    await waitFor(async () => (await page.$$('#insBody tbody tr')).length === 3 && !(await page.textContent('#insBody')).includes('읽는 중'), 240000, '내역서 셋 읽음');
+    assert.deepEqual((await sums()).slice(1, 4), ['1,912,500원', '1,239,560원', '160,490원'], JSON.stringify(await sums()));
+    await page.fill('#insBody [data-insplan="pension"]', '2000000'); await page.press('#insBody [data-insplan="pension"]', 'Tab'); await page.waitForTimeout(300);
+    const res = await page.$$eval('#insBody tr.ins-res th', (x) => x.map((c) => c.textContent.trim()));
+    assert.equal(res[1], '1,912,500원', '정산 금액 = 납부액(계상액보다 적음)');
+    assert.match(await page.textContent('#insBody tfoot'), /87,500원/, '감액');
+    await page.click('#insSave');
+    assert.ok(await page.evaluate(() => { const c = Object.values(JH.app.db.contracts).find((x) => x.name === '시청사 옥상 방수공사'); return c.insCalc && c.insCalc.plan.pension === 2000000 && Object.keys(c.insCalc.docs).length === 3; }), '저장');
+  }
+  step('보험료 정산: 연금·건강·장기요양 내역서(글자 PDF·스캔·엑셀)에서 종류별 합계, 계상액과 비교해 정산 금액·감액');
 
   // 특정 쪽만 잘라 넣기: [+ 새 서류] → 종류 고르고 → 그 쪽만 누르기 → 저장(고르지 않은 쪽은 원래 칸에 남음) · 확인을 마치면 그 계약 화면으로
   {

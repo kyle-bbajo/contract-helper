@@ -96,6 +96,7 @@
       it('준공계', '준공사진대지', '사진대지,준공사진', { id: 'c-photo' }),
       it('준공계', '정산서류', '정산서,정산서류,정산내역,정산내역서,준공정산,정산조서,정산검토,정산보고,설계변경정산', { required: false, note: '준공정산·설계변경 정산 시', id: 'c-settle' }),
       it('준공계', '노무비 미체불 확약서', '미체불,미체불확약서,노무비미체불,체불없음확약,임금체불없음', { required: false, note: '일용근로자 해당 시', id: 'c-nounpaid' }),
+      it('준공계', '사회보험료 납부내역서(연금·건강·장기요양)', '보험료납부내역,보험료납부확인,납부내역서,납부확인서,부과내역,결정내역,연금보험료,건강보험료,장기요양보험료,보험료내역,고지내역,사업장보험료', { required: false, note: '보험료 사후정산 — [보험료 정산]에서 합계', id: 'c-insdetail' }),
       it('준공계', '노무비 지급 내역서', '노무비지급내역,지급내역서,노무비지급명세,지급명세서,노무비명세서,노무비지급현황,노무비내역,노무비지급대장,근로자별노무비,임금지급명세,임금명세서,노임지급,노임명세,노무비지급표', { required: false, note: '일용근로자 해당 시', id: 'c-laborlist' }),
       it('준공계', '하자보수보증서(하자이행보증증권)', '하자보수보증서,하자보증서,하자이행보증,하자보수보증금,하자보증증권', { note: '또는 지급각서', alt: 'c-defect', id: 'c-defectbond' }),
       it('준공계', '하자보수 이행보증금 지급각서', '하자보수이행보증금지급각서,하자지급각서,지급각서', { note: '또는 하자보수보증서', alt: 'c-defectbond', id: 'c-defect' }),
@@ -124,6 +125,7 @@
       it('준공계', '하자보수보증서(하자이행보증증권)', '하자보수보증서,하자보증서,하자이행보증,하자보수보증금,하자보증증권', { note: '또는 지급각서', alt: 's-defect', id: 's-defectbond' }),
       it('준공계', '하자보수 이행보증금 지급각서', '하자보수이행보증금지급각서,하자지급각서,지급각서', { note: '또는 하자보수보증서', alt: 's-defectbond', id: 's-defect' }),
       it('준공계', '노무비 미체불 확약서', '미체불,미체불확약서,노무비미체불,체불없음확약,임금체불없음', { required: false, note: '단순노무용역', id: 's-nounpaid' }),
+      it('준공계', '사회보험료 납부내역서(연금·건강·장기요양)', '보험료납부내역,보험료납부확인,납부내역서,납부확인서,부과내역,결정내역,연금보험료,건강보험료,장기요양보험료,보험료내역,고지내역,사업장보험료', { required: false, note: '보험료 사후정산 — [보험료 정산]에서 합계', id: 's-insdetail' }),
       it('준공계', '용역근로자 노무비 지급 내역서', '노무비지급내역,지급내역서,노무비지급명세,지급명세서,노무비명세서,노무비지급현황,노무비내역,노무비지급대장,근로자별노무비,임금지급명세,임금명세서,노임지급,노임명세,노무비지급표', { required: false, note: '단순노무용역', id: 's-laborlist' }),
       ...tail('s', [
         it(g6, '4대 사회보험 완납증명서', '사회보험완납,사회보험료완납,4대보험완납,보험료완납', { source: '메일', id: 's-inspaid' }),
@@ -495,6 +497,87 @@
     // 배운 다른 이름: 사람이 미분류 서류를 이 계약으로 정리할 때 서류에 적힌 공사명·용역명(나라장터 계약명과 다르게 쓴 것)
     if (!(s >= 6) && (c.aliases || []).some((a) => okAlias(a) && hay.includes(a))) s += 6;
     return s;
+  }
+  // ---------- 사회보험료 사후정산: 국민연금·건강보험·노인장기요양 납부(부과)내역서에서 보험료 합계 ----------
+  // lines: 줄(또는 표의 행을 칸 사이 ' | '로 이은 것). 돌려줌: { pension, health, ltc, by, rows, warn: [], detail: [] }
+  //  1) 표 머리(연금·건강·요양·계 같은 칸 이름) 순서대로 칸을 정하고 2) '합계·총계' 줄이 있으면 그 줄, 없으면 금액 줄을 모두 더함(오른쪽 맞춤)
+  //  3) 머리가 없으면 한 줄에 건강보험료와 그 12~14%(장기요양)가 함께 있는 짝을 찾음
+  const INS_COL = [
+    ['pension', /연\s*금/], ['ltc', /요\s*양/], ['health', /건\s*강/], ['emp', /고\s*용/], ['acc', /산\s*재/],
+    ['base', /(보\s*수|소\s*득)\s*월?\s*액|기\s*준\s*소\s*득|보\s*수\s*총\s*액/], ['emp_share', /사\s*(용|업)\s*(자|주)\s*부\s*담/], ['wrk_share', /(근\s*로\s*자|가\s*입\s*자|본\s*인)\s*부\s*담/],
+    ['sum', /합\s*계|(?:^|[\s|])계(?:[\s|]|$)|총\s*액|소\s*계/], ['prem', /(월\s*)?보\s*험\s*료(?!\s*율)/],
+  ];
+  function insAmounts(line) {
+    const t = String(line || '').replace(/(\d)\s*,\s*(?=\d{3}(?!\d))/g, '$1,') // '450 , 000' → '450,000'
+      .replace(/\d{6}\s*-\s*[\d*]{7}/g, ' ') // 주민번호
+      .replace(/\d{3}\s*-\s*\d{2}\s*-\s*\d{5}/g, ' ') // 사업자등록번호
+      .replace(/(19|20)\d{2}\s*[-./년]\s*\d{1,2}(\s*[-./월]\s*\d{1,2}\s*일?)?/g, ' ') // 날짜·연월
+      .replace(/\d{1,2}\s*월\s*분?/g, ' ').replace(/\d+\s*(명|일|회|%)/g, ' ');
+    return [...t.matchAll(/(?<![\d,.])(\d{1,3}(?:,\d{3})+|\d{3,10})(?![\d,]*\d)/g)].map((m) => Number(m[1].replace(/,/g, ''))).filter((x) => x >= 100);
+  }
+  function insuranceTotals(lines) {
+    const ls = (lines || []).map((x) => String(x || '').trim()).filter(Boolean);
+    const all = ls.join('\n');
+    const has = { pension: /연\s*금/.test(all), health: /건\s*강/.test(all), ltc: /장\s*기\s*요\s*양|요\s*양\s*보\s*험/.test(all) };
+    const out = { pension: 0, health: 0, ltc: 0, by: '', rows: 0, warn: [], detail: [] };
+    // 표 머리: 칸 이름이 가장 많이 든 줄(위쪽 30줄 안에서 두 줄까지 이어 봄)
+    const colsOf = (h) => { const hits = []; for (const [k, re] of INS_COL) { const r = new RegExp(re.source, 'g'); let m; while ((m = r.exec(h))) { if (!hits.some((x) => x.k === k && Math.abs(x.p - m.index) < 3)) hits.push({ k, p: m.index }); if (!r.global) break; } } return hits.sort((a, b) => a.p - b.p).filter((x, i, a) => !(x.k === 'health' && a.some((y) => y.k === 'ltc' && Math.abs(y.p - x.p) < 8))); };
+    let head = -1, cols = [];
+    for (const span of [1, 2]) { // 한 줄 머리를 먼저, 없으면 두 줄로 나뉜 머리
+      if (cols.length) break;
+      for (let i = 0; i < Math.min(ls.length, 60); i++) {
+        const h = ls.slice(i, i + span).join(' ');
+        if (insAmounts(h).length) continue;
+        // '연금보험료'처럼 종류+보험료가 붙은 칸은 종류 하나로(보험료 칸을 따로 세지 않음)
+        let c = colsOf(h); c = c.filter((x) => !(x.k === 'prem' && /(연\s*금|건\s*강|요\s*양|고\s*용|산\s*재)\s*$/.test(h.slice(Math.max(0, x.p - 6), x.p))));
+        // 종류 칸이 없고 '보험료' 칸만 있으면 이 서류의 한 종류(연금만 든 내역서 등)
+        const sole = ['pension', 'health', 'ltc'].filter((k) => has[k]);
+        if (!c.some((x) => ['pension', 'health', 'ltc'].includes(x.k)) && sole.length === 1) c = c.map((x) => (x.k === 'prem' ? { ...x, k: sole[0] } : x));
+        if (c.filter((x) => ['pension', 'health', 'ltc'].includes(x.k)).length >= 1 && c.length > cols.length) { cols = c; head = i + span - 1; }
+      }
+    }
+    const want = ['pension', 'health', 'ltc'];
+    const assign = (nums, keyCols) => { const o = {}; const k = keyCols.slice(-nums.length), n = nums.slice(-keyCols.length); k.forEach((c, i) => { o[c.k] = (o[c.k] || 0) + n[i]; }); return o; };
+    const body = ls.slice(head + 1);
+    if (cols.length && cols.some((x) => want.includes(x.k))) {
+      const sumRow = body.find((l) => /^\s*(합\s*계|총\s*계|계|누\s*계|총\s*합\s*계)(?![가-힣])/.test(l) && insAmounts(l).length);
+      if (sumRow) {
+        const o = assign(insAmounts(sumRow), cols);
+        for (const k of want) out[k] = o[k] || 0;
+        out.by = 'sum-row'; out.detail.push(sumRow);
+      } else {
+        for (const l of body) {
+          if (/소\s*계|합\s*계|총\s*계/.test(l)) continue;
+          const nums = insAmounts(l); if (!nums.length) continue;
+          const o = assign(nums, cols); let any = false;
+          for (const k of want) if (o[k]) { out[k] += o[k]; any = true; }
+          if (any) { out.rows++; if (out.detail.length < 80) out.detail.push(l); }
+        }
+        out.by = 'rows';
+      }
+    }
+    // 머리로 못 정했으면: 한 줄에 건강보험료와 장기요양보험료(건강의 약 12~14%) 짝
+    if (!out.pension && !out.health && !out.ltc) {
+      let rows = 0, h = 0, t = 0, sumLine = null;
+      for (const l of ls) {
+        const nums = insAmounts(l); let pair = null;
+        for (const a of nums) for (const b of nums) if (b < a && b / a > 0.115 && b / a < 0.145 && (!pair || a > pair[0])) pair = [a, b];
+        if (!pair) continue;
+        if (/합\s*계|총\s*계|^\s*계/.test(l)) sumLine = pair; else { h += pair[0]; t += pair[1]; rows++; }
+      }
+      if (sumLine) { out.health = sumLine[0]; out.ltc = sumLine[1]; out.by = 'ratio-sum'; }
+      else if (rows) { out.health = h; out.ltc = t; out.rows = rows; out.by = 'ratio'; }
+      // 연금만 있는 내역서: 합계 줄의 가장 큰 수, 없으면 금액 줄마다 마지막 수
+      if (has.pension && !has.health) {
+        const sl = ls.find((l) => /^\s*(합\s*계|총\s*계|계)(?![가-힣])/.test(l) && insAmounts(l).length);
+        if (sl) { out.pension = Math.max(...insAmounts(sl)); out.by = 'sum-row'; }
+      }
+    }
+    // 머리 칸에 없던 종류는 0(이 서류에 없음). 장기요양이 건강의 12~14%가 아니면 알림
+    if (out.health && out.ltc) { const r = out.ltc / out.health; if (r < 0.1 || r > 0.16) out.warn.push(`장기요양이 건강보험료의 ${(r * 100).toFixed(1)}%입니다(보통 12~14%) — 칸이 바뀌어 읽혔는지 확인`); }
+    if (!out.pension && !out.health && !out.ltc) out.warn.push('보험료 금액을 찾지 못했습니다 — 직접 넣어 주세요');
+    out.has = has;
+    return out;
   }
   // ---------- 세금계산서: 업체(공급자) 등록번호·상호와 금액으로 계약 찾기 ----------
   // 세금계산서는 다른 서류가 다 갖춰진 뒤 마지막에 발급 → 같은 업체 계약이 여럿이면 금액이 맞는 계약, 그다음 아직 세금계산서가 없는 계약
@@ -1154,7 +1237,7 @@
     API_BASE, API_OPS, TYPES, apiUrl, keyParam, monthRanges, parseApiText, parseApiBody, parseCorpList, parseCorpRows, normalizeApiItem, detectExtFinance,
     G2B, g2bUrl, scanAuditFields, summarizeChanges, chgPlan, autoKind, CHG_KINDS, changesOf, ordSnap, pickBid, pickPrepar, pickScsbid, pickCorp, contractReason, bareNtce, periodEnd, num,
     ordOf, viaParts, viaKey, viaStatus, itemsInName, isRecentItem, issuedTooEarly, isAdvBond, advBondCheck, ADV_DAYS, matchCandidates, checklistStatus, holds, hasItem, classifyPages, classifyPage, splitPages, classifyTitleLines, fmtDate, toDate, won, safeName, datesIn, extractDates, docFacts, verifyFacts, addDays, isCertItem, vendorMail, issueCond,
-    invoiceFacts, invoiceScore, matchInvoice, segmentContract,
+    invoiceFacts, invoiceScore, matchInvoice, segmentContract, insuranceTotals,
     searchHit, okAlias, headLines, learnSigs, learnedItem, learnedFuzzy, similar, classifyInfo, suffixOf, shareSafe, splitPlan, checkSplit, goodName, isG2bNo, maskPrivate,
     PAY_KINDS, typeKey, hasRounds, roundOnly, roundSteps, roundHint, roundLabel, routeRound,
   };
